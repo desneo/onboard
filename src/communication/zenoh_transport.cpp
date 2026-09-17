@@ -35,6 +35,13 @@ std::string endpoints_json5_array(const std::string& comma_separated) {
     return result;
 }
 
+std::string canon_key_expr(const std::string& key_expr) {
+    // Zenoh 1.x 的 key expression 不允许前导 '/'（规范形式要求首个 chunk 非空）。
+    // M1 设计中的 topic 常量以 '/' 开头，这里在 Zenoh 边界统一去掉前导 '/'。
+    const std::size_t first = key_expr.find_first_not_of('/');
+    return first == std::string::npos ? std::string{} : key_expr.substr(first);
+}
+
 }  // namespace
 
 struct ZenohTransport::Impl {
@@ -89,7 +96,7 @@ bool ZenohTransport::subscribe(const std::string& key_expr, SampleHandler handle
     try {
         zenoh::ZResult result = Z_OK;
         zenoh::Subscriber<void> subscriber = impl_->session->declare_subscriber(
-            zenoh::KeyExpr(key_expr),
+            zenoh::KeyExpr(canon_key_expr(key_expr)),
             [handler = std::move(handler)](zenoh::Sample& sample) { handler(sample.get_payload().as_string()); },
             []() {}, zenoh::Session::SubscriberOptions::create_default(), &result);
         if (result != Z_OK) {
@@ -111,7 +118,7 @@ bool ZenohTransport::put(const std::string& key_expr, const std::string& payload
     }
     try {
         zenoh::ZResult result = Z_OK;
-        impl_->session->put(zenoh::KeyExpr(key_expr), zenoh::Bytes(payload),
+        impl_->session->put(zenoh::KeyExpr(canon_key_expr(key_expr)), zenoh::Bytes(payload),
                             zenoh::Session::PutOptions::create_default(), &result);
         if (result != Z_OK) {
             error = "发送失败: " + key_expr;
