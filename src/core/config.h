@@ -20,6 +20,7 @@ struct AppConfig {
     int comm_ack_timeout_ms = 500;
     int comm_ack_max_retries = 3;
     int comm_rx_queue_max = 1024;
+    int gcs_link_timeout_ms = 2000;
 };
 
 /// 从 key = value 文本文件加载配置；文件不存在时保留默认值并返回 false。

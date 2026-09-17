@@ -61,6 +61,8 @@ bool load_config(const std::string& path, AppConfig& out) {
             out.comm_ack_max_retries = std::stoi(value);
         } else if (key == "comm_rx_queue_max") {
             out.comm_rx_queue_max = std::stoi(value);
+        } else if (key == "gcs_link_timeout_ms") {
+            out.gcs_link_timeout_ms = std::stoi(value);
         } else {
             spdlog::warn("未知配置项: {}", key);
         }
