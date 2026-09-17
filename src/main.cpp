@@ -1,9 +1,11 @@
 #include <spdlog/spdlog.h>
 
+#include <memory>
 #include <string>
 #include <utility>
 
 #include "communication/communication_events.h"
+#include "communication/communication_module.h"
 #include "core/build_info.h"
 #include "core/config.h"
 #include "core/deps_check.h"
@@ -43,7 +45,8 @@ int main(int argc, char** argv) {
         [](const plane::communication::CommunicationError& error) { spdlog::error("通信错误事件: {}", error.detail); });
 
     plane::core::Runtime runtime;
-    for (auto& module : plane::core::make_placeholder_modules()) {
+    runtime.add_module(std::make_unique<plane::communication::CommunicationModule>(event_bus, config));
+    for (auto& module : plane::core::make_placeholder_modules({"Communication"})) {
         runtime.add_module(std::move(module));
     }
     if (!runtime.run()) {

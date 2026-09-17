@@ -1,5 +1,6 @@
 #include "core/placeholder_modules.h"
 
+#include <algorithm>
 #include <iterator>
 #include <string>
 #include <utility>
@@ -23,7 +24,7 @@ class PlaceholderModule final : public IModule {
 
 }  // namespace
 
-std::vector<std::unique_ptr<IModule>> make_placeholder_modules() {
+std::vector<std::unique_ptr<IModule>> make_placeholder_modules(const std::vector<std::string>& skip) {
     const char* names[] = {
         "Plugin Management", "Communication",  "UAV State Management",  "StateMonitor",
         "Target Management", "Flight Control", "Camera Control",        "Perception",
@@ -32,6 +33,9 @@ std::vector<std::unique_ptr<IModule>> make_placeholder_modules() {
     std::vector<std::unique_ptr<IModule>> modules;
     modules.reserve(std::size(names));
     for (const char* module_name : names) {
+        if (std::find(skip.begin(), skip.end(), module_name) != skip.end()) {
+            continue;
+        }
         modules.push_back(std::make_unique<PlaceholderModule>(module_name));
     }
     return modules;
