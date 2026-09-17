@@ -14,13 +14,16 @@
 #include "core/config.h"
 #include "core/event_bus.h"
 #include "core/module.h"
+#include "state/state_store_api.h"
+#include "task/task_state_provider.h"
 
 namespace plane::communication {
 
 /// 通信模块：Zenoh 收发、信封编解码、事件分发、Ack 与可靠重试。
 class CommunicationModule final : public plane::core::IModule, public CommunicationApi {
    public:
-    CommunicationModule(plane::core::EventBus& event_bus, const plane::core::AppConfig& config);
+    CommunicationModule(plane::core::EventBus& event_bus, const plane::core::AppConfig& config,
+                        plane::state::StateStoreApi& state_store, plane::task::TaskStateProvider& task_state_provider);
     ~CommunicationModule() override;
 
     std::string name() const override;
@@ -46,6 +49,7 @@ class CommunicationModule final : public plane::core::IModule, public Communicat
     void on_wire_message(const std::string& raw);
     void handle_envelope(const plane::model::Message& envelope);
     void handle_ack(const plane::model::Message& envelope);
+    void report_states();
     void check_pending();
     bool send_message(const std::string& topic, const OutgoingMessage& message);
     bool send_ack(const plane::model::Message& envelope);
@@ -54,6 +58,9 @@ class CommunicationModule final : public plane::core::IModule, public Communicat
 
     plane::core::EventBus& event_bus_;
     const plane::core::AppConfig& config_;
+    plane::state::StateStoreApi& state_store_;
+    plane::task::TaskStateProvider& task_state_provider_;
+    std::int64_t last_report_ms_ = 0;
     ZenohTransport transport_;
     std::mutex rx_mutex_;
     std::condition_variable rx_cv_;

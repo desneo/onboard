@@ -21,8 +21,10 @@ bool is_reliable(plane::model::MessageType type) {
 
 }  // namespace
 
-CommunicationModule::CommunicationModule(plane::core::EventBus& event_bus, const plane::core::AppConfig& config)
-    : event_bus_(event_bus), config_(config) {}
+CommunicationModule::CommunicationModule(plane::core::EventBus& event_bus, const plane::core::AppConfig& config,
+                                         plane::state::StateStoreApi& state_store,
+                                         plane::task::TaskStateProvider& task_state_provider)
+    : event_bus_(event_bus), config_(config), state_store_(state_store), task_state_provider_(task_state_provider) {}
 
 CommunicationModule::~CommunicationModule() { stop(); }
 
@@ -109,6 +111,7 @@ void CommunicationModule::worker_loop() {
         for (const auto& raw : batch) {
             on_wire_message(raw);
         }
+        report_states();
         check_pending();
     }
 }
@@ -128,6 +131,9 @@ void CommunicationModule::on_wire_message(const std::string& raw) {
 
 void CommunicationModule::handle_envelope(const plane::model::Message& envelope) {
     std::string error;
+    if (envelope.senderId == config_.station_id) {
+        state_store_.notify_station_seen();
+    }
     switch (envelope.type) {
         case plane::model::MessageType::TaskInfo: {
             plane::model::TaskInfo value;
@@ -165,6 +171,18 @@ void CommunicationModule::handle_envelope(const plane::model::Message& envelope)
                 return;
             }
             event_bus_.publish(events::kGcsTargetReceived, value);
+            break;
+        }
+        case plane::model::MessageType::VehicleState: {
+            if (envelope.senderId == config_.station_id) {
+                break;
+            }
+            plane::model::VehicleState value;
+            if (!from_payload(envelope.payload, value, error)) {
+                report_error("VehicleState 解码失败: " + error);
+                return;
+            }
+            state_store_.update_peer_state(value);
             break;
         }
         case plane::model::MessageType::Ack: {
@@ -220,6 +238,16 @@ bool CommunicationModule::send_ack(const plane::model::Message& envelope) {
     const std::string topic = envelope.senderId == config_.station_id ? std::string(plane::model::topic_sendToStation)
                                                                       : "sendToPlane/" + envelope.senderId;
     return send_message(topic, OutgoingMessage{ack});
+}
+
+void CommunicationModule::report_states() {
+    const std::int64_t now = now_ms();
+    if (now - last_report_ms_ < config_.state_report_period_ms) {
+        return;
+    }
+    last_report_ms_ = now;
+    sendToAll(state_store_.own_state());
+    sendToStation(task_state_provider_.current_task_state());
 }
 
 void CommunicationModule::check_pending() {

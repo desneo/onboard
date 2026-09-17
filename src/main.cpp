@@ -16,6 +16,8 @@
 #include "core/log.h"
 #include "core/placeholder_modules.h"
 #include "core/runtime.h"
+#include "state/state_store.h"
+#include "task/task_state_provider.h"
 
 namespace {
 
@@ -55,9 +57,15 @@ int main(int argc, char** argv) {
         plane::communication::events::kError,
         [](const plane::communication::CommunicationError& error) { spdlog::error("通信错误事件: {}", error.detail); });
 
+    plane::task::NoTaskStateProvider task_state_provider;
+    auto state_store = std::make_unique<plane::state::StateStore>(event_bus, config);
+    auto communication = std::make_unique<plane::communication::CommunicationModule>(event_bus, config, *state_store,
+                                                                                     task_state_provider);
+
     plane::core::Runtime runtime;
-    runtime.add_module(std::make_unique<plane::communication::CommunicationModule>(event_bus, config));
-    for (auto& module : plane::core::make_placeholder_modules({"Communication"})) {
+    runtime.add_module(std::move(state_store));
+    runtime.add_module(std::move(communication));
+    for (auto& module : plane::core::make_placeholder_modules({"Communication", "UAV State Management"})) {
         runtime.add_module(std::move(module));
     }
     if (!runtime.run()) {
