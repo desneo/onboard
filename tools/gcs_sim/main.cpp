@@ -108,9 +108,12 @@ int main(int argc, char** argv) {
             const nlohmann::json payload = nlohmann::json::parse(envelope.payload, nullptr, false);
             if (!payload.is_discarded()) {
                 const nlohmann::json geo = payload.value("geoPos", nlohmann::json::object());
-                spdlog::info("收到 VehicleState: planeId={}, voltage={}, lat={}, lon={}, height={}",
-                             payload.value("planeId", std::string{}), payload.value("voltage_v", 0.0F),
-                             geo.value("latitude", 0.0), geo.value("longitude", 0.0), geo.value("height", 0.0F));
+                spdlog::info(
+                    "收到 VehicleState: planeId={}, fcLinkState={}, flightMode={}, voltage={}, lat={}, lon={}, "
+                    "height={}",
+                    payload.value("planeId", std::string{}), payload.value("fcLinkState", std::string{}),
+                    payload.value("flightMode", std::string{}), payload.value("voltage_v", 0.0F),
+                    geo.value("latitude", 0.0), geo.value("longitude", 0.0), geo.value("height", 0.0F));
             }
             vehicle_state_count.fetch_add(1);
             return;

@@ -3,7 +3,7 @@
 > 设计依据：`m3-flight-control-design.md`（已逐项确认）。
 > 执行位置：工程根 `onboard/`。
 > 验证原则：每个 Task 结束后 x64 Release 构建通过；不写测试代码（SPEC §11）。
-> 本里程碑 SITL 不可用：Task 5 为部分验收，飞控动作链路列清单待用户 SITL 验证。
+> 状态：已完成并部分验收（2026-09-17）；飞控动作链路待用户 SITL 验证（清单见文末）。
 
 ---
 
@@ -18,7 +18,7 @@
 
 - Produces: `plane::flight_control::FlightControlApi`、`FlightControlError`、`events::kError`
 
-- [ ] Step 1: 写 `src/flight_control/flight_control_api.h`
+- [x] Step 1: 写 `src/flight_control/flight_control_api.h`
 
 ```cpp
 #pragma once
@@ -53,7 +53,7 @@ class FlightControlApi {
 }  // namespace plane::flight_control
 ```
 
-- [ ] Step 2: 写 `src/flight_control/flight_control_events.h`
+- [x] Step 2: 写 `src/flight_control/flight_control_events.h`
 
 ```cpp
 #pragma once
@@ -77,7 +77,7 @@ inline constexpr std::string_view kError = "flight_control.error";
 }  // namespace plane::flight_control
 ```
 
-- [ ] Step 3: 构建与提交
+- [x] Step 3: 构建与提交
 
 ```bash
 cmake --build build -j
@@ -96,7 +96,7 @@ git commit -m "feat(m3): 增加飞控接口与错误事件"
 - Modify: `src/core/config.cpp`
 - Modify: `config/onboard.conf`
 
-- [ ] Step 1: `src/core/config.h` 的 `AppConfig` 中，在 `gcs_link_timeout_ms` 之后追加
+- [x] Step 1: `src/core/config.h` 的 `AppConfig` 中，在 `gcs_link_timeout_ms` 之后追加
 
 ```cpp
     std::string fc_link_type = "udp";
@@ -107,7 +107,7 @@ git commit -m "feat(m3): 增加飞控接口与错误事件"
     double fc_route_speed_m_s = 5.0;
 ```
 
-- [ ] Step 2: `src/core/config.cpp` 解析分支中，在 `gcs_link_timeout_ms` 分支之后追加
+- [x] Step 2: `src/core/config.cpp` 解析分支中，在 `gcs_link_timeout_ms` 分支之后追加
 
 ```cpp
         } else if (key == "fc_link_type") {
@@ -124,7 +124,7 @@ git commit -m "feat(m3): 增加飞控接口与错误事件"
             out.fc_route_speed_m_s = std::stod(value);
 ```
 
-- [ ] Step 3: `config/onboard.conf` 末尾追加
+- [x] Step 3: `config/onboard.conf` 末尾追加
 
 ```text
 # 飞控连接（udp 或 serial）
@@ -136,7 +136,7 @@ fc_heartbeat_timeout_ms = 2000
 fc_route_speed_m_s = 5.0
 ```
 
-- [ ] Step 4: 构建、运行与提交
+- [x] Step 4: 构建、运行与提交
 
 ```bash
 cmake --build build -j
@@ -163,7 +163,7 @@ Expected: 构建通过；运行无「未知配置项」警告，exit=0。
 - Consumes: `FlightControlApi`/事件（Task 1）、`AppConfig`（Task 2）、`StateStoreApi`（M2）
 - Produces: `plane::flight_control::FlightControlModule`
 
-- [ ] Step 1: 写 `src/flight_control/flight_control_module.h`
+- [x] Step 1: 写 `src/flight_control/flight_control_module.h`
 
 ```cpp
 #pragma once
@@ -278,7 +278,7 @@ class FlightControlModule final : public plane::core::IModule, public FlightCont
 }  // namespace plane::flight_control
 ```
 
-- [ ] Step 2: 写 `src/flight_control/flight_control_module.cpp`
+- [x] Step 2: 写 `src/flight_control/flight_control_module.cpp`
 
 ```cpp
 #include "flight_control/flight_control_module.h"
@@ -723,13 +723,13 @@ std::int64_t FlightControlModule::now_ms() const {
 }  // namespace plane::flight_control
 ```
 
-- [ ] Step 3: `CMakeLists.txt` 的 `add_executable(onboard ...)` 文件列表中追加
+- [x] Step 3: `CMakeLists.txt` 的 `add_executable(onboard ...)` 文件列表中追加
 
 ```cmake
   src/flight_control/flight_control_module.cpp
 ```
 
-- [ ] Step 4: 构建与格式
+- [x] Step 4: 构建与格式
 
 ```bash
 cmake --build build -j
@@ -738,7 +738,7 @@ clang-format --dry-run --Werror src/flight_control/flight_control_module.h src/f
 
 Expected: 构建通过且无 warning；格式通过（有差异先 `clang-format -i` 再构建）。
 
-- [ ] Step 5: 提交
+- [x] Step 5: 提交
 
 ```bash
 git add src/flight_control/flight_control_module.h src/flight_control/flight_control_module.cpp CMakeLists.txt
@@ -757,14 +757,14 @@ git commit -m "feat(m3): 增加 FlightControlModule"
 
 - Consumes: `FlightControlModule`（Task 3）
 
-- [ ] Step 1: `src/main.cpp` include 区追加
+- [x] Step 1: `src/main.cpp` include 区追加
 
 ```cpp
 #include "flight_control/flight_control_events.h"
 #include "flight_control/flight_control_module.h"
 ```
 
-- [ ] Step 2: 错误事件订阅追加（与 CommunicationError 订阅并列）
+- [x] Step 2: 错误事件订阅追加（与 CommunicationError 订阅并列）
 
 ```cpp
     event_bus.subscribe<plane::flight_control::FlightControlError>(
@@ -774,7 +774,7 @@ git commit -m "feat(m3): 增加 FlightControlModule"
         });
 ```
 
-- [ ] Step 3: 模块注册块改为
+- [x] Step 3: 模块注册块改为
 
 ```cpp
     plane::task::NoTaskStateProvider task_state_provider;
@@ -794,7 +794,7 @@ git commit -m "feat(m3): 增加 FlightControlModule"
     }
 ```
 
-- [ ] Step 4: 构建、运行与格式
+- [x] Step 4: 构建、运行与格式
 
 ```bash
 cmake --build build -j
@@ -804,7 +804,7 @@ clang-format --dry-run --Werror src/main.cpp
 
 Expected: 构建通过；运行日志包含 `飞控连接参数: udp://:14540 (心跳超时 2000 ms)`、`Communication 已启动`；首个 `等待飞控连接: udp://:14540` 在启动后约 0.2 秒出现，之后每 5 秒一次；Ctrl+C/超时退出 exit=0。
 
-- [ ] Step 5: 提交
+- [x] Step 5: 提交
 
 ```bash
 git add src/main.cpp
@@ -821,7 +821,7 @@ git commit -m "feat(m3): 接线 FlightControl 模块"
 - Modify: `docs/plans/m3-flight-control-tasks.md`
 - Modify: `docs/DEV_PLAN.md`
 
-- [ ] Step 1: gcs_sim 的 VehicleState 日志补充 fcLinkState/flightMode
+- [x] Step 1: gcs_sim 的 VehicleState 日志补充 fcLinkState/flightMode
 
 将 `on_sample` 中 `VehicleState` 的打印改为包含下列字段：
 
@@ -842,7 +842,7 @@ git add tools/gcs_sim/main.cpp
 git commit -m "feat(m3): gcs_sim 输出飞控连接与飞行模式"
 ```
 
-- [ ] Step 2: 干净构建
+- [x] Step 2: 干净构建
 
 ```bash
 rm -rf build logs
@@ -850,7 +850,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
-- [ ] Step 3: 无 SITL 连接状态
+- [x] Step 3: 无 SITL 连接状态
 
 终端 A：
 
@@ -860,7 +860,7 @@ cmake --build build -j
 
 Expected：日志 `飞控连接参数: udp://:14540`，随后每 5 秒 `等待飞控连接: udp://:14540`，无崩溃。
 
-- [ ] Step 4: 状态上报联动（终端 B）
+- [x] Step 4: 状态上报联动（终端 B）
 
 ```bash
 ./build/gcs_sim --plane-id uav1 --listen-seconds 3
@@ -868,14 +868,14 @@ Expected：日志 `飞控连接参数: udp://:14540`，随后每 5 秒 `等待�
 
 Expected：gcs_sim 收到 `VehicleState`，其中 `fcLinkState=disconnected`、`flightMode=`（为空，无 SITL）（遥测聚合与上报链路可用）；TaskInfo/Command 的 Ack 正常。
 
-- [ ] Step 5: 规范检查
+- [x] Step 5: 规范检查
 
 ```bash
 clang-format --dry-run --Werror $(git ls-files src tools)
 grep -rn "std::cout\|printf(" src/ tools/ || echo "no cout/printf"
 ```
 
-- [ ] Step 6: 文档与收尾提交
+- [x] Step 6: 文档与收尾提交
 
 - 勾选本文档，并在文末记录执行偏差与验收证据；
 - 更新 `docs/DEV_PLAN.md` §11 索引：M3 状态 → 已完成（部分验收，SITL 待验）；
@@ -899,3 +899,15 @@ git commit -m "docs(m3): M3 部分验收与文档更新"
 5. StopMotor（仅 GCS 人工触发，注意安全，SITL 中验证 kill 行为）；
 6. NED Velocity：设置后 PX4 进入 Offboard，`clear_ned_velocity` 后退出；
 7. `VehicleState` 各字段（经纬高、姿态、NED 速度、空速、电压、飞行模式、fcLinkState）与 SITL 状态一致。
+
+---
+
+## 执行记录与偏差
+
+1. **MAVSDK 运行期日志**：无 SITL 时 MAVSDK 输出 `Connection using udp:// is deprecated` 与每秒 `Sending message failed`（库内部日志，非本项目代码）；不影响功能。后续如需可在 M10 统一接管三方库日志。
+2. **验收证据（2026-09-17，无 SITL）**
+   - onboard 日志：`飞控连接参数: udp://:14540 (心跳超时 2000 ms)`；首个 `等待飞控连接` 在启动后约 0.2 秒、之后每 5 秒；`Communication 已启动`；进程稳定、信号退出正常；
+   - gcs_sim：`Ack 结果: TaskInfo=true, Command=true`；周期 `VehicleState` 中 `fcLinkState=disconnected`、`flightMode=`（空）、`voltage=0`（无飞控数据）；`TaskState status=None`；
+   - `clang-format --dry-run --Werror $(git ls-files src tools)` 通过；无 `std::cout/printf`。
+3. **Task 3/4 偏差**：仅 clang-format 排版调整；MAVSDK 3.17.4 API 与计划一致，无需修正。
+4. **SITL 待验**：见文末清单，由用户在具备 SITL 后执行并按日志定位问题。
