@@ -1316,7 +1316,7 @@ common_include/
 
 数据模型要点：
 
-- 报文统一为 `Message{messageId, type, payload}`，`payload` 为 JSON 字符串；`MessageType` 覆盖 GcsTarget、TaskInfo、Command、SystemParam、Alert、Ack、TaskState、VehicleState；
+- 报文统一为 `Message{senderId, messageId, type, payload}`，`payload` 为 JSON 字符串；`MessageType` 覆盖 GcsTarget、TaskInfo、Command、SystemParam、Alert、Ack、TaskState、VehicleState；
 - 视觉目标 `DetectTarget` 使用 `BBox`；检测阶段 `trackId` 留空，跟踪阶段由系统填充；
 - `TaskAction` 只有 Start / Stop；`TaskStatus` 含 None、Pending、InProgress、Completed、Aborted、Failed；
 - `TaskState` 与 `VehicleState` 均包含 `currentBehaviorTree` 与 `currentNode`；
@@ -1940,6 +1940,7 @@ Target Management 为每个 GCS Target 保留最近 20 条历史记录。
 - 插件实现方需同时具备 Pluma 与 OpenCV 的头文件与 ABI；
 - `DetectTarget` 暂不携带时间戳，后续如需再扩展；
 - `TaskState` 与 `VehicleState` 同时包含行为树/节点字段，存在冗余，按需求接受。
+- `Message` 增加 `senderId`，用于 Ack 路由与消息来源标识。
 
 ---
 
