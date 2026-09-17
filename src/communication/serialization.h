@@ -21,6 +21,7 @@ bool from_payload(const std::string& payload, plane::model::Command& out, std::s
 bool from_payload(const std::string& payload, plane::model::SystemParam& out, std::string& error);
 bool from_payload(const std::string& payload, plane::model::GcsTarget& out, std::string& error);
 bool from_payload(const std::string& payload, plane::model::Ack& out, std::string& error);
+bool from_payload(const std::string& payload, plane::model::VehicleState& out, std::string& error);
 
 std::string encode_envelope(const plane::model::Message& message);
 bool decode_envelope(const std::string& wire, plane::model::Message& out, std::string& error);

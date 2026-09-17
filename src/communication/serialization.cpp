@@ -241,6 +241,36 @@ bool to_payload(const plane::model::VehicleState& value, std::string& out, std::
     }
 }
 
+bool from_payload(const std::string& payload, plane::model::VehicleState& out, std::string& error) {
+    try {
+        const json in = json::parse(payload);
+        out.planeId = in.at("planeId").get<std::string>();
+        geo_point_from_json(in.at("geoPos"), out.geoPos);
+        if (in.contains("startPos")) {
+            geo_point_from_json(in.at("startPos"), out.startPos);
+        }
+        out.roll_deg = in.value("roll_deg", 0.0F);
+        out.pitch_deg = in.value("pitch_deg", 0.0F);
+        out.yaw_deg = in.value("yaw_deg", 0.0F);
+        out.vn_m_s = in.value("vn_m_s", 0.0F);
+        out.ve_m_s = in.value("ve_m_s", 0.0F);
+        out.vd_m_s = in.value("vd_m_s", 0.0F);
+        out.airspeed_m_s = in.value("airspeed_m_s", 0.0F);
+        out.voltage_v = in.value("voltage_v", 0.0F);
+        out.flightMode = in.value("flightMode", std::string{});
+        out.fcLinkState = in.value("fcLinkState", std::string{});
+        out.currentBehaviorTree = in.value("currentBehaviorTree", std::string{});
+        out.currentNode = in.value("currentNode", std::string{});
+        out.cameraAngle_roll_deg = in.value("cameraAngle_roll_deg", 0.0F);
+        out.cameraAngle_pitch_deg = in.value("cameraAngle_pitch_deg", 0.0F);
+        out.cameraAngle_yaw_deg = in.value("cameraAngle_yaw_deg", 0.0F);
+        return true;
+    } catch (const json::exception& e) {
+        error = e.what();
+        return false;
+    }
+}
+
 bool to_payload(const plane::model::TaskState& value, std::string& out, std::string& error) {
     try {
         out = json{{"taskId", value.taskId},
