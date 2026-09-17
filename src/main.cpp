@@ -1,7 +1,10 @@
 #include <spdlog/spdlog.h>
 
+#include <chrono>
+#include <csignal>
 #include <memory>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include "communication/communication_events.h"
@@ -13,6 +16,14 @@
 #include "core/log.h"
 #include "core/placeholder_modules.h"
 #include "core/runtime.h"
+
+namespace {
+
+volatile std::sig_atomic_t g_stop_requested = 0;
+
+void handle_stop_signal(int) { g_stop_requested = 1; }
+
+}  // namespace
 
 int main(int argc, char** argv) {
     std::string config_path = "config/onboard.conf";
@@ -53,6 +64,15 @@ int main(int argc, char** argv) {
         plane::core::shutdown_logging();
         return 1;
     }
+
+    std::signal(SIGINT, handle_stop_signal);
+    std::signal(SIGTERM, handle_stop_signal);
+    spdlog::info("系统运行中，Ctrl+C 退出");
+    while (g_stop_requested == 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    spdlog::info("收到退出信号，开始关闭");
+
     runtime.shutdown();
 
     plane::core::shutdown_logging();
