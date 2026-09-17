@@ -20,6 +20,7 @@ add_executable(onboard
   src/main.cpp
   src/communication/serialization.cpp
   src/communication/zenoh_transport.cpp
+  src/communication/communication_module.cpp
   src/core/build_info.cpp
   src/core/config.cpp
   src/core/deps_check.cpp
