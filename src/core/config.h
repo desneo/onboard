@@ -21,6 +21,13 @@ struct AppConfig {
     int comm_ack_max_retries = 3;
     int comm_rx_queue_max = 1024;
     int gcs_link_timeout_ms = 2000;
+
+    std::string fc_link_type = "udp";
+    std::string fc_udp_url = "udp://:14540";
+    std::string fc_serial_device = "/dev/ttyUSB0";
+    int fc_serial_baud = 57600;
+    int fc_heartbeat_timeout_ms = 2000;
+    double fc_route_speed_m_s = 5.0;
 };
 
 /// 从 key = value 文本文件加载配置；文件不存在时保留默认值并返回 false。

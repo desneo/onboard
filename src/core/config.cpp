@@ -63,6 +63,18 @@ bool load_config(const std::string& path, AppConfig& out) {
             out.comm_rx_queue_max = std::stoi(value);
         } else if (key == "gcs_link_timeout_ms") {
             out.gcs_link_timeout_ms = std::stoi(value);
+        } else if (key == "fc_link_type") {
+            out.fc_link_type = value;
+        } else if (key == "fc_udp_url") {
+            out.fc_udp_url = value;
+        } else if (key == "fc_serial_device") {
+            out.fc_serial_device = value;
+        } else if (key == "fc_serial_baud") {
+            out.fc_serial_baud = std::stoi(value);
+        } else if (key == "fc_heartbeat_timeout_ms") {
+            out.fc_heartbeat_timeout_ms = std::stoi(value);
+        } else if (key == "fc_route_speed_m_s") {
+            out.fc_route_speed_m_s = std::stod(value);
         } else {
             spdlog::warn("未知配置项: {}", key);
         }
