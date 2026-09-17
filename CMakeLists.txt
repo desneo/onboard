@@ -27,6 +27,7 @@ add_executable(onboard
   src/core/log.cpp
   src/core/placeholder_modules.cpp
   src/core/runtime.cpp
+  src/state/state_store.cpp
 )
 target_include_directories(onboard PRIVATE src)
 target_compile_options(onboard PRIVATE -Wall -Wextra)
