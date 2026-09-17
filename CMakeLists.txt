@@ -19,6 +19,7 @@ include(cmake/Dependencies.cmake)
 add_executable(onboard
   src/main.cpp
   src/core/build_info.cpp
+  src/core/config.cpp
   src/core/deps_check.cpp
   src/core/log.cpp
 )
