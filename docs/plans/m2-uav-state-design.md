@@ -113,7 +113,7 @@ class NoTaskStateProvider final : public TaskStateProvider {
 
 | key | 默认 | 说明 |
 |---|---|---|
-| `gcs_link_timeout_ms` | 5000 | 超过该时长未收到 GCS 报文判定链路断开 |
+| `gcs_link_timeout_ms` | 2000 | 超过该时长未收到 GCS 报文判定链路断开（与飞控连接判定的 2 秒口径一致） |
 | `state_report_period_ms` | 1000 | 复用 M1 配置项，本机/任务状态上报周期 |
 
 ### 4.5 main 接线
@@ -141,7 +141,7 @@ class NoTaskStateProvider final : public TaskStateProvider {
    - gcs_sim 每秒收到 1 条 `VehicleState`（planeId=uav1）与 1 条 `TaskState`（status=None）；
 3. 周期可配：用临时配置（`state_report_period_ms=300`）启动 onboard，gcs_sim 观察到约 3 条/秒；
 4. 他机状态：`gcs_sim --plane-id uav1 --send-peer-state uav2` → onboard 日志出现 `他机状态更新: uav2`；
-5. GCS 链路：gcs_sim 发送任一报文后 onboard 日志 `地面站链路: connected=true`；gcs_sim 退出且超过 `gcs_link_timeout_ms` 后 onboard 日志 `地面站链路: connected=false`（验证时可用临时配置把阈值调小至 1000 ms）；
+5. GCS 链路：gcs_sim 发送任一报文后 onboard 日志 `地面站链路: connected=true`；gcs_sim 退出且超过 `gcs_link_timeout_ms`（默认 2000 ms）后 onboard 日志 `地面站链路: connected=false`；
 6. 回归：M1 的 TaskInfo/Command Ack 行为不受影响。
 
 ## 7. M2 不做

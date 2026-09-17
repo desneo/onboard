@@ -401,8 +401,8 @@ M3、M6、M9 与主线可并行；M10 必须最后。
 | `plans/m0-project-skeleton.md` | M0 任务级计划与执行记录 | 已完成（d48569f..94bdad3） |
 | `plans/m1-communication-design.md` | M1 Change Design（通信基础） | 已确认并实施 |
 | `plans/m1-communication-tasks.md` | M1 任务级计划与执行记录 | 已完成并通过验收 |
-| `plans/m2-uav-state-design.md` | M2 Change Design（UAV 状态管理与周期上报） | 待确认 |
-| `plans/m2-uav-state-tasks.md` | M2 任务级计划 | 待生成 |
+| `plans/m2-uav-state-design.md` | M2 Change Design（UAV 状态管理与周期上报） | 已确认（GCS 链路 2s） |
+| `plans/m2-uav-state-tasks.md` | M2 任务级计划 | 待执行 |
 
 约定：
 
