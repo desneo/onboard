@@ -25,7 +25,7 @@ M1 交付 Communication 模块的通信底座：
 | # | 决策 |
 |---|---|
 | 1 | 线格式 `payload` 为 JSON 字符串（与 `message.h` 注释一致） |
-| 2 | Topic 映射：GCS→UAV 用 `/sendToPlane/<plane_id>`；UAV→GCS（状态/Ack）用 `/sendToStation`；广播用 `/sendToAll` |
+| 2 | Topic 映射：GCS→UAV 用 `sendToPlane/<plane_id>`；UAV→GCS（状态/Ack）用 `sendToStation`；广播用 `sendToAll` |
 | 3 | 出站可靠性按类型：Alert/Ack 可靠（超时重试），VehicleState/TaskState best-effort |
 | 4 | `Message` 信封增加 `senderId` 字段（跨仓修改 `common_include/message.h`） |
 
@@ -53,15 +53,16 @@ struct Message {
 
 | 场景 | Topic |
 |---|---|
-| GCS → 指定 UAV | `/sendToPlane/<plane_id>` |
-| UAV → GCS（状态、Ack、告警） | `/sendToStation` |
-| 广播（任意方） | `/sendToAll` |
-| UAV 订阅 | `/sendToPlane/<config.plane_id>`、`/sendToAll` |
+| GCS → 指定 UAV | `sendToPlane/<plane_id>` |
+| UAV → GCS（状态、Ack、告警） | `sendToStation` |
+| 广播（任意方） | `sendToAll` |
+| UAV 订阅 | `sendToPlane/<config.plane_id>`、`sendToAll` |
 
-- Ack 路由：`senderId == station_id` → 发 `/sendToStation`；否则发 `/sendToPlane/<senderId>`。
-- 自消息过滤：`senderId == plane_id` 的入站消息丢弃（防止 `/sendToAll` 回环）。
+- Ack 路由：`senderId == station_id` → 发 `sendToStation`；否则发 `sendToPlane/<senderId>`。
+- 自消息过滤：`senderId == plane_id` 的入站消息丢弃（防止 `sendToAll` 回环）。
 - 连接：默认使用 Zenoh 默认发现；可通过配置 `zenoh_connect` / `zenoh_listen` 指定 endpoint，应对无多播网络。
-- 注意：`topic_sendToPlane` 常量值 `/sendToPlane/{planeId}` 作为前缀模板使用，订阅键为 `/sendToPlane/<plane_id>`（不做字符串格式化假设）。
+- 注意：`topic_sendToPlane` 常量值 `sendToPlane/{planeId}` 作为前缀模板使用，订阅键为 `sendToPlane/<plane_id>`（不做字符串格式化假设）。
+- Zenoh 1.x 的 key expression 不允许前导 `/`；`message.h` 的 topic 常量已统一为无前导 `/` 的形式（2026-09-17 用户确认）。Zenoh 边界保留去 `/` 规范化以兼容旧值。
 
 ## 5. 线格式
 
@@ -167,12 +168,12 @@ pending/重试：`messageId → {wire, topic, deadline, attempts}`；工作线�
 
 默认行为（模拟一次 GCS 交互）：
 
-1. 订阅 `/sendToStation`；
-2. 向 `/sendToPlane/<plane-id>` 发送 TaskInfo（Start）；
+1. 订阅 `sendToStation`；
+2. 向 `sendToPlane/<plane-id>` 发送 TaskInfo（Start）；
 3. 等待并打印对应 Ack（按 ackId 匹配）；
-4. 向 `/sendToPlane/<plane-id>` 发送 Command（Arm）；
+4. 向 `sendToPlane/<plane-id>` 发送 Command（Arm）；
 5. 等待 Ack，打印；
-6. 继续打印收到的 `/sendToStation` 消息 3 秒后退出；
+6. 继续打印收到的 `sendToStation` 消息 3 秒后退出；
 7. 收到 Alert/Ack 类消息按协议回 Ack。
 
 选项：

@@ -854,8 +854,8 @@ bool ZenohTransport::open(const ZenohEndpoints& endpoints, std::string& error) {
             config.insert_json5("listen/endpoints", endpoints_json5_array(endpoints.listen));
         }
         zenoh::ZResult result = Z_OK;
-        zenoh::Session session =
-            zenoh::Session::open(std::move(config), zenoh::SessionOptions::create_default(), &result);
+        zenoh::Session session = zenoh::Session::open(
+            std::move(config), zenoh::Session::SessionOptions::create_default(), &result);
         if (result != Z_OK) {
             error = "Zenoh Session 打开失败";
             return false;
@@ -888,7 +888,7 @@ bool ZenohTransport::subscribe(const std::string& key_expr, SampleHandler handle
             [handler = std::move(handler)](zenoh::Sample& sample) {
                 handler(sample.get_payload().as_string());
             },
-            []() {}, zenoh::SubscriberOptions::create_default(), &result);
+            []() {}, zenoh::Session::SubscriberOptions::create_default(), &result);
         if (result != Z_OK) {
             error = "订阅失败: " + key_expr;
             return false;
@@ -909,7 +909,7 @@ bool ZenohTransport::put(const std::string& key_expr, const std::string& payload
     try {
         zenoh::ZResult result = Z_OK;
         impl_->session->put(zenoh::KeyExpr(key_expr), zenoh::Bytes(payload),
-                            zenoh::PutOptions::create_default(), &result);
+                            zenoh::Session::PutOptions::create_default(), &result);
         if (result != Z_OK) {
             error = "发送失败: " + key_expr;
             return false;
@@ -1086,12 +1086,12 @@ bool CommunicationModule::start() {
         return false;
     }
     const auto rx_handler = [this](const std::string& payload) { enqueue_wire(payload); };
-    if (!transport_.subscribe("/sendToPlane/" + config_.plane_id, rx_handler, error)) {
-        report_error("订阅 /sendToPlane 失败: " + error);
+    if (!transport_.subscribe("sendToPlane/" + config_.plane_id, rx_handler, error)) {
+        report_error("订阅 sendToPlane 失败: " + error);
         return false;
     }
     if (!transport_.subscribe(std::string(plane::model::topic_sendToAll), rx_handler, error)) {
-        report_error("订阅 /sendToAll 失败: " + error);
+        report_error("订阅 sendToAll 失败: " + error);
         return false;
     }
 
@@ -1122,7 +1122,7 @@ bool CommunicationModule::sendToStation(const OutgoingMessage& message) {
 }
 
 bool CommunicationModule::sendToPlane(const std::string& plane_id, const OutgoingMessage& message) {
-    return send_message("/sendToPlane/" + plane_id, message);
+    return send_message("sendToPlane/" + plane_id, message);
 }
 
 bool CommunicationModule::sendToAll(const OutgoingMessage& message) {
@@ -1264,7 +1264,7 @@ bool CommunicationModule::send_ack(const plane::model::Message& envelope) {
     ack.ackId = envelope.messageId;
     const std::string topic = envelope.senderId == config_.station_id
                                   ? std::string(plane::model::topic_sendToStation)
-                                  : "/sendToPlane/" + envelope.senderId;
+                                  : "sendToPlane/" + envelope.senderId;
     return send_message(topic, OutgoingMessage{ack});
 }
 
@@ -1529,7 +1529,7 @@ std::string send_typed(const zenoh::Session& session, const Options& options,
                        const std::string& type, const std::string& payload,
                        std::uint64_t sequence) {
     const std::string message_id = options.sender_id + "-" + std::to_string(sequence);
-    const std::string topic = "/sendToPlane/" + options.plane_id;
+    const std::string topic = "sendToPlane/" + options.plane_id;
     session.put(zenoh::KeyExpr(topic), zenoh::Bytes(build_wire(options.sender_id, message_id, type, payload)));
     spdlog::info("已发送 {}: messageId={}", type, message_id);
     return message_id;
@@ -1571,7 +1571,7 @@ int main(int argc, char** argv) {
                 const nlohmann::json payload{{"ackId", envelope.message_id}};
                 const std::string message_id =
                     options.sender_id + "-ack-" + std::to_string(++sequence);
-                const std::string topic = "/sendToPlane/" + envelope.sender_id;
+                const std::string topic = "sendToPlane/" + envelope.sender_id;
                 session.put(zenoh::KeyExpr(topic),
                             zenoh::Bytes(build_wire(options.sender_id, message_id, "Ack", payload.dump())));
             }
@@ -1689,7 +1689,7 @@ Expected：
 ./build/gcs_sim --plane-id uav1 --no-ack; echo "exit=$?"
 ```
 
-Expected：onboard 出现 `可靠消息重试: topic=/sendToStation ...`（≥1 次）与 `通信错误事件: 可靠消息确认超时...`；gcs_sim exit=0（它仍收到了 onboard 的 Ack，只是不回 ack）。
+Expected：onboard 出现 `可靠消息重试: topic=sendToStation ...`（≥1 次）与 `通信错误事件: 可靠消息确认超时...`；gcs_sim exit=0（它仍收到了 onboard 的 Ack，只是不回 ack）。
 
 - [ ] Step 4: 自消息过滤
 
