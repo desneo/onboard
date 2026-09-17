@@ -1,0 +1,127 @@
+#include "communication/zenoh_transport.h"
+
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+#include <zenoh/api.hxx>
+
+namespace plane::communication {
+namespace {
+
+std::string endpoints_json5_array(const std::string& comma_separated) {
+    std::string result = "[";
+    bool first = true;
+    std::size_t begin = 0;
+    while (begin <= comma_separated.size()) {
+        const std::size_t end = comma_separated.find(',', begin);
+        std::string item = comma_separated.substr(begin, end - begin);
+        const auto not_space = item.find_first_not_of(" \t");
+        const auto last = item.find_last_not_of(" \t");
+        item = not_space == std::string::npos ? std::string{} : item.substr(not_space, last - not_space + 1);
+        if (!item.empty()) {
+            if (!first) {
+                result += ",";
+            }
+            result += "\"" + item + "\"";
+            first = false;
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        begin = end + 1;
+    }
+    result += "]";
+    return result;
+}
+
+}  // namespace
+
+struct ZenohTransport::Impl {
+    std::optional<zenoh::Session> session;
+    std::vector<zenoh::Subscriber<void>> subscribers;
+};
+
+ZenohTransport::ZenohTransport() = default;
+ZenohTransport::~ZenohTransport() = default;
+
+bool ZenohTransport::open(const ZenohEndpoints& endpoints, std::string& error) {
+    if (!impl_) {
+        impl_ = std::make_unique<Impl>();
+    }
+    try {
+        zenoh::Config config = endpoints.config_file.empty() ? zenoh::Config::create_default()
+                                                             : zenoh::Config::from_file(endpoints.config_file);
+        if (!endpoints.connect.empty()) {
+            config.insert_json5("connect/endpoints", endpoints_json5_array(endpoints.connect));
+        }
+        if (!endpoints.listen.empty()) {
+            config.insert_json5("listen/endpoints", endpoints_json5_array(endpoints.listen));
+        }
+        zenoh::ZResult result = Z_OK;
+        zenoh::Session session =
+            zenoh::Session::open(std::move(config), zenoh::Session::SessionOptions::create_default(), &result);
+        if (result != Z_OK) {
+            error = "Zenoh Session 打开失败";
+            return false;
+        }
+        impl_->session.emplace(std::move(session));
+        return true;
+    } catch (const zenoh::ZException& e) {
+        error = e.what();
+        return false;
+    }
+}
+
+void ZenohTransport::close() {
+    if (!impl_) {
+        return;
+    }
+    impl_->subscribers.clear();
+    impl_->session.reset();
+}
+
+bool ZenohTransport::subscribe(const std::string& key_expr, SampleHandler handler, std::string& error) {
+    if (!impl_ || !impl_->session.has_value()) {
+        error = "Session 未打开";
+        return false;
+    }
+    try {
+        zenoh::ZResult result = Z_OK;
+        zenoh::Subscriber<void> subscriber = impl_->session->declare_subscriber(
+            zenoh::KeyExpr(key_expr),
+            [handler = std::move(handler)](zenoh::Sample& sample) { handler(sample.get_payload().as_string()); },
+            []() {}, zenoh::Session::SubscriberOptions::create_default(), &result);
+        if (result != Z_OK) {
+            error = "订阅失败: " + key_expr;
+            return false;
+        }
+        impl_->subscribers.push_back(std::move(subscriber));
+        return true;
+    } catch (const zenoh::ZException& e) {
+        error = e.what();
+        return false;
+    }
+}
+
+bool ZenohTransport::put(const std::string& key_expr, const std::string& payload, std::string& error) {
+    if (!impl_ || !impl_->session.has_value()) {
+        error = "Session 未打开";
+        return false;
+    }
+    try {
+        zenoh::ZResult result = Z_OK;
+        impl_->session->put(zenoh::KeyExpr(key_expr), zenoh::Bytes(payload),
+                            zenoh::Session::PutOptions::create_default(), &result);
+        if (result != Z_OK) {
+            error = "发送失败: " + key_expr;
+            return false;
+        }
+        return true;
+    } catch (const zenoh::ZException& e) {
+        error = e.what();
+        return false;
+    }
+}
+
+}  // namespace plane::communication
