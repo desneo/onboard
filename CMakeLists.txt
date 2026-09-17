@@ -22,6 +22,8 @@ add_executable(onboard
   src/core/config.cpp
   src/core/deps_check.cpp
   src/core/log.cpp
+  src/core/placeholder_modules.cpp
+  src/core/runtime.cpp
 )
 target_include_directories(onboard PRIVATE src)
 target_compile_options(onboard PRIVATE -Wall -Wextra)

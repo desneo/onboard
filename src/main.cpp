@@ -1,11 +1,14 @@
 #include <spdlog/spdlog.h>
 
 #include <string>
+#include <utility>
 
 #include "core/build_info.h"
 #include "core/config.h"
 #include "core/deps_check.h"
 #include "core/log.h"
+#include "core/placeholder_modules.h"
+#include "core/runtime.h"
 
 int main(int argc, char** argv) {
     std::string config_path = "config/onboard.conf";
@@ -31,6 +34,16 @@ int main(int argc, char** argv) {
                  build_info.build_type);
     spdlog::info("配置: safe_height_m={} state_report_period_ms={}", config.system_param.safeHeight_m,
                  config.state_report_period_ms);
+
+    plane::core::Runtime runtime;
+    for (auto& module : plane::core::make_placeholder_modules()) {
+        runtime.add_module(std::move(module));
+    }
+    if (!runtime.run()) {
+        plane::core::shutdown_logging();
+        return 1;
+    }
+    runtime.shutdown();
 
     plane::core::shutdown_logging();
     return 0;
