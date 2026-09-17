@@ -471,7 +471,7 @@ UAV State Management 是系统统一的 UAV 状态来源。
 - 其他 UAV 最新状态；
 - GCS 相关状态。
 
-状态字段以 SPEC.md 第 4 章为准（含位置、高度、姿态、NED 速度与空速、电压、飞行模式、飞控连接状态；地面站状态含通信连接状态、空速、电压、WGS84 经纬度）。本架构不另行定义字段集合，避免与 SPEC 重复。
+状态字段以 SPEC.md 第 4 章为准（含位置、高度、姿态、NED 速度与空速、电压、飞行模式、飞控连接状态；地面站仅维护通信链路状态：最近收到地面站报文时间，阈值可配）。本架构不另行定义字段集合，避免与 SPEC 重复。
 
 状态来源包括：
 
@@ -752,13 +752,13 @@ Communication 是系统统一网络通信基础设施。
 
 - `sendToStation`：发往地面站；
 - `sendToPlane`：发往指定无人机；
-- `sendToAll`：群发。
+- `sendToAll`：向除本机外的所有节点投递（语义为全员送达；优先单播路由，不依赖网络广播）。
 
-优先使用 `sendToStation` / `sendToPlane` 点对点发送，避免不必要的 `sendToAll` 广播。
+优先使用 `sendToStation` / `sendToPlane` 点对点发送，避免不必要的 `sendToAll`。
 
 序列化：通信模块接收外部 `std::string`，根据 `messagetype` 反序列化为 `nlohmann::json` 再转为内部 class，放入 eventcpp 分发给业务模块。`nlohmann_json` 不出通信模块，业务模块不直接依赖 JSON。
 
-必须按可配置周期，将本机状态上报给地面站及其他无人机，并将当前任务状态上报给地面站（当前任务状态内容含任务状态、当前执行行为树、当前执行节点；无任务时为「无任务」）。数据从 UAV State Management / Task Scheduler 查询，由 Communication 发送。
+必须按可配置周期，将本机状态通过 `sendToAll` 上报给地面站及其他无人机，并将当前任务状态通过 `sendToStation` 上报给地面站（当前任务状态内容含任务状态、当前执行行为树、当前执行节点；无任务时为「无任务」）。数据从 UAV State Management / Task Scheduler 查询，由 Communication 发送。
 
 主要职责：
 
@@ -806,7 +806,7 @@ Communication 不负责：
 通信策略：
 
 - 优先单播；
-- 尽量减少广播；
+- `sendToAll` 表示向除本机外的所有节点投递，不依赖网络广播；
 - 实时状态允许丢失；
 - 最新有效状态具有权威性。
 
