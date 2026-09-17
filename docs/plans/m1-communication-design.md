@@ -16,7 +16,8 @@ M1 交付 Communication 模块的通信底座：
 - 入站控制消息（TaskInfo/Command）的接收确认（Ack）；
 - 出站按类型可靠性：控制类带 pending/超时/重试，状态类 best-effort；
 - 进程内 EventBus（core，eventcpp 封装）；
-- 模拟 GCS 联调工具 `gcs_sim`。
+- 模拟 GCS 联调工具 `gcs_sim`；
+- 进程常驻运行循环（SIGINT/SIGTERM 优雅退出，Task 9 补充）。
 
 不在 M1：状态管理、周期上报（M2）、任务/指令业务处理（M4）、告警业务（M9）、8 架规模验证（M10）。
 

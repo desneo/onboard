@@ -2,6 +2,7 @@
 
 > 设计依据：`m1-communication-design.md`（已确认）。冲突时以设计文档与 `ARCHITECTURE.md` 为准。
 > 执行位置：工程根 `onboard/`。
+> 状态：已完成并通过 Task 9 验收（2026-09-17）。执行偏差与证据见文末「执行记录与偏差」。
 > 验证原则：每个 Task 结束后 x64 Release 构建通过；不写测试代码（SPEC §11）。运行时行为在 Task 7/8/9 集中验证。
 > 提交：每个 Task 一个提交（Task 1 涉及 common 仓，提交需用户确认）。
 
@@ -18,7 +19,7 @@
 
 - Produces: `plane::model::Message{senderId, messageId, type, payload}`（后续 Task 4/6 依赖）
 
-- [ ] Step 1: 修改 `message.h` 的 `Message` 定义
+- [x] Step 1: 修改 `message.h` 的 `Message` 定义
 
 ```cpp
 /// 消息体最外层包裹。
@@ -30,7 +31,7 @@ struct Message {
 };
 ```
 
-- [ ] Step 2: 同步 `docs/ARCHITECTURE.md` §28.6
+- [x] Step 2: 同步 `docs/ARCHITECTURE.md` §28.6
 
 将数据模型要点中的：
 
@@ -44,13 +45,13 @@ struct Message {
 - 报文统一为 `Message{senderId, messageId, type, payload}`，`payload` 为 JSON 字符串；...
 ```
 
-- [ ] Step 3: 同步 ADR-017 Consequences，追加一条
+- [x] Step 3: 同步 ADR-017 Consequences，追加一条
 
 ```text
 - `Message` 增加 `senderId`，用于 Ack 路由与消息来源标识。
 ```
 
-- [ ] Step 4: 构建验证
+- [x] Step 4: 构建验证
 
 ```bash
 cmake --build build -j
@@ -58,7 +59,7 @@ cmake --build build -j
 
 Expected: 构建通过（`config.cpp` 引用 `message.h`，可验证头文件兼容）。
 
-- [ ] Step 5: 提交
+- [x] Step 5: 提交
 
 onboard 仓（文档）：
 
@@ -91,7 +92,7 @@ git -C ../common commit -m "feat(common): Message 信封增加 senderId"
 - Produces: `plane::communication::OutgoingMessage`、`CommunicationApi`
 - Produces: event ID 常量与 `CommunicationError`
 
-- [ ] Step 1: 写 `src/core/event_bus.h`
+- [x] Step 1: 写 `src/core/event_bus.h`
 
 ```cpp
 #pragma once
@@ -154,7 +155,7 @@ class EventBus {
 }  // namespace plane::core
 ```
 
-- [ ] Step 2: 写 `src/communication/communication_api.h`
+- [x] Step 2: 写 `src/communication/communication_api.h`
 
 ```cpp
 #pragma once
@@ -183,7 +184,7 @@ class CommunicationApi {
 }  // namespace plane::communication
 ```
 
-- [ ] Step 3: 写 `src/communication/communication_events.h`
+- [x] Step 3: 写 `src/communication/communication_events.h`
 
 ```cpp
 #pragma once
@@ -211,7 +212,7 @@ inline constexpr std::string_view kError = "communication.error";
 }  // namespace plane::communication
 ```
 
-- [ ] Step 4: 修改 `src/main.cpp`，创建 EventBus 并订阅错误事件
+- [x] Step 4: 修改 `src/main.cpp`，创建 EventBus 并订阅错误事件
 
 在 `main` 中 `runtime` 创建之前插入：
 
@@ -231,7 +232,7 @@ inline constexpr std::string_view kError = "communication.error";
 #include "core/event_bus.h"
 ```
 
-- [ ] Step 5: 构建验证
+- [x] Step 5: 构建验证
 
 ```bash
 cmake --build build -j
@@ -240,7 +241,7 @@ cmake --build build -j
 
 Expected: 构建通过；运行输出与 M0 一致（事件订阅无消费者触发），exit=0。
 
-- [ ] Step 6: 提交
+- [x] Step 6: 提交
 
 ```bash
 git add src/core/event_bus.h src/communication/communication_events.h \
@@ -262,7 +263,7 @@ git commit -m "feat(m1): 增加 EventBus 与通信对外接口"
 
 - Produces: `AppConfig{plane_id, station_id, zenoh_config_file, zenoh_connect, zenoh_listen, comm_ack_timeout_ms, comm_ack_max_retries, comm_rx_queue_max}`（Task 5/6 依赖）
 
-- [ ] Step 1: 修改 `src/core/config.h` 的 `AppConfig`
+- [x] Step 1: 修改 `src/core/config.h` 的 `AppConfig`
 
 ```cpp
 struct AppConfig {
@@ -281,7 +282,7 @@ struct AppConfig {
 };
 ```
 
-- [ ] Step 2: 修改 `src/core/config.cpp` 的解析分支
+- [x] Step 2: 修改 `src/core/config.cpp` 的解析分支
 
 在 `state_report_period_ms` 分支之后、`else` 之前追加：
 
@@ -304,7 +305,7 @@ struct AppConfig {
             out.comm_rx_queue_max = std::stoi(value);
 ```
 
-- [ ] Step 3: 修改 `config/onboard.conf`，追加
+- [x] Step 3: 修改 `config/onboard.conf`，追加
 
 ```text
 # 通信配置
@@ -318,7 +319,7 @@ comm_ack_max_retries = 3
 comm_rx_queue_max = 1024
 ```
 
-- [ ] Step 4: 构建并运行
+- [x] Step 4: 构建并运行
 
 ```bash
 cmake --build build -j
@@ -327,7 +328,7 @@ cmake --build build -j
 
 Expected: 构建通过；配置加载无报错，输出与 M0 一致（通信模块在 Task 7 才接入），exit=0。
 
-- [ ] Step 5: 提交
+- [x] Step 5: 提交
 
 ```bash
 git add src/core/config.h src/core/config.cpp config/onboard.conf
@@ -349,7 +350,7 @@ git commit -m "feat(m1): 增加通信相关配置项"
 - Consumes: `message.h`（Task 1）、`OutgoingMessage`（Task 2）
 - Produces: `to_payload/from_payload`（8 类载荷）、`encode_envelope/decode_envelope`、`message_type_to_string/from_string`、`next_message_id`、`make_message`
 
-- [ ] Step 1: 写 `src/communication/serialization.h`
+- [x] Step 1: 写 `src/communication/serialization.h`
 
 ```cpp
 #pragma once
@@ -390,7 +391,7 @@ bool make_message(const std::string& sender_id, const OutgoingMessage& value,
 }  // namespace plane::communication
 ```
 
-- [ ] Step 2: 写 `src/communication/serialization.cpp`
+- [x] Step 2: 写 `src/communication/serialization.cpp`
 
 ```cpp
 #include "communication/serialization.h"
@@ -711,13 +712,13 @@ bool make_message(const std::string& sender_id, const OutgoingMessage& value,
 }  // namespace plane::communication
 ```
 
-- [ ] Step 3: 更新 `CMakeLists.txt` 的 `add_executable`，追加
+- [x] Step 3: 更新 `CMakeLists.txt` 的 `add_executable`，追加
 
 ```cmake
   src/communication/serialization.cpp
 ```
 
-- [ ] Step 4: 构建验证
+- [x] Step 4: 构建验证
 
 ```bash
 cmake --build build -j
@@ -725,7 +726,7 @@ cmake --build build -j
 
 Expected: 构建通过，无警告。
 
-- [ ] Step 5: 提交
+- [x] Step 5: 提交
 
 ```bash
 git add src/communication/serialization.h src/communication/serialization.cpp CMakeLists.txt
@@ -746,7 +747,7 @@ git commit -m "feat(m1): 增加通信报文序列化"
 
 - Produces: `plane::communication::ZenohTransport`（open/close/subscribe/put），Zenoh 头文件不出 .cpp
 
-- [ ] Step 1: 写 `src/communication/zenoh_transport.h`
+- [x] Step 1: 写 `src/communication/zenoh_transport.h`
 
 ```cpp
 #pragma once
@@ -788,7 +789,7 @@ class ZenohTransport {
 }  // namespace plane::communication
 ```
 
-- [ ] Step 2: 写 `src/communication/zenoh_transport.cpp`
+- [x] Step 2: 写 `src/communication/zenoh_transport.cpp`
 
 ```cpp
 #include "communication/zenoh_transport.h"
@@ -924,13 +925,13 @@ bool ZenohTransport::put(const std::string& key_expr, const std::string& payload
 }  // namespace plane::communication
 ```
 
-- [ ] Step 3: 更新 `CMakeLists.txt` 的 `add_executable`，追加
+- [x] Step 3: 更新 `CMakeLists.txt` 的 `add_executable`，追加
 
 ```cmake
   src/communication/zenoh_transport.cpp
 ```
 
-- [ ] Step 4: 构建验证
+- [x] Step 4: 构建验证
 
 ```bash
 cmake --build build -j
@@ -938,7 +939,7 @@ cmake --build build -j
 
 Expected: 构建通过，无警告。运行时行为在 Task 7/8 验证。
 
-- [ ] Step 5: 提交
+- [x] Step 5: 提交
 
 ```bash
 git add src/communication/zenoh_transport.h src/communication/zenoh_transport.cpp CMakeLists.txt
@@ -960,7 +961,7 @@ git commit -m "feat(m1): 增加 Zenoh 传输封装"
 - Consumes: `EventBus`（Task 2）、`AppConfig`（Task 3）、`serialization`（Task 4）、`ZenohTransport`（Task 5）
 - Produces: `plane::communication::CommunicationModule`（`IModule` + `CommunicationApi`）
 
-- [ ] Step 1: 写 `src/communication/communication_module.h`
+- [x] Step 1: 写 `src/communication/communication_module.h`
 
 ```cpp
 #pragma once
@@ -1032,7 +1033,7 @@ class CommunicationModule final : public plane::core::IModule, public Communicat
 }  // namespace plane::communication
 ```
 
-- [ ] Step 2: 写 `src/communication/communication_module.cpp`
+- [x] Step 2: 写 `src/communication/communication_module.cpp`
 
 ```cpp
 #include "communication/communication_module.h"
@@ -1318,13 +1319,13 @@ std::int64_t CommunicationModule::now_ms() const {
 }  // namespace plane::communication
 ```
 
-- [ ] Step 3: 更新 `CMakeLists.txt` 的 `add_executable`，追加
+- [x] Step 3: 更新 `CMakeLists.txt` 的 `add_executable`，追加
 
 ```cmake
   src/communication/communication_module.cpp
 ```
 
-- [ ] Step 4: 构建验证
+- [x] Step 4: 构建验证
 
 ```bash
 cmake --build build -j
@@ -1332,7 +1333,7 @@ cmake --build build -j
 
 Expected: 构建通过，无警告。运行时行为在 Task 7/8 验证。
 
-- [ ] Step 5: 提交
+- [x] Step 5: 提交
 
 ```bash
 git add src/communication/communication_module.h src/communication/communication_module.cpp CMakeLists.txt
@@ -1354,7 +1355,7 @@ git commit -m "feat(m1): 增加 CommunicationModule"
 - Consumes: `CommunicationModule`（Task 6）
 - Produces: `make_placeholder_modules(skip)`；运行时真实通信模块替换占位
 
-- [ ] Step 1: 修改 `src/core/placeholder_modules.h`
+- [x] Step 1: 修改 `src/core/placeholder_modules.h`
 
 ```cpp
 #pragma once
@@ -1375,7 +1376,7 @@ std::vector<std::unique_ptr<IModule>> make_placeholder_modules(
 }  // namespace plane::core
 ```
 
-- [ ] Step 2: 修改 `src/core/placeholder_modules.cpp`
+- [x] Step 2: 修改 `src/core/placeholder_modules.cpp`
 
 在 include 区加入 `<algorithm>`，函数体改为：
 
@@ -1399,7 +1400,7 @@ std::vector<std::unique_ptr<IModule>> make_placeholder_modules(const std::vector
 }
 ```
 
-- [ ] Step 3: 修改 `src/main.cpp`，注册真实通信模块
+- [x] Step 3: 修改 `src/main.cpp`，注册真实通信模块
 
 将 M0 的模块注册块替换为：
 
@@ -1420,7 +1421,7 @@ std::vector<std::unique_ptr<IModule>> make_placeholder_modules(const std::vector
 #include "communication/communication_module.h"
 ```
 
-- [ ] Step 4: 构建并运行
+- [x] Step 4: 构建并运行
 
 ```bash
 cmake --build build -j
@@ -1429,7 +1430,7 @@ cmake --build build -j
 
 Expected: 构建通过；日志中 `Communication 已启动: plane_id=uav1, station_id=gcs`，其余 10 个占位模块 init/start/stop 正常，exit=0。
 
-- [ ] Step 5: 提交
+- [x] Step 5: 提交
 
 ```bash
 git add src/core/placeholder_modules.h src/core/placeholder_modules.cpp src/main.cpp
@@ -1450,7 +1451,7 @@ git commit -m "feat(m1): 接入真实 Communication 模块"
 - Consumes: `message.h`（Task 1）、Zenoh
 - Produces: 可执行目标 `gcs_sim`（供 Task 9 验收使用）
 
-- [ ] Step 1: 写 `tools/gcs_sim/main.cpp`
+- [x] Step 1: 写 `tools/gcs_sim/main.cpp`
 
 ```cpp
 #include <atomic>
@@ -1611,7 +1612,7 @@ int main(int argc, char** argv) {
 }
 ```
 
-- [ ] Step 2: 更新 `CMakeLists.txt`，在 `onboard` 目标之后追加
+- [x] Step 2: 更新 `CMakeLists.txt`，在 `onboard` 目标之后追加
 
 ```cmake
 add_executable(gcs_sim tools/gcs_sim/main.cpp)
@@ -1627,7 +1628,7 @@ target_link_libraries(gcs_sim PRIVATE
 )
 ```
 
-- [ ] Step 3: 构建冒烟
+- [x] Step 3: 构建冒烟
 
 ```bash
 cmake --build build -j
@@ -1636,7 +1637,7 @@ test -x build/gcs_sim && echo "gcs_sim ok"
 
 Expected: 构建通过；`gcs_sim ok`。与 onboard 的联合验证在 Task 9。
 
-- [ ] Step 4: 提交
+- [x] Step 4: 提交
 
 ```bash
 git add tools/gcs_sim/main.cpp CMakeLists.txt
@@ -1652,7 +1653,7 @@ git commit -m "feat(m1): 增加 gcs_sim 联调工具"
 - Modify: `docs/plans/m1-communication-tasks.md`（勾选状态）
 - Modify: `docs/DEV_PLAN.md`（索引状态）
 
-- [ ] Step 1: 干净构建
+- [x] Step 1: 干净构建
 
 ```bash
 rm -rf build logs
@@ -1662,7 +1663,7 @@ cmake --build build -j
 
 Expected: 无 error；本项目代码无 warning。
 
-- [ ] Step 2: 入站控制与 Ack（终端 A/B）
+- [x] Step 2: 入站控制与 Ack（终端 A/B）
 
 终端 A：
 
@@ -1681,7 +1682,7 @@ Expected：
 - onboard 日志出现收到的 TaskInfo/Command 相关处理与 `Communication 已启动`；
 - gcs_sim 打印 `Ack 结果: TaskInfo=true, Command=true` 且退出码 0。
 
-- [ ] Step 3: 重试与超时（终端 A 保持运行）
+- [x] Step 3: 重试与超时（终端 A 保持运行）
 
 终端 B：
 
@@ -1691,7 +1692,7 @@ Expected：
 
 Expected：onboard 出现 `可靠消息重试: topic=sendToStation ...`（≥1 次）与 `通信错误事件: 可靠消息确认超时...`；gcs_sim exit=0（它仍收到了 onboard 的 Ack，只是不回 ack）。
 
-- [ ] Step 4: 自消息过滤
+- [x] Step 4: 自消息过滤
 
 终端 B：
 
@@ -1701,21 +1702,21 @@ Expected：onboard 出现 `可靠消息重试: topic=sendToStation ...`（≥1 �
 
 Expected：onboard 不产生 TaskInfo/Command 事件日志（senderId 等于本机 plane_id，被丢弃）。
 
-- [ ] Step 5: 代码规范
+- [x] Step 5: 代码规范
 
 ```bash
 clang-format --dry-run --Werror $(git ls-files src tools)
 grep -rn "std::cout\|printf(" src/ tools/ || echo "no cout/printf"
 ```
 
-- [ ] Step 6: DoD 走查并更新文档
+- [x] Step 6: DoD 走查并更新文档
 
 逐条核对 DEV_PLAN §10 DoD，更新：
 
 - `docs/DEV_PLAN.md` §11 索引中 M1 状态 → 已完成；
 - 本文档头部状态与各 Task 勾选。
 
-- [ ] Step 7: 收尾提交（仅当有改动）
+- [x] Step 7: 收尾提交（仅当有改动）
 
 ```bash
 git add docs src tools CMakeLists.txt config
@@ -1729,3 +1730,17 @@ git commit -m "chore(m1): M1 验收与文档更新"
 - 若实现证明设计需要调整（例如 Zenoh 配置键、Ack 口径），先更新 `m1-communication-design.md` 并说明原因；
 - 架构层变化（如 Message 信封字段）需同步 `docs/ARCHITECTURE.md` 并经用户确认；
 - common 仓提交需用户确认。
+
+---
+
+## 执行记录与偏差
+
+1. **zenoh-cpp Options 为嵌套类型**（Task 5）：本地 zenoh-cpp 1.10.0 中 `SessionOptions`/`SubscriberOptions`/`PutOptions` 是 `zenoh::Session` 的嵌套类型，按实际 API 使用 `zenoh::Session::XxxOptions`。
+2. **Zenoh key expression 不允许前导 `/`**（Task 7 发现）：`message.h` 的 topic 常量已改为无前导 `/`（common 仓 `b819f45`）并同步本设计 §4；`communication_module` 与 `gcs_sim` 同步修改；Zenoh 边界保留去 `/` 规范化兼容旧值。
+3. **进程常驻运行循环**（Task 9 发现计划缺口）：原计划 main 在模块启动后立即退出，无法联调。已补充 SIGINT/SIGTERM 驱动的运行循环与优雅关闭；M0 的「启动后正常退出」由本里程碑升级为「常驻直到退出信号」。
+4. **Task 9 验收证据（2026-09-17）**
+   - Test A（正常联调）：gcs_sim `Ack 结果: TaskInfo=true, Command=true`，exit=0；onboard 无重试、无错误事件。
+   - Test B（`--no-ack`）：onboard 出现 6 次 `可靠消息重试`（2 条消息 × 3 次），随后 2 条 `通信错误事件: 可靠消息确认超时`；gcs_sim exit=0。
+   - Test C（`--sender-id uav1` 自消息过滤）：gcs_sim `Ack 结果: TaskInfo=false, Command=false`，exit=1；onboard 无重试、无错误事件（消息被 senderId 过滤丢弃）。
+   - Task 9 Step 2 中「onboard 日志出现 TaskInfo/Command 处理」以 gcs_sim 收到匹配的 Ack 为证据；事件发布本身在 M2 出现消费者后才可观测。
+5. `clang-format --dry-run --Werror $(git ls-files src tools)` 通过；`src/`、`tools/` 无 `std::cout/printf`。
