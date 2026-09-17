@@ -42,12 +42,12 @@ bool CommunicationModule::start() {
         return false;
     }
     const auto rx_handler = [this](const std::string& payload) { enqueue_wire(payload); };
-    if (!transport_.subscribe("/sendToPlane/" + config_.plane_id, rx_handler, error)) {
-        report_error("订阅 /sendToPlane 失败: " + error);
+    if (!transport_.subscribe("sendToPlane/" + config_.plane_id, rx_handler, error)) {
+        report_error("订阅 sendToPlane 失败: " + error);
         return false;
     }
     if (!transport_.subscribe(std::string(plane::model::topic_sendToAll), rx_handler, error)) {
-        report_error("订阅 /sendToAll 失败: " + error);
+        report_error("订阅 sendToAll 失败: " + error);
         return false;
     }
 
@@ -77,7 +77,7 @@ bool CommunicationModule::sendToStation(const OutgoingMessage& message) {
 }
 
 bool CommunicationModule::sendToPlane(const std::string& plane_id, const OutgoingMessage& message) {
-    return send_message("/sendToPlane/" + plane_id, message);
+    return send_message("sendToPlane/" + plane_id, message);
 }
 
 bool CommunicationModule::sendToAll(const OutgoingMessage& message) {
@@ -218,7 +218,7 @@ bool CommunicationModule::send_ack(const plane::model::Message& envelope) {
     plane::model::Ack ack;
     ack.ackId = envelope.messageId;
     const std::string topic = envelope.senderId == config_.station_id ? std::string(plane::model::topic_sendToStation)
-                                                                      : "/sendToPlane/" + envelope.senderId;
+                                                                      : "sendToPlane/" + envelope.senderId;
     return send_message(topic, OutgoingMessage{ack});
 }
 
