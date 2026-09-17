@@ -1,6 +1,7 @@
 # M2 任务级计划（UAV 状态管理与周期上报）
 
 > 设计依据：`m2-uav-state-design.md`（已确认，GCS 链路按 2 秒判定）。
+> 状态：已完成并通过 Task 7 验收（2026-09-17）。执行偏差与证据见文末。
 > 执行位置：工程根 `onboard/`。
 > 验证原则：每个 Task 结束后 x64 Release 构建通过；不写测试代码（SPEC §11）。运行时行为在 Task 6/7 集中验证。
 > 提交：每个 Task 一个提交。
@@ -20,7 +21,7 @@
 
 - Produces: `plane::state::GcsLinkState`、`StateStoreApi`、状态事件常量、`plane::task::TaskStateProvider` / `NoTaskStateProvider`
 
-- [ ] Step 1: 写 `src/state/state_types.h`
+- [x] Step 1: 写 `src/state/state_types.h`
 
 ```cpp
 #pragma once
@@ -38,7 +39,7 @@ struct GcsLinkState {
 }  // namespace plane::state
 ```
 
-- [ ] Step 2: 写 `src/state/state_store_api.h`
+- [x] Step 2: 写 `src/state/state_store_api.h`
 
 ```cpp
 #pragma once
@@ -69,7 +70,7 @@ class StateStoreApi {
 }  // namespace plane::state
 ```
 
-- [ ] Step 3: 写 `src/state/state_events.h`
+- [x] Step 3: 写 `src/state/state_events.h`
 
 ```cpp
 #pragma once
@@ -87,7 +88,7 @@ inline constexpr std::string_view kGcsLinkChanged = "state.gcs_link_changed";
 }  // namespace plane::state
 ```
 
-- [ ] Step 4: 写 `src/task/task_state_provider.h`
+- [x] Step 4: 写 `src/task/task_state_provider.h`
 
 ```cpp
 #pragma once
@@ -113,7 +114,7 @@ class NoTaskStateProvider final : public TaskStateProvider {
 }  // namespace plane::task
 ```
 
-- [ ] Step 5: 构建
+- [x] Step 5: 构建
 
 ```bash
 cmake --build build -j
@@ -121,7 +122,7 @@ cmake --build build -j
 
 Expected: 构建通过（接口头暂未被引用，编译验证在 Task 3/5）。
 
-- [ ] Step 6: 提交
+- [x] Step 6: 提交
 
 ```bash
 git add src/state/state_types.h src/state/state_store_api.h src/state/state_events.h src/task/task_state_provider.h
@@ -142,27 +143,27 @@ git commit -m "feat(m2): 增加状态与任务状态接口"
 
 - Produces: `AppConfig::gcs_link_timeout_ms`（默认 2000）
 
-- [ ] Step 1: `src/core/config.h` 的 `AppConfig` 中，在 `comm_rx_queue_max` 之后追加
+- [x] Step 1: `src/core/config.h` 的 `AppConfig` 中，在 `comm_rx_queue_max` 之后追加
 
 ```cpp
     int gcs_link_timeout_ms = 2000;
 ```
 
-- [ ] Step 2: `src/core/config.cpp` 解析分支中，在 `comm_rx_queue_max` 分支之后追加
+- [x] Step 2: `src/core/config.cpp` 解析分支中，在 `comm_rx_queue_max` 分支之后追加
 
 ```cpp
         } else if (key == "gcs_link_timeout_ms") {
             out.gcs_link_timeout_ms = std::stoi(value);
 ```
 
-- [ ] Step 3: `config/onboard.conf` 末尾追加
+- [x] Step 3: `config/onboard.conf` 末尾追加
 
 ```text
 # 地面站链路判定（2 秒未收到 GCS 报文判定断开）
 gcs_link_timeout_ms = 2000
 ```
 
-- [ ] Step 4: 构建并运行
+- [x] Step 4: 构建并运行
 
 ```bash
 cmake --build build -j
@@ -171,7 +172,7 @@ cmake --build build -j
 
 Expected: 构建通过；运行后无「未知配置项」警告，随后按 Ctrl+C 退出（exit=0）。
 
-- [ ] Step 5: 提交
+- [x] Step 5: 提交
 
 ```bash
 git add src/core/config.h src/core/config.cpp config/onboard.conf
@@ -193,7 +194,7 @@ git commit -m "feat(m2): 增加 GCS 链路超时配置"
 - Consumes: `StateStoreApi`/`GcsLinkState`（Task 1）、`AppConfig::gcs_link_timeout_ms`（Task 2）
 - Produces: `plane::state::StateStore`（`core::IModule` + `StateStoreApi`）
 
-- [ ] Step 1: 写 `src/state/state_store.h`
+- [x] Step 1: 写 `src/state/state_store.h`
 
 ```cpp
 #pragma once
@@ -253,7 +254,7 @@ class StateStore final : public plane::core::IModule, public StateStoreApi {
 }  // namespace plane::state
 ```
 
-- [ ] Step 2: 写 `src/state/state_store.cpp`
+- [x] Step 2: 写 `src/state/state_store.cpp`
 
 ```cpp
 #include "state/state_store.h"
@@ -408,13 +409,13 @@ std::int64_t StateStore::now_ms() const {
 }  // namespace plane::state
 ```
 
-- [ ] Step 3: `CMakeLists.txt` 的 `add_executable(onboard ...)` 文件列表中追加一行
+- [x] Step 3: `CMakeLists.txt` 的 `add_executable(onboard ...)` 文件列表中追加一行
 
 ```cmake
   src/state/state_store.cpp
 ```
 
-- [ ] Step 4: 构建并运行
+- [x] Step 4: 构建并运行
 
 ```bash
 cmake --build build -j
@@ -423,7 +424,7 @@ cmake --build build -j
 
 Expected: 构建通过；运行日志中占位模块 `UAV State Management` 仍存在（Task 6 才替换），Ctrl+C 退出，exit=0。
 
-- [ ] Step 5: 提交
+- [x] Step 5: 提交
 
 ```bash
 git add src/state/state_store.h src/state/state_store.cpp CMakeLists.txt
@@ -443,13 +444,13 @@ git commit -m "feat(m2): 增加 StateStore 状态管理"
 
 - Produces: `bool from_payload(const std::string&, plane::model::VehicleState&, std::string&)`
 
-- [ ] Step 1: `serialization.h` 的 `from_payload` 声明区追加
+- [x] Step 1: `serialization.h` 的 `from_payload` 声明区追加
 
 ```cpp
 bool from_payload(const std::string& payload, plane::model::VehicleState& out, std::string& error);
 ```
 
-- [ ] Step 2: `serialization.cpp` 在 `to_payload(const VehicleState&)` 之后新增实现
+- [x] Step 2: `serialization.cpp` 在 `to_payload(const VehicleState&)` 之后新增实现
 
 ```cpp
 bool from_payload(const std::string& payload, plane::model::VehicleState& out, std::string& error) {
@@ -483,7 +484,7 @@ bool from_payload(const std::string& payload, plane::model::VehicleState& out, s
 }
 ```
 
-- [ ] Step 3: 构建与格式
+- [x] Step 3: 构建与格式
 
 ```bash
 cmake --build build -j
@@ -492,7 +493,7 @@ clang-format --dry-run --Werror src/communication/serialization.h src/communicat
 
 Expected: 构建通过；格式通过（有差异先 `clang-format -i` 再构建）。
 
-- [ ] Step 4: 提交
+- [x] Step 4: 提交
 
 ```bash
 git add src/communication/serialization.h src/communication/serialization.cpp
@@ -514,7 +515,7 @@ git commit -m "feat(m2): 支持 VehicleState 解码"
 - Consumes: `StateStoreApi`（Task 1/3）、`TaskStateProvider`（Task 1）、`from_payload(VehicleState)`（Task 4）
 - Produces: 构造签名 `CommunicationModule(EventBus&, const AppConfig&, state::StateStoreApi&, task::TaskStateProvider&)`
 
-- [ ] Step 1: `communication_module.h` 修改
+- [x] Step 1: `communication_module.h` 修改
 
 1) include 区追加：
 
@@ -545,7 +546,7 @@ git commit -m "feat(m2): 支持 VehicleState 解码"
     std::int64_t last_report_ms_ = 0;
 ```
 
-- [ ] Step 2: `communication_module.cpp` 修改
+- [x] Step 2: `communication_module.cpp` 修改
 
 1) 构造函数定义改为：
 
@@ -604,7 +605,7 @@ void CommunicationModule::report_states() {
 }
 ```
 
-- [ ] Step 3: `src/main.cpp` 接线
+- [x] Step 3: `src/main.cpp` 接线
 
 include 区追加：
 
@@ -631,7 +632,7 @@ include 区追加：
 
 （`make_placeholder_modules` 的 skip 参数在 M1 已支持，无需改 placeholder_modules.cpp。）
 
-- [ ] Step 4: 构建并运行
+- [x] Step 4: 构建并运行
 
 ```bash
 cmake --build build -j
@@ -640,7 +641,7 @@ cmake --build build -j
 
 Expected: 构建通过；日志出现 `Communication 已启动`，真实 `UAV State Management` + 9 个占位模块，Ctrl+C 退出 exit=0。
 
-- [ ] Step 5: 格式与提交
+- [x] Step 5: 格式与提交
 
 ```bash
 clang-format --dry-run --Werror src/main.cpp src/communication/communication_module.h src/communication/communication_module.cpp
@@ -661,7 +662,7 @@ git commit -m "feat(m2): Communication 写入状态并周期上报"
 - Consumes: `sendToAll` 订阅（M2 上报）、`VehicleState`/`TaskState` 线格式
 - Produces: `--send-peer-state <plane-id>`、状态计数汇总
 
-- [ ] Step 1: Options 增加字段与解析
+- [x] Step 1: Options 增加字段与解析
 
 ```cpp
 struct Options {
@@ -681,7 +682,7 @@ struct Options {
             options.peer_plane_id = argv[++i];
 ```
 
-- [ ] Step 2: 订阅 `sendToAll` 并统计状态报文
+- [x] Step 2: 订阅 `sendToAll` 并统计状态报文
 
 1) 在 main 中新增计数器与订阅（与 `sendToStation` 使用同一回调）：
 
@@ -748,7 +749,7 @@ struct Options {
 
 2) 删除原 `subscriber` 内联 lambda，保留其余逻辑。
 
-- [ ] Step 3: 发送友机状态（在 Command 发送与 Ack 等待之后、listen 之前）
+- [x] Step 3: 发送友机状态（在 Command 发送与 Ack 等待之后、listen 之前）
 
 ```cpp
     if (!options.peer_plane_id.empty()) {
@@ -766,7 +767,7 @@ struct Options {
     }
 ```
 
-- [ ] Step 4: listen 结束后输出汇总
+- [x] Step 4: listen 结束后输出汇总
 
 ```cpp
     std::this_thread::sleep_for(std::chrono::seconds(options.listen_seconds));
@@ -775,7 +776,7 @@ struct Options {
     return task_acked && command_acked ? 0 : 1;
 ```
 
-- [ ] Step 5: 构建与格式
+- [x] Step 5: 构建与格式
 
 ```bash
 cmake --build build -j
@@ -784,7 +785,7 @@ clang-format --dry-run --Werror tools/gcs_sim/main.cpp
 
 Expected: 构建通过；格式通过（有差异先 `clang-format -i` 再构建）。
 
-- [ ] Step 6: 提交
+- [x] Step 6: 提交
 
 ```bash
 git add tools/gcs_sim/main.cpp
@@ -800,7 +801,7 @@ git commit -m "feat(m2): gcs_sim 支持状态观测与友机模拟"
 - Modify: `docs/plans/m2-uav-state-tasks.md`（勾选）
 - Modify: `docs/DEV_PLAN.md`（索引状态）
 
-- [ ] Step 1: 干净构建
+- [x] Step 1: 干净构建
 
 ```bash
 rm -rf build logs
@@ -808,7 +809,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
-- [ ] Step 2: 周期上报（终端 A/B）
+- [x] Step 2: 周期上报（终端 A/B）
 
 终端 A：
 
@@ -827,7 +828,7 @@ Expected：
 - gcs_sim 每秒收到 `VehicleState`（planeId=uav1）与 `TaskState`（status 为空或 None）；
 - gcs_sim 末尾 `状态统计: VehicleState≈4, TaskState≈4`；Ack 结果 true。
 
-- [ ] Step 3: 周期可配
+- [x] Step 3: 周期可配
 
 ```bash
 printf 'state_report_period_ms = 300\ngcs_link_timeout_ms = 2000\n' > /tmp/opencode/m2_fast.conf
@@ -836,7 +837,7 @@ printf 'state_report_period_ms = 300\ngcs_link_timeout_ms = 2000\n' > /tmp/openc
 
 终端 B 运行 `./build/gcs_sim --plane-id uav1 --listen-seconds 3`，观察到约 3 条/秒。
 
-- [ ] Step 4: 他机状态
+- [x] Step 4: 他机状态
 
 终端 B：
 
@@ -846,14 +847,14 @@ printf 'state_report_period_ms = 300\ngcs_link_timeout_ms = 2000\n' > /tmp/openc
 
 Expected：onboard 日志出现 `他机状态更新: uav2`。
 
-- [ ] Step 5: GCS 链路通断
+- [x] Step 5: GCS 链路通断
 
 观测 onboard 日志：
 
 - gcs_sim 发送报文后出现 `地面站链路: connected=true`；
 - gcs_sim 退出后超过 2 秒出现 `地面站链路: connected=false`。
 
-- [ ] Step 6: 规范与回归
+- [x] Step 6: 规范与回归
 
 ```bash
 clang-format --dry-run --Werror $(git ls-files src tools)
@@ -861,15 +862,29 @@ grep -rn "std::cout\|printf(" src/ tools/ || echo "no cout/printf"
 ./build/gcs_sim --plane-id uav1   # M1 回归：Ack 结果应为 true
 ```
 
-- [ ] Step 7: DoD 走查与文档更新
+- [x] Step 7: DoD 走查与文档更新
 
 - 更新 `docs/DEV_PLAN.md` §11 索引：M2 状态 → 已完成；
 - 勾选本文档；
 - 记录执行偏差（如有）。
 
-- [ ] Step 8: 收尾提交
+- [x] Step 8: 收尾提交
 
 ```bash
 git add docs src tools CMakeLists.txt config
 git commit -m "chore(m2): M2 验收与文档更新"
 ```
+
+---
+
+## 执行记录与偏差
+
+1. **Task 6 首次执行失败（外部目录权限被拒）**：子代理为核对 `VehicleState` 定义，执行 `find / -name "message.h" -path "*plane*"`，命中历史工程 `/home/zsh/code/counterswarm/plane/source/domain/message.h`，触发外部目录权限询问后被用户拒绝；未产生任何文件改动。已在 `AGENTS.MD` 增加「检索与外部目录约束」（提交 `9936429`），明确公共头文件路径为 `../common/common_include` 且禁止扫描工程根之外；重跑后完成。
+2. **验收证据（2026-09-17）**
+   - 周期上报：`gcs_sim --listen-seconds 4` 收到 `VehicleState=4, TaskState=4`，Ack 结果 true，exit=0；
+   - 周期可配：`state_report_period_ms=300` 时 3 秒收到 `VehicleState=10, TaskState=10`；
+   - 他机状态：`--send-peer-state uav2` 后 onboard 日志 `他机状态更新: uav2`；
+   - GCS 链路：收到 GCS 报文时 `地面站链路: connected=true`，gcs_sim 退出超过 2 秒后 `地面站链路: connected=false`；
+   - M1 回归：TaskInfo/Command 的 Ack 行为正常。
+3. `clang-format --dry-run --Werror $(git ls-files src tools)` 通过；`src/`、`tools/` 无 `std::cout/printf`。
+4. 本机状态为默认值（M3 接入 `update_own_state` 后填充真实数据），属 M2 预期范围。
