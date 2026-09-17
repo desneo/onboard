@@ -45,6 +45,22 @@ bool load_config(const std::string& path, AppConfig& out) {
             out.log_dir = value;
         } else if (key == "state_report_period_ms") {
             out.state_report_period_ms = std::stoi(value);
+        } else if (key == "plane_id") {
+            out.plane_id = value;
+        } else if (key == "station_id") {
+            out.station_id = value;
+        } else if (key == "zenoh_config_file") {
+            out.zenoh_config_file = value;
+        } else if (key == "zenoh_connect") {
+            out.zenoh_connect = value;
+        } else if (key == "zenoh_listen") {
+            out.zenoh_listen = value;
+        } else if (key == "comm_ack_timeout_ms") {
+            out.comm_ack_timeout_ms = std::stoi(value);
+        } else if (key == "comm_ack_max_retries") {
+            out.comm_ack_max_retries = std::stoi(value);
+        } else if (key == "comm_rx_queue_max") {
+            out.comm_rx_queue_max = std::stoi(value);
         } else {
             spdlog::warn("未知配置项: {}", key);
         }
