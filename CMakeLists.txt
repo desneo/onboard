@@ -36,3 +36,15 @@ target_compile_definitions(onboard PRIVATE
   PLANE_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
 )
 target_link_libraries(onboard PRIVATE plane::common_include plane::deps)
+
+add_executable(gcs_sim tools/gcs_sim/main.cpp)
+target_include_directories(gcs_sim PRIVATE src)
+target_compile_options(gcs_sim PRIVATE -Wall -Wextra)
+target_link_libraries(gcs_sim PRIVATE
+  plane::common_include
+  plane::nlohmann_json
+  fmt::fmt
+  spdlog::spdlog
+  zenohc::lib
+  zenohcxx::zenohc
+)
