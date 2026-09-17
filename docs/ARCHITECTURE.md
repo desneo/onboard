@@ -751,10 +751,10 @@ Communication 是系统统一网络通信基础设施。
 核心收发 API：
 
 - `sendToStation`：发往地面站；
-- `sendToplane`：发往指定无人机；
+- `sendToPlane`：发往指定无人机；
 - `sendToAll`：群发。
 
-优先使用 `sendToStation` / `sendToplane` 点对点发送，避免不必要的 `sendToAll` 广播。
+优先使用 `sendToStation` / `sendToPlane` 点对点发送，避免不必要的 `sendToAll` 广播。
 
 序列化：通信模块接收外部 `std::string`，根据 `messagetype` 反序列化为 `nlohmann::json` 再转为内部 class，放入 eventcpp 分发给业务模块。`nlohmann_json` 不出通信模块，业务模块不直接依赖 JSON。
 

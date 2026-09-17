@@ -3,9 +3,9 @@
 - `docs/requirement.md` 原始项目背景信息和输入
 - `docs/SPEC.md` 产品规格文档
 - `docs/ARCHITECTURE.md` 架构设计文档
-- `openspec/project.md` 工程约定与依赖接入说明
-- `openspec/roadmap.md` 里程碑（M0–M10）变更路线图
-- `openspec/changes/<change-id>/{proposal,design,tasks}.md` 当前变更的三件套
+- `docs/DEV_PLAN.md` 开发总路线图（M0–M10）、全局约束、依赖基线、风险与 DoD
+- `docs/plans/<change-id>-design.md` 各变更的 Change Design
+- `docs/plans/<change-id>-tasks.md` 各变更的任务级计划与执行记录
 
 ## 禁止修改 requirement.md，除非得到我明确允许
 
@@ -16,8 +16,8 @@
 1. 用户明确提出的最新要求；
 2. `docs/SPEC.md`；
 3. `docs/ARCHITECTURE.md`；
-4. 当前 OpenSpec Change 的 `design.md`；
-5. 当前 OpenSpec Change 的 `tasks.md`；
+4. 当前变更（`docs/plans/<change-id>-design.md`）的 Design；
+5. 当前变更（`docs/plans/<change-id>-tasks.md`）的 tasks；
 6. 现有代码实现；
 7. Agent 自己的推测。
 
@@ -32,7 +32,7 @@
 
 1. 阅读 `docs/SPEC.md`；
 2. 阅读 `docs/ARCHITECTURE.md`；
-3. 找到当前正在实施的 OpenSpec Change，阅读其 `design.md` 与 `tasks.md`；
+3. 找到当前正在实施的变更（`docs/plans/<change-id>-design.md` 与 `-tasks.md`），阅读 Design 与 tasks；
 4. 检查与当前任务相关的现有代码；
 5. 确定本次变更涉及的 SPEC 要求与架构模块；
 6. 检查实现方案是否违反 `ARCHITECTURE.md`，确认与需求和架构一致；
