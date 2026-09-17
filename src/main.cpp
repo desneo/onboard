@@ -3,9 +3,11 @@
 #include <string>
 #include <utility>
 
+#include "communication/communication_events.h"
 #include "core/build_info.h"
 #include "core/config.h"
 #include "core/deps_check.h"
+#include "core/event_bus.h"
 #include "core/log.h"
 #include "core/placeholder_modules.h"
 #include "core/runtime.h"
@@ -34,6 +36,11 @@ int main(int argc, char** argv) {
                  build_info.build_type);
     spdlog::info("配置: safe_height_m={} state_report_period_ms={}", config.system_param.safeHeight_m,
                  config.state_report_period_ms);
+
+    plane::core::EventBus event_bus;
+    event_bus.subscribe<plane::communication::CommunicationError>(
+        plane::communication::events::kError,
+        [](const plane::communication::CommunicationError& error) { spdlog::error("通信错误事件: {}", error.detail); });
 
     plane::core::Runtime runtime;
     for (auto& module : plane::core::make_placeholder_modules()) {
