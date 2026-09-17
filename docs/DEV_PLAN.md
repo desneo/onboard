@@ -130,7 +130,7 @@ onboard/
     ├── perception/              （M6）图像输入 + 插件调度 + Plugin Management
     ├── target/                  （M7）Target Management
     ├── video/                   （M8）Video Streaming / ZLMediaKit
-    └── geo/                     （M3）Geographic Tool
+    └── geo/                     （M5/M10）Geographic Tool（推迟，首个消费者时创建）
 ```
 
 M0 只创建 `cmake/`、`config/`、`src/main.cpp`、`src/core/`；其余模块目录在对应里程碑创建，M0 用占位模块注册表打通生命周期。
@@ -403,8 +403,8 @@ M3、M6、M9 与主线可并行；M10 必须最后。
 | `plans/m1-communication-tasks.md` | M1 任务级计划与执行记录 | 已完成并通过验收 |
 | `plans/m2-uav-state-design.md` | M2 Change Design（UAV 状态管理与周期上报） | 已确认并实施 |
 | `plans/m2-uav-state-tasks.md` | M2 任务级计划与执行记录 | 已完成并通过验收 |
-| `plans/m3-flight-control-design.md` | M3 Change Design（飞控接入） | 待确认 |
-| `plans/m3-flight-control-tasks.md` | M3 任务级计划 | 待生成 |
+| `plans/m3-flight-control-design.md` | M3 Change Design（飞控接入） | 已确认（逐项） |
+| `plans/m3-flight-control-tasks.md` | M3 任务级计划 | 待执行 |
 
 约定：
 

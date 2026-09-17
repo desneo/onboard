@@ -1,6 +1,6 @@
 # M3 Change Design（飞控接入：MAVSDK + PX4）
 
-> 状态：待用户确认。任务级计划待确认后生成 `m3-flight-control-tasks.md`。
+> 状态：已确认（2026-09-17 逐项确认）。任务级计划见 `m3-flight-control-tasks.md`。
 > 来源：`DEV_PLAN.md` 路线图 M3。
 > 输入：SPEC §3/§5.2/§5.3/§5.4、ARCHITECTURE §13/§26、`common_include/message.h`、MAVSDK 3.17.4 本地头文件、M2 产物。
 
