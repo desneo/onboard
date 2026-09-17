@@ -403,6 +403,8 @@ M3、M6、M9 与主线可并行；M10 必须最后。
 | `plans/m1-communication-tasks.md` | M1 任务级计划与执行记录 | 已完成并通过验收 |
 | `plans/m2-uav-state-design.md` | M2 Change Design（UAV 状态管理与周期上报） | 已确认并实施 |
 | `plans/m2-uav-state-tasks.md` | M2 任务级计划与执行记录 | 已完成并通过验收 |
+| `plans/m3-flight-control-design.md` | M3 Change Design（飞控接入） | 待确认 |
+| `plans/m3-flight-control-tasks.md` | M3 任务级计划 | 待生成 |
 
 约定：
 
