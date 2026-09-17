@@ -18,6 +18,7 @@ namespace {
 struct Options {
     std::string plane_id = "uav1";
     std::string sender_id = "gcs";
+    std::string peer_plane_id;
     bool no_ack = false;
     int listen_seconds = 3;
     int ack_timeout_ms = 2000;
@@ -50,6 +51,8 @@ Options parse_options(int argc, char** argv) {
             options.plane_id = argv[++i];
         } else if (arg == "--sender-id" && i + 1 < argc) {
             options.sender_id = argv[++i];
+        } else if (arg == "--send-peer-state" && i + 1 < argc) {
+            options.peer_plane_id = argv[++i];
         } else if (arg == "--no-ack") {
             options.no_ack = true;
         } else if (arg == "--listen-seconds" && i + 1 < argc) {
@@ -88,35 +91,61 @@ int main(int argc, char** argv) {
     std::atomic<std::uint64_t> sequence{100};
 
     zenoh::Session session = zenoh::Session::open(zenoh::Config::create_default());
-    zenoh::Subscriber<void> subscriber = session.declare_subscriber(
-        zenoh::KeyExpr(std::string(plane::model::topic_sendToStation)),
-        [&](zenoh::Sample& sample) {
-            Envelope envelope;
-            if (!parse_envelope(sample.get_payload().as_string(), envelope)) {
-                spdlog::warn("收到无法解析的报文");
-                return;
+
+    std::atomic<std::uint64_t> vehicle_state_count{0};
+    std::atomic<std::uint64_t> task_state_count{0};
+
+    auto on_sample = [&](zenoh::Sample& sample) {
+        Envelope envelope;
+        if (!parse_envelope(sample.get_payload().as_string(), envelope)) {
+            spdlog::warn("收到无法解析的报文");
+            return;
+        }
+        if (envelope.sender_id == options.sender_id) {
+            return;
+        }
+        if (envelope.type == "VehicleState") {
+            const nlohmann::json payload = nlohmann::json::parse(envelope.payload, nullptr, false);
+            if (!payload.is_discarded()) {
+                const nlohmann::json geo = payload.value("geoPos", nlohmann::json::object());
+                spdlog::info("收到 VehicleState: planeId={}, voltage={}, lat={}, lon={}, height={}",
+                             payload.value("planeId", std::string{}), payload.value("voltage_v", 0.0F),
+                             geo.value("latitude", 0.0), geo.value("longitude", 0.0), geo.value("height", 0.0F));
             }
-            if (envelope.sender_id == options.sender_id) {
-                return;
+            vehicle_state_count.fetch_add(1);
+            return;
+        }
+        if (envelope.type == "TaskState") {
+            const nlohmann::json payload = nlohmann::json::parse(envelope.payload, nullptr, false);
+            if (!payload.is_discarded()) {
+                spdlog::info("收到 TaskState: taskId={}, status={}, node={}", payload.value("taskId", std::string{}),
+                             payload.value("status", std::string{}), payload.value("currentNode", std::string{}));
             }
-            if (envelope.type == "Ack") {
-                const nlohmann::json payload = nlohmann::json::parse(envelope.payload, nullptr, false);
-                if (!payload.is_discarded() && payload.contains("ackId")) {
-                    std::lock_guard<std::mutex> lock(mutex);
-                    acked_ids.insert(payload.at("ackId").get<std::string>());
-                    cv.notify_all();
-                }
+            task_state_count.fetch_add(1);
+            return;
+        }
+        if (envelope.type == "Ack") {
+            const nlohmann::json payload = nlohmann::json::parse(envelope.payload, nullptr, false);
+            if (!payload.is_discarded() && payload.contains("ackId")) {
+                std::lock_guard<std::mutex> lock(mutex);
+                acked_ids.insert(payload.at("ackId").get<std::string>());
+                cv.notify_all();
             }
-            spdlog::info("收到 {}: senderId={}, messageId={}", envelope.type, envelope.sender_id, envelope.message_id);
-            if (!options.no_ack && (envelope.type == "Alert" || envelope.type == "Ack")) {
-                const nlohmann::json payload{{"ackId", envelope.message_id}};
-                const std::string message_id = options.sender_id + "-ack-" + std::to_string(++sequence);
-                const std::string topic = "sendToPlane/" + envelope.sender_id;
-                session.put(zenoh::KeyExpr(topic),
-                            zenoh::Bytes(build_wire(options.sender_id, message_id, "Ack", payload.dump())));
-            }
-        },
-        []() {});
+        }
+        spdlog::info("收到 {}: senderId={}, messageId={}", envelope.type, envelope.sender_id, envelope.message_id);
+        if (!options.no_ack && (envelope.type == "Alert" || envelope.type == "Ack")) {
+            const nlohmann::json payload{{"ackId", envelope.message_id}};
+            const std::string message_id = options.sender_id + "-ack-" + std::to_string(++sequence);
+            const std::string topic = "sendToPlane/" + envelope.sender_id;
+            session.put(zenoh::KeyExpr(topic),
+                        zenoh::Bytes(build_wire(options.sender_id, message_id, "Ack", payload.dump())));
+        }
+    };
+
+    zenoh::Subscriber<void> station_subscriber =
+        session.declare_subscriber(zenoh::KeyExpr(std::string(plane::model::topic_sendToStation)), on_sample, []() {});
+    zenoh::Subscriber<void> all_subscriber =
+        session.declare_subscriber(zenoh::KeyExpr(std::string(plane::model::topic_sendToAll)), on_sample, []() {});
 
     const std::string task_payload = nlohmann::json{
         {"taskId", "task-1"},
@@ -144,6 +173,21 @@ int main(int argc, char** argv) {
     }
     spdlog::info("Ack 结果: TaskInfo={}, Command={}", task_acked, command_acked);
 
+    if (!options.peer_plane_id.empty()) {
+        const nlohmann::json payload{
+            {"planeId", options.peer_plane_id},
+            {"geoPos", {{"latitude", 30.5}, {"longitude", 120.5}, {"height", 80.0F}, {"altitude", 90.0F}}},
+            {"voltage_v", 12.5F},
+            {"airspeed_m_s", 15.0F},
+            {"flightMode", "AUTO.MISSION"},
+            {"fcLinkState", "connected"}};
+        const std::string message_id = options.peer_plane_id + "-" + std::to_string(++sequence);
+        session.put(zenoh::KeyExpr("sendToPlane/" + options.plane_id),
+                    zenoh::Bytes(build_wire(options.peer_plane_id, message_id, "VehicleState", payload.dump())));
+        spdlog::info("已发送友机状态: planeId={}", options.peer_plane_id);
+    }
+
     std::this_thread::sleep_for(std::chrono::seconds(options.listen_seconds));
+    spdlog::info("状态统计: VehicleState={}, TaskState={}", vehicle_state_count.load(), task_state_count.load());
     return task_acked && command_acked ? 0 : 1;
 }
