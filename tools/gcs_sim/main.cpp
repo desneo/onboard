@@ -22,6 +22,11 @@ struct Options {
     bool no_ack = false;
     int listen_seconds = 3;
     int ack_timeout_ms = 2000;
+    bool send_task = true;
+    bool send_command = true;
+    std::string task_action = "Start";
+    std::string command_type = "Arm";
+    float takeoff_height_m = 0.0F;
 };
 
 struct Envelope {
@@ -59,6 +64,16 @@ Options parse_options(int argc, char** argv) {
             options.listen_seconds = std::stoi(argv[++i]);
         } else if (arg == "--ack-timeout-ms" && i + 1 < argc) {
             options.ack_timeout_ms = std::stoi(argv[++i]);
+        } else if (arg == "--no-command") {
+            options.send_command = false;
+        } else if (arg == "--no-task") {
+            options.send_task = false;
+        } else if (arg == "--task-action" && i + 1 < argc) {
+            options.task_action = argv[++i];
+        } else if (arg == "--command-type" && i + 1 < argc) {
+            options.command_type = argv[++i];
+        } else if (arg == "--takeoff-height" && i + 1 < argc) {
+            options.takeoff_height_m = std::stof(argv[++i]);
         }
     }
     return options;
@@ -150,27 +165,29 @@ int main(int argc, char** argv) {
     zenoh::Subscriber<void> all_subscriber =
         session.declare_subscriber(zenoh::KeyExpr(std::string(plane::model::topic_sendToAll)), on_sample, []() {});
 
-    const std::string task_payload = nlohmann::json{
-        {"taskId", "task-1"},
-        {"taskCode", "suicide"},
-        {"targetTrackId", ""},
-        {"taskAction", "Start"}}.dump();
-    const std::string task_id = send_typed(session, options, "TaskInfo", task_payload, ++sequence);
-
-    const std::string command_payload = nlohmann::json{
-        {"commandId", "cmd-1"},
-        {"type", "Arm"},
-        {"takeoffHeight_m", 0.0F},
-        {"waypoints",
-         nlohmann::json::array()}}.dump();
-    const std::string command_id = send_typed(session, options, "Command", command_payload, ++sequence);
-
-    bool task_acked = false;
-    bool command_acked = false;
-    {
+    bool task_acked = true;
+    if (options.send_task) {
+        const std::string task_payload = nlohmann::json{
+            {"taskId", "task-1"},
+            {"taskCode", "suicide"},
+            {"targetTrackId", ""},
+            {"taskAction",
+             options.task_action}}.dump();
+        const std::string task_id = send_typed(session, options, "TaskInfo", task_payload, ++sequence);
         std::unique_lock<std::mutex> lock(mutex);
         task_acked = cv.wait_for(lock, std::chrono::milliseconds(options.ack_timeout_ms),
                                  [&]() { return acked_ids.count(task_id) > 0; });
+    }
+    bool command_acked = true;
+    if (options.send_command) {
+        const std::string command_payload = nlohmann::json{
+            {"commandId", "cmd-1"},
+            {"type", options.command_type},
+            {"takeoffHeight_m", options.takeoff_height_m},
+            {"waypoints",
+             nlohmann::json::array()}}.dump();
+        const std::string command_id = send_typed(session, options, "Command", command_payload, ++sequence);
+        std::unique_lock<std::mutex> lock(mutex);
         command_acked = cv.wait_for(lock, std::chrono::milliseconds(options.ack_timeout_ms),
                                     [&]() { return acked_ids.count(command_id) > 0; });
     }
