@@ -48,6 +48,7 @@ class FlightControlModule final : public plane::core::IModule, public FlightCont
     void clear_ned_velocity() override;
 
     std::string link_state() const override;
+    plane::flight_control::FlightStatus flight_status() const override;
 
    private:
     struct TelemetryCache {
@@ -67,7 +68,12 @@ class FlightControlModule final : public plane::core::IModule, public FlightCont
         float vd_m_s = 0.0F;
         float airspeed_m_s = 0.0F;
         float voltage_v = 0.0F;
-        std::string flight_mode;
+        mavsdk::Telemetry::FlightMode flight_mode = mavsdk::Telemetry::FlightMode::Unknown;
+        bool armed = false;
+        bool in_air = false;
+        int mission_current = 0;
+        int mission_total = 0;
+        float takeoff_altitude_m = 0.0F;
     };
 
     std::string connection_url() const;

@@ -154,7 +154,20 @@ void FlightControlModule::attach_system(const std::shared_ptr<mavsdk::System>& s
     });
     telemetry_->subscribe_flight_mode([this](mavsdk::Telemetry::FlightMode value) {
         std::lock_guard<std::mutex> lock(cache_mutex_);
-        cache_.flight_mode = std::string(magic_enum::enum_name(value));
+        cache_.flight_mode = value;
+    });
+    telemetry_->subscribe_armed([this](bool value) {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        cache_.armed = value;
+    });
+    telemetry_->subscribe_in_air([this](bool value) {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        cache_.in_air = value;
+    });
+    mission_->subscribe_mission_progress([this](mavsdk::Mission::MissionProgress value) {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        cache_.mission_current = value.current;
+        cache_.mission_total = value.total;
     });
     system_->subscribe_is_connected([this](bool connected) {
         connected_ = connected;
@@ -171,6 +184,13 @@ void FlightControlModule::detach_system() {
         offboard_.reset();
     }
     connected_ = false;
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        cache_.armed = false;
+        cache_.in_air = false;
+        cache_.mission_current = 0;
+        cache_.mission_total = 0;
+    }
     mission_.reset();
     telemetry_.reset();
     action_.reset();
@@ -203,7 +223,7 @@ void FlightControlModule::state_loop() {
             state.vd_m_s = cache_.vd_m_s;
             state.airspeed_m_s = cache_.airspeed_m_s;
             state.voltage_v = cache_.voltage_v;
-            state.flightMode = cache_.flight_mode;
+            state.flightMode = std::string(magic_enum::enum_name(cache_.flight_mode));
             state.fcLinkState = connected_ ? "connected" : "disconnected";
         }
         state_store_.update_own_state(state);
@@ -269,6 +289,10 @@ bool FlightControlModule::takeoff(float height_m, std::string& error) {
         error = "Takeoff 失败: " + result_text(result);
         report_error(error);
         return false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        cache_.takeoff_altitude_m = height_m;
     }
     return true;
 }
@@ -412,6 +436,17 @@ void FlightControlModule::clear_ned_velocity() {
 }
 
 std::string FlightControlModule::link_state() const { return connected_ ? "connected" : "disconnected"; }
+
+plane::flight_control::FlightStatus FlightControlModule::flight_status() const {
+    std::lock_guard<std::mutex> lock(cache_mutex_);
+    plane::flight_control::FlightStatus status;
+    status.armed = cache_.armed;
+    status.in_air = cache_.in_air;
+    status.mission_current = cache_.mission_current;
+    status.mission_total = cache_.mission_total;
+    status.takeoff_altitude_m = cache_.takeoff_altitude_m;
+    return status;
+}
 
 void FlightControlModule::report_error(const std::string& detail) const {
     FlightControlError event;
