@@ -25,6 +25,7 @@ struct Options {
     bool send_task = true;
     bool send_command = true;
     std::string task_action = "Start";
+    std::string task_code = "suicide";
     std::string command_type = "Arm";
     float takeoff_height_m = 0.0F;
 };
@@ -70,6 +71,8 @@ Options parse_options(int argc, char** argv) {
             options.send_task = false;
         } else if (arg == "--task-action" && i + 1 < argc) {
             options.task_action = argv[++i];
+        } else if (arg == "--task-code" && i + 1 < argc) {
+            options.task_code = argv[++i];
         } else if (arg == "--command-type" && i + 1 < argc) {
             options.command_type = argv[++i];
         } else if (arg == "--takeoff-height" && i + 1 < argc) {
@@ -169,7 +172,7 @@ int main(int argc, char** argv) {
     if (options.send_task) {
         const std::string task_payload = nlohmann::json{
             {"taskId", "task-1"},
-            {"taskCode", "suicide"},
+            {"taskCode", options.task_code},
             {"targetTrackId", ""},
             {"taskAction",
              options.task_action}}.dump();
