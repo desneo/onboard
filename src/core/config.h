@@ -46,6 +46,17 @@ struct AppConfig {
     int video_bitrate_kbps = 2000;
     bool video_overlay_enabled = true;
     double alert_voltage_threshold_v = 21.0;
+
+    double suicide_detection_start_distance_m = 200.0;
+    double suicide_approach_speed_m_s = 10.0;
+    double suicide_track_approach_speed_m_s = 5.0;
+    double suicide_climb_speed_m_s = 2.0;
+    std::string suicide_target_select_rule = "nearest_center";
+    int suicide_guidance_start_stable_ms = 500;
+    int suicide_track_lost_timeout_ms = 3000;
+    int suicide_phase_timeout_ms = 300000;
+    double suicide_impact_height_m = 2.0;
+    double suicide_impact_vd_m_s = 3.0;
 };
 
 /// 从 key = value 文本文件加载配置；文件不存在时保留默认值并返回 false。

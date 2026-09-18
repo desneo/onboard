@@ -105,6 +105,26 @@ bool load_config(const std::string& path, AppConfig& out) {
             out.video_overlay_enabled = (value == "true" || value == "1");
         } else if (key == "alert_voltage_threshold_v") {
             out.alert_voltage_threshold_v = std::stod(value);
+        } else if (key == "suicide_detection_start_distance_m") {
+            out.suicide_detection_start_distance_m = std::stod(value);
+        } else if (key == "suicide_approach_speed_m_s") {
+            out.suicide_approach_speed_m_s = std::stod(value);
+        } else if (key == "suicide_track_approach_speed_m_s") {
+            out.suicide_track_approach_speed_m_s = std::stod(value);
+        } else if (key == "suicide_climb_speed_m_s") {
+            out.suicide_climb_speed_m_s = std::stod(value);
+        } else if (key == "suicide_target_select_rule") {
+            out.suicide_target_select_rule = value;
+        } else if (key == "suicide_guidance_start_stable_ms") {
+            out.suicide_guidance_start_stable_ms = std::stoi(value);
+        } else if (key == "suicide_track_lost_timeout_ms") {
+            out.suicide_track_lost_timeout_ms = std::stoi(value);
+        } else if (key == "suicide_phase_timeout_ms") {
+            out.suicide_phase_timeout_ms = std::stoi(value);
+        } else if (key == "suicide_impact_height_m") {
+            out.suicide_impact_height_m = std::stod(value);
+        } else if (key == "suicide_impact_vd_m_s") {
+            out.suicide_impact_vd_m_s = std::stod(value);
         } else {
             spdlog::warn("未知配置项: {}", key);
         }
