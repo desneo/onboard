@@ -103,6 +103,8 @@ bool load_config(const std::string& path, AppConfig& out) {
             out.video_bitrate_kbps = std::stoi(value);
         } else if (key == "video_overlay_enabled") {
             out.video_overlay_enabled = (value == "true" || value == "1");
+        } else if (key == "alert_voltage_threshold_v") {
+            out.alert_voltage_threshold_v = std::stod(value);
         } else {
             spdlog::warn("未知配置项: {}", key);
         }

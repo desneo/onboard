@@ -45,6 +45,7 @@ struct AppConfig {
     int video_fps = 25;
     int video_bitrate_kbps = 2000;
     bool video_overlay_enabled = true;
+    double alert_voltage_threshold_v = 21.0;
 };
 
 /// 从 key = value 文本文件加载配置；文件不存在时保留默认值并返回 false。
