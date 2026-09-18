@@ -25,6 +25,7 @@
 #include "target/target_store.h"
 #include "task/task_execution_engine.h"
 #include "task/task_scheduler.h"
+#include "video/video_streaming.h"
 
 namespace {
 
@@ -72,8 +73,9 @@ int main(int argc, char** argv) {
     auto flight_control = std::make_unique<plane::flight_control::FlightControlModule>(event_bus, config, *state_store);
     auto plugin_management = std::make_unique<plane::perception::PluginManagement>(config);
     auto camera_control = std::make_unique<plane::camera::CameraControlModule>(event_bus);
-    auto perception =
-        std::make_unique<plane::perception::Perception>(event_bus, config, *plugin_management, *state_store);
+    auto video_streaming = std::make_unique<plane::video::VideoStreaming>(config);
+    auto perception = std::make_unique<plane::perception::Perception>(event_bus, config, *plugin_management,
+                                                                      *state_store, *video_streaming);
     auto target_store = std::make_unique<plane::target::TargetStore>(event_bus);
     auto task_engine =
         std::make_unique<plane::task::TaskExecutionEngine>(event_bus, config, *flight_control, *state_store);
@@ -88,6 +90,7 @@ int main(int argc, char** argv) {
     runtime.add_module(std::move(flight_control));
     runtime.add_module(std::move(plugin_management));
     runtime.add_module(std::move(camera_control));
+    runtime.add_module(std::move(video_streaming));
     runtime.add_module(std::move(perception));
     runtime.add_module(std::move(target_store));
     runtime.add_module(std::move(task_engine));
@@ -95,7 +98,7 @@ int main(int argc, char** argv) {
     runtime.add_module(std::move(communication));
     for (auto& module : plane::core::make_placeholder_modules(
              {"Communication", "UAV State Management", "Flight Control", "Task Scheduler", "Task Execution Engine",
-              "Plugin Management", "Camera Control", "Perception", "Target Management"})) {
+              "Plugin Management", "Camera Control", "Video Streaming", "Perception", "Target Management"})) {
         runtime.add_module(std::move(module));
     }
     if (!runtime.run()) {
