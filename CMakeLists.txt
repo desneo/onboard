@@ -44,6 +44,7 @@ add_executable(onboard
   src/target/target_store.cpp
   src/video/ffmpeg_h264_encoder.cpp
   src/video/rtsp_media_server.cpp
+  src/video/video_streaming.cpp
 )
 target_include_directories(onboard PRIVATE src)
 target_compile_options(onboard PRIVATE -Wall -Wextra)
