@@ -18,6 +18,7 @@ include(cmake/Dependencies.cmake)
 
 add_executable(onboard
   src/main.cpp
+  src/camera/camera_control_module.cpp
   src/communication/serialization.cpp
   src/communication/zenoh_transport.cpp
   src/communication/communication_module.cpp
