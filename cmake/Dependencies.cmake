@@ -97,3 +97,6 @@ foreach(_target fmt::fmt spdlog::spdlog GeographicLib::GeographicLib MAVSDK::mav
     message(FATAL_ERROR "缺少 CMake target: ${_target}")
   endif()
 endforeach()
+
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavcodec libavutil libswscale)
