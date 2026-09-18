@@ -246,6 +246,9 @@ void Perception::run_selftest(const cv::Mat& frame) {
     std::vector<plane::model::DetectTarget> targets;
     if (detection_->detect(frame, targets, error)) {
         spdlog::info("自检 detect 成功: targets={}", targets.size());
+        DetectionResult result;
+        result.targets = targets;
+        event_bus_.publish(events::kDetection, result);
     } else {
         report_error("自检 detect 失败: " + error);
         return;
@@ -272,6 +275,10 @@ void Perception::run_selftest(const cv::Mat& frame) {
     plane::model::DetectTarget tracked;
     if (tracking_->track(frame, tracked, error)) {
         spdlog::info("自检 track 成功: type={}", tracked.type);
+        TrackingResult result;
+        result.target = tracked;
+        result.lost = false;
+        event_bus_.publish(events::kTracking, result);
     } else {
         report_error("自检 track 失败: " + error);
         return;
@@ -283,6 +290,10 @@ void Perception::run_selftest(const cv::Mat& frame) {
     plane::model::NedVelocity velocity;
     if (guidance_->guide(tracked, state_store_.own_state(), velocity, error)) {
         spdlog::info("自检 guide 成功: vn={} ve={} vd={}", velocity.north_m_s, velocity.east_m_s, velocity.down_m_s);
+        GuidanceResult result;
+        result.velocity = velocity;
+        result.valid = true;
+        event_bus_.publish(events::kGuidance, result);
     } else {
         report_error("自检 guide 失败: " + error);
     }
