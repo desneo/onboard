@@ -22,6 +22,7 @@
 #include "perception/perception.h"
 #include "perception/plugin_management.h"
 #include "state/state_store.h"
+#include "target/target_store.h"
 #include "task/task_execution_engine.h"
 #include "task/task_scheduler.h"
 
@@ -73,6 +74,7 @@ int main(int argc, char** argv) {
     auto camera_control = std::make_unique<plane::camera::CameraControlModule>(event_bus);
     auto perception =
         std::make_unique<plane::perception::Perception>(event_bus, config, *plugin_management, *state_store);
+    auto target_store = std::make_unique<plane::target::TargetStore>(event_bus);
     auto task_engine =
         std::make_unique<plane::task::TaskExecutionEngine>(event_bus, config, *flight_control, *state_store);
     auto task_scheduler =
@@ -87,12 +89,13 @@ int main(int argc, char** argv) {
     runtime.add_module(std::move(plugin_management));
     runtime.add_module(std::move(camera_control));
     runtime.add_module(std::move(perception));
+    runtime.add_module(std::move(target_store));
     runtime.add_module(std::move(task_engine));
     runtime.add_module(std::move(task_scheduler));
     runtime.add_module(std::move(communication));
     for (auto& module : plane::core::make_placeholder_modules(
              {"Communication", "UAV State Management", "Flight Control", "Task Scheduler", "Task Execution Engine",
-              "Plugin Management", "Camera Control", "Perception"})) {
+              "Plugin Management", "Camera Control", "Perception", "Target Management"})) {
         runtime.add_module(std::move(module));
     }
     if (!runtime.run()) {
