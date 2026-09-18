@@ -3,7 +3,7 @@
 > 设计依据：`m7-target-management-design.md`（逐项确认）。
 > 执行位置：工程根 `onboard/`。
 > 验证原则：每个 Task 结束后 x64 Release 构建通过；不写测试代码（SPEC §11）。
-> 无 SITL/无图像源：Task 5 为部分验收，真实感知源目标更新待用户验证。
+> 状态：已完成并部分验收（2026-09-18）；真实感知源目标更新待用户验证。
 
 ---
 
@@ -15,7 +15,7 @@
 
 说明：自检当前只打日志不发事件，TargetStore 无法观测；补发 `perception.detection/tracking/guidance` 事件。
 
-- [ ] Step 1: `run_selftest` 中 detect 成功后发布事件
+- [x] Step 1: `run_selftest` 中 detect 成功后发布事件
 
 将：
 
@@ -38,7 +38,7 @@
     } else {
 ```
 
-- [ ] Step 2: track 成功后发布事件
+- [x] Step 2: track 成功后发布事件
 
 将：
 
@@ -62,7 +62,7 @@
     } else {
 ```
 
-- [ ] Step 3: guide 成功后发布事件
+- [x] Step 3: guide 成功后发布事件
 
 将：
 
@@ -86,7 +86,7 @@
     } else {
 ```
 
-- [ ] Step 4: 构建、格式与提交
+- [x] Step 4: 构建、格式与提交
 
 ```bash
 cmake --build build -j
@@ -106,7 +106,7 @@ git commit -m "feat(m7): 感知自检发布结果事件"
 - Create: `src/target/target_store.cpp`
 - Modify: `CMakeLists.txt`
 
-- [ ] Step 1: 写 `src/target/target_store_api.h`
+- [x] Step 1: 写 `src/target/target_store_api.h`
 
 ```cpp
 #pragma once
@@ -134,7 +134,7 @@ class TargetStoreApi {
 }  // namespace plane::target
 ```
 
-- [ ] Step 2: 写 `src/target/target_store.h`
+- [x] Step 2: 写 `src/target/target_store.h`
 
 ```cpp
 #pragma once
@@ -187,7 +187,7 @@ class TargetStore final : public plane::core::IModule, public TargetStoreApi {
 }  // namespace plane::target
 ```
 
-- [ ] Step 3: 写 `src/target/target_store.cpp`
+- [x] Step 3: 写 `src/target/target_store.cpp`
 
 ```cpp
 #include "target/target_store.h"
@@ -323,13 +323,13 @@ void TargetStore::on_tracking(const plane::perception::TrackingResult& result) {
 }  // namespace plane::target
 ```
 
-- [ ] Step 4: `CMakeLists.txt` 的 `add_executable(onboard ...)` 文件列表追加
+- [x] Step 4: `CMakeLists.txt` 的 `add_executable(onboard ...)` 文件列表追加
 
 ```cmake
   src/target/target_store.cpp
 ```
 
-- [ ] Step 5: 构建与格式
+- [x] Step 5: 构建与格式
 
 ```bash
 cmake --build build -j
@@ -338,7 +338,7 @@ clang-format --dry-run --Werror $(git ls-files src/target)
 
 Expected: 构建通过且无 warning；格式通过（差异先 `-i` 再构建）。
 
-- [ ] Step 6: 提交
+- [x] Step 6: 提交
 
 ```bash
 git add src/target CMakeLists.txt
@@ -353,14 +353,14 @@ git commit -m "feat(m7): 增加 TargetStore 目标管理"
 
 - Modify: `tools/gcs_sim/main.cpp`
 
-- [ ] Step 1: `Options` 增加
+- [x] Step 1: `Options` 增加
 
 ```cpp
     std::string gcs_target_id;
     int gcs_target_repeat = 1;
 ```
 
-- [ ] Step 2: 解析追加
+- [x] Step 2: 解析追加
 
 ```cpp
         } else if (arg == "--send-gcs-target" && i + 1 < argc) {
@@ -369,7 +369,7 @@ git commit -m "feat(m7): 增加 TargetStore 目标管理"
             options.gcs_target_repeat = std::stoi(argv[++i]);
 ```
 
-- [ ] Step 3: 发送逻辑（放在 Command 发送之后、友机状态/ listen 之前）
+- [x] Step 3: 发送逻辑（放在 Command 发送之后、友机状态/ listen 之前）
 
 ```cpp
     if (!options.gcs_target_id.empty()) {
@@ -395,7 +395,7 @@ git commit -m "feat(m7): 增加 TargetStore 目标管理"
     }
 ```
 
-- [ ] Step 4: 构建、格式与提交
+- [x] Step 4: 构建、格式与提交
 
 ```bash
 cmake --build build -j
@@ -412,13 +412,13 @@ git commit -m "feat(m7): gcs_sim 支持发送 GCS 目标"
 
 - Modify: `src/main.cpp`
 
-- [ ] Step 1: include 追加
+- [x] Step 1: include 追加
 
 ```cpp
 #include "target/target_store.h"
 ```
 
-- [ ] Step 2: 创建并注册（在 Perception 之后、TaskExecutionEngine 之前）
+- [x] Step 2: 创建并注册（在 Perception 之后、TaskExecutionEngine 之前）
 
 ```cpp
     auto target_store = std::make_unique<plane::target::TargetStore>(event_bus);
@@ -432,7 +432,7 @@ git commit -m "feat(m7): gcs_sim 支持发送 GCS 目标"
 
 占位 skip 列表增加 `"Target Management"`。
 
-- [ ] Step 3: 构建、运行与格式
+- [x] Step 3: 构建、运行与格式
 
 ```bash
 cmake --build build -j
@@ -442,7 +442,7 @@ clang-format --dry-run --Werror src/main.cpp
 
 Expected: 构建通过；`Target Management` 为真实模块，exit=0。
 
-- [ ] Step 4: 提交
+- [x] Step 4: 提交
 
 ```bash
 git add src/main.cpp
@@ -458,7 +458,7 @@ git commit -m "feat(m7): 接线 TargetStore"
 - Modify: `docs/plans/m7-target-management-tasks.md`
 - Modify: `docs/DEV_PLAN.md`
 
-- [ ] Step 1: 干净构建
+- [x] Step 1: 干净构建
 
 ```bash
 rm -rf build logs
@@ -466,7 +466,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
-- [ ] Step 2: 自检驱动视觉/跟踪目标更新
+- [x] Step 2: 自检驱动视觉/跟踪目标更新
 
 ```bash
 timeout --preserve-status 3 ./build/onboard --config /tmp/opencode/m6_selftest.conf 2>&1 | grep -E "视觉目标更新|跟踪目标更新"
@@ -474,7 +474,7 @@ timeout --preserve-status 3 ./build/onboard --config /tmp/opencode/m6_selftest.c
 
 Expected：`视觉目标更新: 0 个`、`跟踪目标更新: type=stub, lost=0`。
 
-- [ ] Step 3: GCS 目标与历史 cap（终端 A/B）
+- [x] Step 3: GCS 目标与历史 cap（终端 A/B）
 
 终端 A：`./build/onboard`
 
@@ -486,14 +486,14 @@ Expected：`视觉目标更新: 0 个`、`跟踪目标更新: type=stub, lost=0`
 
 Expected：onboard 出现 25 条 `GCS 目标更新: trackId=t1`，最后一条 `历史=20`。
 
-- [ ] Step 4: 规范与回归
+- [x] Step 4: 规范与回归
 
 ```bash
 clang-format --dry-run --Werror $(git ls-files src tools plugins)
 grep -rn "std::cout\|printf(" src/ tools/ plugins/ || echo "no cout/printf"
 ```
 
-- [ ] Step 5: 文档与收尾提交
+- [x] Step 5: 文档与收尾提交
 
 - 勾选本文档并记录验收证据与偏差；
 - 更新 `docs/DEV_PLAN.md` §11 索引：M7 → 已完成（部分验收）。
@@ -509,3 +509,14 @@ git commit -m "docs(m7): M7 部分验收与文档更新"
 
 1. 有真实感知源（RTSP/MIPI）后：检测列表与跟踪目标随 `perception.*` 事件更新，`TargetStoreApi` 查询正确；
 2. 多 trackId 的 GCS 目标并发更新与历史隔离。
+
+---
+
+## 执行记录与偏差
+
+1. **验收证据（2026-09-18）**
+   - 自检联动：`视觉目标更新: 0 个`、`跟踪目标更新: type=stub, lost=0`（自检事件路径打通）；
+   - GCS 目标与历史：`--send-gcs-target t1 --gcs-target-repeat 25` → onboard 收到 25 条 `GCS 目标更新: trackId=t1`，历史条数封顶 20（含最新）；
+   - 构建无 warning；`clang-format` 通过；无 `std::cout/printf`；M1–M6 回归正常。
+2. **偏差**：无功能偏差；仅格式化调整与 `git ls-files` 在 add 前为空导致的校验方式调整。
+3. **待用户验证**：真实感知源下的检测/跟踪目标更新与 TargetStoreApi 查询；多 trackId 并发更新与历史隔离。
