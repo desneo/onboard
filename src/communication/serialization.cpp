@@ -37,6 +37,22 @@ bool enum_from_string(const std::string& name, Enum& out) {
     return true;
 }
 
+std::string task_code_to_string(plane::model::TaskCode code) {
+    switch (code) {
+        case plane::model::TaskCode::AntiUav:
+            return "anti-uav";
+    }
+    return {};
+}
+
+bool task_code_from_string(const std::string& name, plane::model::TaskCode& out) {
+    if (name == "anti-uav") {
+        out = plane::model::TaskCode::AntiUav;
+        return true;
+    }
+    return false;
+}
+
 template <typename T>
 struct MessageTypeOf;
 
@@ -65,7 +81,7 @@ struct MessageTypeOf<plane::model::TaskState> {
 bool to_payload(const plane::model::TaskInfo& value, std::string& out, std::string& error) {
     try {
         out = json{{"taskId", value.taskId},
-                   {"taskCode", value.taskCode},
+                   {"taskCode", task_code_to_string(value.taskCode)},
                    {"targetTrackId", value.targetTrackId},
                    {"taskAction", std::string(magic_enum::enum_name(value.taskAction))}}
                   .dump();
@@ -80,7 +96,11 @@ bool from_payload(const std::string& payload, plane::model::TaskInfo& out, std::
     try {
         const json in = json::parse(payload);
         out.taskId = in.at("taskId").get<std::string>();
-        out.taskCode = in.at("taskCode").get<std::string>();
+        const std::string task_code = in.at("taskCode").get<std::string>();
+        if (!task_code_from_string(task_code, out.taskCode)) {
+            error = "未知 TaskCode: " + task_code;
+            return false;
+        }
         out.targetTrackId = in.value("targetTrackId", std::string{});
         if (!enum_from_string(in.at("taskAction").get<std::string>(), out.taskAction)) {
             error = "未知 TaskAction";

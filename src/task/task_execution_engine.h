@@ -40,8 +40,7 @@ class TaskExecutionEngine final : public plane::core::IModule, public TaskExecut
     void abort() override;
 
    private:
-    BT::Tree build_basic_flight();
-    BT::Tree build_suicide();
+    BT::Tree build_anti_uav();
     void tick_loop();
     void publish_progress(const std::string& node);
     void finish(plane::model::TaskStatus status, const std::string& detail);

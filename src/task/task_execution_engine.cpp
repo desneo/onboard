@@ -9,11 +9,7 @@
 #include "task/nodes/arm_node.h"
 #include "task/nodes/detect_node.h"
 #include "task/nodes/guide_node.h"
-#include "task/nodes/hover_node.h"
-#include "task/nodes/land_node.h"
 #include "task/nodes/midcourse_node.h"
-#include "task/nodes/rtl_node.h"
-#include "task/nodes/stop_motor_node.h"
 #include "task/nodes/takeoff_node.h"
 #include "task/nodes/track_node.h"
 #include "task/task_events.h"
@@ -46,42 +42,7 @@ void TaskExecutionEngine::stop() { abort(); }
 
 void TaskExecutionEngine::release() {}
 
-BT::Tree TaskExecutionEngine::build_basic_flight() {
-    BT::BehaviorTreeFactory factory;
-    factory.registerNodeType<ArmNode>("Arm", &flight_control_, &state_store_, &config_);
-    factory.registerNodeType<TakeoffNode>("Takeoff", &flight_control_, &state_store_, &config_, &system_param_);
-    factory.registerNodeType<LandNode>("Land", &flight_control_, &state_store_, &config_);
-
-    auto subtree = std::make_shared<BT::Tree::Subtree>();
-    subtree->blackboard = BT::Blackboard::create();
-    subtree->tree_ID = "basic_flight";
-    subtree->instance_name = "basic_flight";
-
-    BT::NodeConfig node_config;
-    node_config.blackboard = subtree->blackboard;
-
-    auto root = factory.instantiateTreeNode("Sequence", "Sequence", node_config);
-    auto arm = factory.instantiateTreeNode("Arm", "Arm", node_config);
-    auto takeoff = factory.instantiateTreeNode("Takeoff", "Takeoff", node_config);
-    auto land = factory.instantiateTreeNode("Land", "Land", node_config);
-
-    auto* control = dynamic_cast<BT::ControlNode*>(root.get());
-    control->addChild(arm.get());
-    control->addChild(takeoff.get());
-    control->addChild(land.get());
-
-    subtree->nodes.push_back(std::move(root));
-    subtree->nodes.push_back(std::move(arm));
-    subtree->nodes.push_back(std::move(takeoff));
-    subtree->nodes.push_back(std::move(land));
-
-    BT::Tree tree;
-    tree.subtrees.push_back(subtree);
-    tree.initialize();
-    return tree;
-}
-
-BT::Tree TaskExecutionEngine::build_suicide() {
+BT::Tree TaskExecutionEngine::build_anti_uav() {
     BT::BehaviorTreeFactory factory;
     factory.registerNodeType<ArmNode>("Arm", &flight_control_, &state_store_, &config_);
     factory.registerNodeType<TakeoffNode>("Takeoff", &flight_control_, &state_store_, &config_, &system_param_);
@@ -96,8 +57,8 @@ BT::Tree TaskExecutionEngine::build_suicide() {
 
     auto subtree = std::make_shared<BT::Tree::Subtree>();
     subtree->blackboard = BT::Blackboard::create();
-    subtree->tree_ID = "suicide";
-    subtree->instance_name = "suicide";
+    subtree->tree_ID = "anti-uav";
+    subtree->instance_name = "anti-uav";
 
     BT::NodeConfig node_config;
     node_config.blackboard = subtree->blackboard;
@@ -133,29 +94,22 @@ BT::Tree TaskExecutionEngine::build_suicide() {
 }
 
 bool TaskExecutionEngine::start(const plane::model::TaskInfo& task, std::string& error) {
-    if (task.taskCode != "basic_flight" && task.taskCode != "suicide") {
-        error = "未知任务类型: " + task.taskCode;
-        return false;
-    }
     abort();
     std::lock_guard<std::mutex> lock(mutex_);
     try {
-        if (task.taskCode == "suicide") {
-            suicide_context_.targetTrackId = task.targetTrackId;
-            tree_ = build_suicide();
-        } else {
-            tree_ = build_basic_flight();
-        }
+        suicide_context_.targetTrackId = task.targetTrackId;
+        tree_ = build_anti_uav();
     } catch (const std::exception& e) {
         error = std::string("行为树创建失败: ") + e.what();
         return false;
     }
-    current_tree_name_ = task.taskCode;
+    current_tree_name_ = "anti-uav";
     tree_ready_ = true;
     current_node_.clear();
     ticking_ = true;
     tick_thread_ = std::thread([this]() { tick_loop(); });
-    spdlog::info("行为树已创建: {}, taskId={}", current_tree_name_, task.taskId);
+    spdlog::info("行为树已创建: {}, taskId={}, taskCode={}", current_tree_name_, task.taskId,
+                 std::string(magic_enum::enum_name(task.taskCode)));
     return true;
 }
 

@@ -27,7 +27,7 @@ struct Options {
     bool send_task = true;
     bool send_command = true;
     std::string task_action = "Start";
-    std::string task_code = "suicide";
+    std::string task_code = "anti-uav";
     std::string target_track_id;
     std::string command_type = "Arm";
     float takeoff_height_m = 0.0F;
