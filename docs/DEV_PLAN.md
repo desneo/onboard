@@ -405,8 +405,8 @@ M3、M6、M9 与主线可并行；M10 必须最后。
 | `plans/m2-uav-state-tasks.md` | M2 任务级计划与执行记录 | 已完成并通过验收 |
 | `plans/m3-flight-control-design.md` | M3 Change Design（飞控接入） | 已确认并实施 |
 | `plans/m3-flight-control-tasks.md` | M3 任务级计划与执行记录 | 已完成（部分验收，SITL 待验） |
-| `plans/m4-task-scheduler-design.md` | M4 Change Design（Task Scheduler 与控制仲裁） | 待确认 |
-| `plans/m4-task-scheduler-tasks.md` | M4 任务级计划 | 待生成 |
+| `plans/m4-task-scheduler-design.md` | M4 Change Design（Task Scheduler 与控制仲裁） | 已确认（逐项） |
+| `plans/m4-task-scheduler-tasks.md` | M4 任务级计划 | 待执行 |
 
 约定：
 

@@ -1,6 +1,6 @@
 # M4 Change Design（Task Scheduler 与控制仲裁）
 
-> 状态：待用户确认（逐项）。任务级计划待确认后生成 `m4-task-scheduler-tasks.md`。
+> 状态：已确认（2026-09-17 逐项；任务终态立即回到无任务）。任务级计划见 `m4-task-scheduler-tasks.md`。
 > 来源：`DEV_PLAN.md` 路线图 M4。
 > 输入：SPEC §5/§7、ARCHITECTURE §8/§10/§22/§23/ADR-014、M1–M3 产物。
 
@@ -28,6 +28,7 @@ M4 交付 Task Scheduler：
 | 2 | 独立 Command 派发失败：**不重试**，记 `task_scheduler.error` 事件并向 GCS 发送告警 |
 | 3 | 删除 M2 的 `NoTaskStateProvider`，由 Task Scheduler 实现 `TaskStateProvider` |
 | 4 | 验收为部分验收（无 SITL）：观察仲裁/替换/补高度/告警/状态上报；实际动作待 SITL |
+| 5 | 任务到达终态（Completed/Aborted/Failed）后**立即回到无任务状态**（status=None、taskId 清空），终态仅日志与事件可见（SPEC §5.7） |
 
 ## 3. 模块与文件
 
@@ -90,9 +91,10 @@ struct TaskProgress {
 
 `TaskStateProvider::current_task_state()`：
 
-- 无 Task → `TaskStatus::None`；
+- 无 Task → `TaskStatus::None`（taskId 空）；
 - 有 Task → 返回缓存（taskId/status/currentBehaviorTree/currentNode）；
-- 独立 Command 执行中仍返回 `None`。
+- 独立 Command 执行中仍返回 `None`；
+- 收到 `task.engine_result`（Completed/Aborted/Failed）→ 记录日志与事件后**立即清空为无任务**（status=None、taskId 清空）；`TaskInfo(Stop)` 同理。
 
 ### 3.3 通信边界策略（Communication 修改）
 
@@ -135,7 +137,7 @@ struct TaskProgress {
 2. 任务接收与状态：`gcs_sim --no-command` → gcs_sim 周期 `TaskState` 显示 `status=Pending`（行为树/节点为空）；onboard 无引擎 warn 日志；
 3. 指令替换任务：`gcs_sim`（默认 TaskInfo + Command Arm）→ onboard 日志显示任务被中止、命令派发；gcs_sim 收到 `Alert`（`command_dispatch_failed`，因飞控未连接）并回 Ack；
 4. 补安全高度：`gcs_sim --no-task --command-type Takeoff --takeoff-height 0` → onboard 日志 `Takeoff 未指定高度，使用安全高度: 30 m`；
-5. 任务中止：`gcs_sim --task-action Stop --no-command`（在任务 Pending 时）→ 状态变 Aborted；
+5. 任务中止：任务 Pending 时 `gcs_sim --task-action Stop --no-command` → onboard 日志 `任务中止: taskId=...`，随后 gcs_sim 周期 `TaskState` 显示 `status=None`（立即可见）；
 6. 边界拒绝：`gcs_sim --sender-id uav2` 发送控制消息 → onboard 日志 `拒绝非地面站控制消息: senderId=uav2`，不产生仲裁行为；
 7. 回归：M1 Ack、M2 状态上报、M3 飞控连接日志正常。
 
