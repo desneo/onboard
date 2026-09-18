@@ -9,6 +9,8 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <utility>
+#include <vector>
 #include <zenoh/api.hxx>
 
 #include "message.h"
@@ -30,6 +32,7 @@ struct Options {
     float takeoff_height_m = 0.0F;
     std::string gcs_target_id;
     int gcs_target_repeat = 1;
+    std::vector<std::pair<std::string, std::string>> send_params;
 };
 
 struct Envelope {
@@ -83,6 +86,12 @@ Options parse_options(int argc, char** argv) {
             options.gcs_target_id = argv[++i];
         } else if (arg == "--gcs-target-repeat" && i + 1 < argc) {
             options.gcs_target_repeat = std::stoi(argv[++i]);
+        } else if (arg == "--send-param" && i + 1 < argc) {
+            const std::string pair = argv[++i];
+            const auto pos = pair.find('=');
+            if (pos != std::string::npos) {
+                options.send_params.emplace_back(pair.substr(0, pos), pair.substr(pos + 1));
+            }
         }
     }
     return options;
@@ -215,6 +224,17 @@ int main(int argc, char** argv) {
                         zenoh::Bytes(build_wire(options.sender_id, message_id, "GcsTarget", payload)));
         }
         spdlog::info("已发送 GcsTarget: trackId={}, count={}", options.gcs_target_id, options.gcs_target_repeat);
+    }
+
+    for (const auto& [key, value] : options.send_params) {
+        nlohmann::json payload = nlohmann::json::object();
+        payload[key] = std::stod(value);
+        const std::string message_id = options.sender_id + "-param-" + std::to_string(++sequence);
+        session.put(zenoh::KeyExpr("sendToPlane/" + options.plane_id),
+                    zenoh::Bytes(build_wire(options.sender_id, message_id, "SystemParam", payload.dump())));
+    }
+    if (!options.send_params.empty()) {
+        spdlog::info("已发送 SystemParam: {} 条", options.send_params.size());
     }
 
     if (!options.peer_plane_id.empty()) {
