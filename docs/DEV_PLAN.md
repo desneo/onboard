@@ -411,6 +411,8 @@ M3、M6、M9 与主线可并行；M10 必须最后。
 | `plans/m5-behaviortree-engine-tasks.md` | M5 任务级计划与执行记录 | 已完成（部分验收，SITL 待验） |
 | `plans/m6-perception-plugins-design.md` | M6 Change Design（相机/感知/插件框架） | 已确认并实施 |
 | `plans/m6-perception-plugins-tasks.md` | M6 任务级计划与执行记录 | 已完成（部分验收，RTSP 待验） |
+| `plans/m7-target-management-design.md` | M7 Change Design（Target Management） | 待确认 |
+| `plans/m7-target-management-tasks.md` | M7 任务级计划 | 待生成 |
 
 约定：
 
