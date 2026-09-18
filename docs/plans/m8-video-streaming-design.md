@@ -1,6 +1,6 @@
 # M8 Change Design（Video Streaming：H264 + ZLMediaKit RTSP）
 
-> 状态：待用户确认（逐项）。任务级计划待确认后生成 `m8-video-streaming-tasks.md`。
+> 状态：已确认（2026-09-18 逐项；fps 与码率为配置项）。任务级计划见 `m8-video-streaming-tasks.md`。
 > 来源：`DEV_PLAN.md` 路线图 M8。
 > 输入：SPEC §8.2/§9.1、ARCHITECTURE §17/ADR-011、M6 产物（Perception）、ZLMediaKit C API 头文件、系统 FFmpeg 实测。
 
