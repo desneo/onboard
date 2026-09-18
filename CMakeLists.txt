@@ -30,6 +30,7 @@ add_executable(onboard
   src/core/runtime.cpp
   src/core/system_param_store.cpp
   src/state/state_store.cpp
+  src/state/state_monitor.cpp
   src/flight_control/flight_control_module.cpp
   src/task/task_scheduler.cpp
   src/task/nodes/arm_node.cpp
