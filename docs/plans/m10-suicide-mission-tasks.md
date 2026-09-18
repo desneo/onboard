@@ -3,7 +3,7 @@
 > 设计依据：`m10-suicide-mission-design.md`（用户 2026-09-18 确认）。
 > 执行位置：工程根 `onboard/`。
 > 验证原则：每个 Task 结束后 x64 Release 构建通过；不写测试代码（SPEC §11）。
-> 状态：待执行。
+> 状态：已完成并部分验收（2026-09-18）；SITL/实流待验。
 
 ---
 
@@ -15,7 +15,7 @@
 - Modify: `docs/DEV_PLAN.md`（§11 索引）
 - Modify: `docs/plans/m10-suicide-mission-design.md`（状态行）
 
-- [ ] Step 1: `docs/ARCHITECTURE.md` §15.3，在「Detection / Tracking / Guidance 结果也通过 eventcpp 向相关模块发布。」之后追加
+- [x] Step 1: `docs/ARCHITECTURE.md` §15.3，在「Detection / Tracking / Guidance 结果也通过 eventcpp 向相关模块发布。」之后追加
 
 ```text
 导引阶段的飞控控制下发：Perception 在导引启用且跟踪有效时，将 Guidance Plugin 输出的
@@ -23,13 +23,13 @@ NedVelocity 通过 FlightControlApi::set_ned_velocity 同步直连下发并获�
 启停仍由 Task Execution Engine 经 PerceptionApi 控制；导引停止或任务中止时调用 clear_ned_velocity。
 ```
 
-- [ ] Step 2: `docs/ARCHITECTURE.md` §22 表格中，在「异步控制请求」行之后追加一行
+- [x] Step 2: `docs/ARCHITECTURE.md` §22 表格中，在「异步控制请求」行之后追加一行
 
 ```markdown
 | 下发飞控指令（含导引速度） | C++ 同步调用 FlightControl，必须获取下发结果 |
 ```
 
-- [ ] Step 3: `docs/ARCHITECTURE.md` §23，在「Task Scheduler 可以向 Flight Control 派发独立 Command。」之后追加
+- [x] Step 3: `docs/ARCHITECTURE.md` §23，在「Task Scheduler 可以向 Flight Control 派发独立 Command。」之后追加
 
 ```text
 Perception 仅在下发导引速度时直连 Flight Control（ADR-018）。
@@ -37,7 +37,7 @@ Perception 仅在下发导引速度时直连 Flight Control（ADR-018）。
 统一原则：业务模块下发飞控指令必须采用同步调用并获取结果，不得以「事件发布」代替直连下发。
 ```
 
-- [ ] Step 4: `docs/ARCHITECTURE.md` §30，在 ADR-017 末尾 `---` 之后、`# 31. 架构演进原则` 之前新增
+- [x] Step 4: `docs/ARCHITECTURE.md` §30，在 ADR-017 末尾 `---` 之后、`# 31. 架构演进原则` 之前新增
 
 ```markdown
 ## ADR-018：业务模块下发飞控指令采用同步直连
@@ -73,20 +73,20 @@ Perception 仅在下发导引速度时直连 Flight Control（ADR-018）。
 - 后续任何模块下发飞控指令，均需同步直连并获得结果，不再新增事件式下发通路。
 ```
 
-- [ ] Step 5: `docs/DEV_PLAN.md` §11 索引表末尾追加两行
+- [x] Step 5: `docs/DEV_PLAN.md` §11 索引表末尾追加两行
 
 ```markdown
 | `plans/m10-suicide-mission-design.md` | M10 Change Design（自杀式反无任务全链路） | 已确认（2026-09-18），实施中 |
 | `plans/m10-suicide-mission-tasks.md` | M10 任务级计划与执行记录 | 执行中 |
 ```
 
-- [ ] Step 6: `docs/plans/m10-suicide-mission-design.md` 状态行改为
+- [x] Step 6: `docs/plans/m10-suicide-mission-design.md` 状态行改为
 
 ```markdown
 > 状态：已确认（2026-09-18）。任务级计划见 `m10-suicide-mission-tasks.md`。
 ```
 
-- [ ] Step 7: 提交
+- [x] Step 7: 提交
 
 ```bash
 git add docs/ARCHITECTURE.md docs/DEV_PLAN.md docs/plans/m10-suicide-mission-design.md docs/plans/m10-suicide-mission-tasks.md
@@ -105,7 +105,7 @@ Expected: 文档变更仅限上述内容；未改动 SPEC/requirement。
 - Modify: `src/core/config.cpp`
 - Modify: `config/onboard.conf`
 
-- [ ] Step 1: `src/core/config.h`，在 `alert_voltage_threshold_v` 之后追加
+- [x] Step 1: `src/core/config.h`，在 `alert_voltage_threshold_v` 之后追加
 
 ```cpp
     double suicide_detection_start_distance_m = 200.0;
@@ -120,7 +120,7 @@ Expected: 文档变更仅限上述内容；未改动 SPEC/requirement。
     double suicide_impact_vd_m_s = 3.0;
 ```
 
-- [ ] Step 2: `src/core/config.cpp`，在 `alert_voltage_threshold_v` 分支之后追加
+- [x] Step 2: `src/core/config.cpp`，在 `alert_voltage_threshold_v` 分支之后追加
 
 ```cpp
         } else if (key == "suicide_detection_start_distance_m") {
@@ -145,7 +145,7 @@ Expected: 文档变更仅限上述内容；未改动 SPEC/requirement。
             out.suicide_impact_vd_m_s = std::stod(value);
 ```
 
-- [ ] Step 3: `config/onboard.conf` 末尾追加
+- [x] Step 3: `config/onboard.conf` 末尾追加
 
 ```text
 # 自杀式反无任务（阶段阈值与失败判定，联调时按实际调整）
@@ -161,7 +161,7 @@ suicide_impact_height_m = 2.0
 suicide_impact_vd_m_s = 3.0
 ```
 
-- [ ] Step 4: 构建并提交
+- [x] Step 4: 构建并提交
 
 ```bash
 cmake --build build -j
@@ -195,7 +195,7 @@ class GeoCalculator {
 }
 ```
 
-- [ ] Step 1: 写 `src/geo/geo_tool.h`
+- [x] Step 1: 写 `src/geo/geo_tool.h`
 
 ```cpp
 #pragma once
@@ -217,7 +217,7 @@ class GeoCalculator {
 }  // namespace plane::geo
 ```
 
-- [ ] Step 2: 写 `src/geo/geo_tool.cpp`
+- [x] Step 2: 写 `src/geo/geo_tool.cpp`
 
 ```cpp
 #include "geo/geo_tool.h"
@@ -259,13 +259,13 @@ double GeoCalculator::bearing_deg(const plane::model::GeoPoint& from, const plan
 }  // namespace plane::geo
 ```
 
-- [ ] Step 3: `CMakeLists.txt` 的 `add_executable(onboard ...)` 列表中，在 `src/flight_control/flight_control_module.cpp` 之后追加
+- [x] Step 3: `CMakeLists.txt` 的 `add_executable(onboard ...)` 列表中，在 `src/flight_control/flight_control_module.cpp` 之后追加
 
 ```cmake
   src/geo/geo_tool.cpp
 ```
 
-- [ ] Step 4: 构建并提交
+- [x] Step 4: 构建并提交
 
 ```bash
 cmake --build build -j
@@ -298,7 +298,7 @@ struct TrackingState {
 virtual TrackingState tracking_state() const = 0;  // TargetStoreApi
 ```
 
-- [ ] Step 1: `src/target/target_store_api.h`，在 `class TargetStoreApi` 之前追加
+- [x] Step 1: `src/target/target_store_api.h`，在 `class TargetStoreApi` 之前追加
 
 ```cpp
 /// 跟踪目标状态快照（M10）。
@@ -309,13 +309,13 @@ struct TrackingState {
 };
 ```
 
-- [ ] Step 2: `src/target/target_store_api.h`，在 `tracked_target` 声明之后追加
+- [x] Step 2: `src/target/target_store_api.h`，在 `tracked_target` 声明之后追加
 
 ```cpp
     virtual TrackingState tracking_state() const = 0;
 ```
 
-- [ ] Step 3: `src/target/target_store.h`，在 `tracked_target` 声明之后追加
+- [x] Step 3: `src/target/target_store.h`，在 `tracked_target` 声明之后追加
 
 ```cpp
     TrackingState tracking_state() const override;
@@ -328,7 +328,7 @@ struct TrackingState {
     bool tracking_lost_ = false;
 ```
 
-- [ ] Step 4: `src/target/target_store.cpp`，在 `tracked_target()` 实现之后追加重载
+- [x] Step 4: `src/target/target_store.cpp`，在 `tracked_target()` 实现之后追加重载
 
 ```cpp
 TrackingState TargetStore::tracking_state() const {
@@ -343,21 +343,21 @@ TrackingState TargetStore::tracking_state() const {
 }
 ```
 
-- [ ] Step 5: `src/target/target_store.cpp` 的 `stop()` 中，清空目标后追加状态复位
+- [x] Step 5: `src/target/target_store.cpp` 的 `stop()` 中，清空目标后追加状态复位
 
 ```cpp
     tracking_valid_ = false;
     tracking_lost_ = false;
 ```
 
-- [ ] Step 6: `src/target/target_store.cpp` 的 `on_tracking()` 中，更新 `tracked_target_` 后追加
+- [x] Step 6: `src/target/target_store.cpp` 的 `on_tracking()` 中，更新 `tracked_target_` 后追加
 
 ```cpp
         tracking_valid_ = true;
         tracking_lost_ = result.lost;
 ```
 
-- [ ] Step 7: 构建并提交
+- [x] Step 7: 构建并提交
 
 ```bash
 cmake --build build -j
@@ -391,7 +391,7 @@ struct GuidanceResult {
 Perception(EventBus&, const AppConfig&, PluginManagerApi&, StateStoreApi&, FlightControlApi&, VideoStreamingApi&);
 ```
 
-- [ ] Step 1: `src/perception/perception_api.h` 的 `GuidanceResult` 追加字段
+- [x] Step 1: `src/perception/perception_api.h` 的 `GuidanceResult` 追加字段
 
 ```cpp
 struct GuidanceResult {
@@ -401,7 +401,7 @@ struct GuidanceResult {
 };
 ```
 
-- [ ] Step 2: `src/perception/perception.h`：增加 include 与构造参数/成员
+- [x] Step 2: `src/perception/perception.h`：增加 include 与构造参数/成员
 
 在 `#include "core/system_param_api.h"` 之后（按字母序放合适位置）追加
 
@@ -423,7 +423,7 @@ struct GuidanceResult {
     plane::flight_control::FlightControlApi& flight_control_;
 ```
 
-- [ ] Step 3: `src/perception/perception.cpp` 构造函数同步修改
+- [x] Step 3: `src/perception/perception.cpp` 构造函数同步修改
 
 ```cpp
 Perception::Perception(plane::core::EventBus& event_bus, const plane::core::AppConfig& config,
@@ -438,7 +438,7 @@ Perception::Perception(plane::core::EventBus& event_bus, const plane::core::AppC
       video_streaming_(video_streaming) {}
 ```
 
-- [ ] Step 4: `src/perception/perception.cpp` 的 `stop_guidance()` 改为
+- [x] Step 4: `src/perception/perception.cpp` 的 `stop_guidance()` 改为
 
 ```cpp
 void Perception::stop_guidance() {
@@ -447,13 +447,13 @@ void Perception::stop_guidance() {
 }
 ```
 
-- [ ] Step 5: `src/perception/perception.cpp` 的 `stop()` 中，在重置插件之后追加
+- [x] Step 5: `src/perception/perception.cpp` 的 `stop()` 中，在重置插件之后追加
 
 ```cpp
     flight_control_.clear_ned_velocity();
 ```
 
-- [ ] Step 6: `src/perception/perception.cpp` 的 `process_loop()` 导引分支改为
+- [x] Step 6: `src/perception/perception.cpp` 的 `process_loop()` 导引分支改为
 
 ```cpp
         if (guidance_enabled_ && tracking_enabled_) {
@@ -485,14 +485,14 @@ void Perception::stop_guidance() {
         }
 ```
 
-- [ ] Step 7: `src/main.cpp` 的 Perception 构造改为
+- [x] Step 7: `src/main.cpp` 的 Perception 构造改为
 
 ```cpp
     auto perception = std::make_unique<plane::perception::Perception>(event_bus, config, *plugin_management,
                                                                       *state_store, *flight_control, *video_streaming);
 ```
 
-- [ ] Step 8: 构建并提交
+- [x] Step 8: 构建并提交
 
 ```bash
 cmake --build build -j
@@ -534,7 +534,7 @@ class ApproachController {
 };
 ```
 
-- [ ] Step 1: `src/task/nodes/flight_action_node.h` 的 `onRunning()` 改为
+- [x] Step 1: `src/task/nodes/flight_action_node.h` 的 `onRunning()` 改为
 
 ```cpp
     BT::NodeStatus onRunning() override {
@@ -553,7 +553,7 @@ class ApproachController {
     virtual std::int64_t node_timeout_ms() const { return app_config_->bt_node_timeout_ms; }
 ```
 
-- [ ] Step 2: 写 `src/task/suicide_task_context.h`
+- [x] Step 2: 写 `src/task/suicide_task_context.h`
 
 ```cpp
 #pragma once
@@ -570,7 +570,7 @@ struct SuicideTaskContext {
 }  // namespace plane::task
 ```
 
-- [ ] Step 3: 写 `src/task/nodes/approach_controller.h`
+- [x] Step 3: 写 `src/task/nodes/approach_controller.h`
 
 ```cpp
 #pragma once
@@ -610,7 +610,7 @@ class ApproachController {
 }  // namespace plane::task
 ```
 
-- [ ] Step 4: 写 `src/task/nodes/approach_controller.cpp`
+- [x] Step 4: 写 `src/task/nodes/approach_controller.cpp`
 
 ```cpp
 #include "task/nodes/approach_controller.h"
@@ -676,13 +676,13 @@ bool ApproachController::approach(const plane::model::GcsTarget& target, double 
 }  // namespace plane::task
 ```
 
-- [ ] Step 5: `CMakeLists.txt` 的 `add_executable(onboard ...)` 列表中，在 `src/task/nodes/stop_motor_node.cpp` 之后追加
+- [x] Step 5: `CMakeLists.txt` 的 `add_executable(onboard ...)` 列表中，在 `src/task/nodes/stop_motor_node.cpp` 之后追加
 
 ```cmake
   src/task/nodes/approach_controller.cpp
 ```
 
-- [ ] Step 6: 构建并提交
+- [x] Step 6: 构建并提交
 
 ```bash
 cmake --build build -j
@@ -710,7 +710,7 @@ Expected: 构建通过；M5 节点行为不变（默认超时未变）。
 - Consumes: `ApproachController`（Task 6）、`SuicideTaskContext`（Task 6）、`PerceptionApi`（M6）、`TargetStoreApi::vision_targets/gcs_*`（M7）
 - Produces: 节点类型名 `"Midcourse"`、`"Detect"`（Task 9 建树使用）
 
-- [ ] Step 1: 写 `src/task/nodes/midcourse_node.h`
+- [x] Step 1: 写 `src/task/nodes/midcourse_node.h`
 
 ```cpp
 #pragma once
@@ -749,7 +749,7 @@ class MidcourseNode final : public FlightActionNode {
 }  // namespace plane::task
 ```
 
-- [ ] Step 2: 写 `src/task/nodes/midcourse_node.cpp`
+- [x] Step 2: 写 `src/task/nodes/midcourse_node.cpp`
 
 ```cpp
 #include "task/nodes/midcourse_node.h"
@@ -800,7 +800,7 @@ std::int64_t MidcourseNode::node_timeout_ms() const { return app_config_->suicid
 }  // namespace plane::task
 ```
 
-- [ ] Step 3: 写 `src/task/nodes/detect_node.h`
+- [x] Step 3: 写 `src/task/nodes/detect_node.h`
 
 ```cpp
 #pragma once
@@ -843,7 +843,7 @@ class DetectNode final : public FlightActionNode {
 }  // namespace plane::task
 ```
 
-- [ ] Step 4: 写 `src/task/nodes/detect_node.cpp`
+- [x] Step 4: 写 `src/task/nodes/detect_node.cpp`
 
 ```cpp
 #include "task/nodes/detect_node.h"
@@ -928,14 +928,14 @@ std::int64_t DetectNode::node_timeout_ms() const { return app_config_->suicide_p
 }  // namespace plane::task
 ```
 
-- [ ] Step 5: `CMakeLists.txt` 的 `add_executable(onboard ...)` 列表中追加
+- [x] Step 5: `CMakeLists.txt` 的 `add_executable(onboard ...)` 列表中追加
 
 ```cmake
   src/task/nodes/midcourse_node.cpp
   src/task/nodes/detect_node.cpp
 ```
 
-- [ ] Step 6: 构建并提交
+- [x] Step 6: 构建并提交
 
 ```bash
 cmake --build build -j
@@ -963,7 +963,7 @@ Expected: 构建通过（节点尚未注册使用，无行为变化）。
 - Consumes: `TargetStoreApi::tracking_state()`（Task 4）、`PerceptionApi::start_guidance/stop_guidance`、`FlightControlApi::flight_status/link_state/clear_ned_velocity`
 - Produces: 节点类型名 `"Track"`、`"Guide"`（Task 9 建树使用）
 
-- [ ] Step 1: 写 `src/task/nodes/track_node.h`
+- [x] Step 1: 写 `src/task/nodes/track_node.h`
 
 ```cpp
 #pragma once
@@ -1009,7 +1009,7 @@ class TrackNode final : public FlightActionNode {
 }  // namespace plane::task
 ```
 
-- [ ] Step 2: 写 `src/task/nodes/track_node.cpp`
+- [x] Step 2: 写 `src/task/nodes/track_node.cpp`
 
 ```cpp
 #include "task/nodes/track_node.h"
@@ -1082,7 +1082,7 @@ std::int64_t TrackNode::node_timeout_ms() const { return app_config_->suicide_ph
 }  // namespace plane::task
 ```
 
-- [ ] Step 3: 写 `src/task/nodes/guide_node.h`
+- [x] Step 3: 写 `src/task/nodes/guide_node.h`
 
 ```cpp
 #pragma once
@@ -1123,7 +1123,7 @@ class GuideNode final : public FlightActionNode {
 }  // namespace plane::task
 ```
 
-- [ ] Step 4: 写 `src/task/nodes/guide_node.cpp`
+- [x] Step 4: 写 `src/task/nodes/guide_node.cpp`
 
 ```cpp
 #include "task/nodes/guide_node.h"
@@ -1198,14 +1198,14 @@ std::int64_t GuideNode::node_timeout_ms() const { return app_config_->suicide_ph
 }  // namespace plane::task
 ```
 
-- [ ] Step 5: `CMakeLists.txt` 的 `add_executable(onboard ...)` 列表中追加
+- [x] Step 5: `CMakeLists.txt` 的 `add_executable(onboard ...)` 列表中追加
 
 ```cmake
   src/task/nodes/track_node.cpp
   src/task/nodes/guide_node.cpp
 ```
 
-- [ ] Step 6: 构建并提交
+- [x] Step 6: 构建并提交
 
 ```bash
 cmake --build build -j
@@ -1231,7 +1231,7 @@ Expected: 构建通过。
 - Consumes: Task 5 `PerceptionApi&`、Task 4 `TargetStoreApi&`、Task 6-8 节点类型
 - Produces: `taskCode=suicide` 可执行；行为树名 `suicide`
 
-- [ ] Step 1: `src/task/task_execution_engine.h` 增加 include
+- [x] Step 1: `src/task/task_execution_engine.h` 增加 include
 
 ```cpp
 #include "perception/perception_api.h"
@@ -1264,7 +1264,7 @@ Expected: 构建通过。
     SuicideTaskContext suicide_context_;
 ```
 
-- [ ] Step 2: `src/task/task_execution_engine.cpp` 构造函数改为
+- [x] Step 2: `src/task/task_execution_engine.cpp` 构造函数改为
 
 ```cpp
 TaskExecutionEngine::TaskExecutionEngine(plane::core::EventBus& event_bus, const plane::core::AppConfig& config,
@@ -1282,7 +1282,7 @@ TaskExecutionEngine::TaskExecutionEngine(plane::core::EventBus& event_bus, const
       target_store_(target_store) {}
 ```
 
-- [ ] Step 3: `src/task/task_execution_engine.cpp` 增加 include
+- [x] Step 3: `src/task/task_execution_engine.cpp` 增加 include
 
 ```cpp
 #include "task/nodes/detect_node.h"
@@ -1291,7 +1291,7 @@ TaskExecutionEngine::TaskExecutionEngine(plane::core::EventBus& event_bus, const
 #include "task/nodes/track_node.h"
 ```
 
-- [ ] Step 4: 在 `build_basic_flight()` 之后新增 `build_suicide()`
+- [x] Step 4: 在 `build_basic_flight()` 之后新增 `build_suicide()`
 
 ```cpp
 BT::Tree TaskExecutionEngine::build_suicide() {
@@ -1346,7 +1346,7 @@ BT::Tree TaskExecutionEngine::build_suicide() {
 }
 ```
 
-- [ ] Step 5: `start()` 改为按 taskCode 建树
+- [x] Step 5: `start()` 改为按 taskCode 建树
 
 ```cpp
 bool TaskExecutionEngine::start(const plane::model::TaskInfo& task, std::string& error) {
@@ -1377,7 +1377,7 @@ bool TaskExecutionEngine::start(const plane::model::TaskInfo& task, std::string&
 }
 ```
 
-- [ ] Step 6: `publish_progress()` 与 `finish()` 改为使用 `current_tree_name_`，并增加 `cleanup_control()`
+- [x] Step 6: `publish_progress()` 与 `finish()` 改为使用 `current_tree_name_`，并增加 `cleanup_control()`
 
 ```cpp
 void TaskExecutionEngine::publish_progress(const std::string& node) {
@@ -1407,7 +1407,7 @@ void TaskExecutionEngine::cleanup_control() {
 }
 ```
 
-- [ ] Step 7: `abort()` 在树停止后调用 `cleanup_control()`（互斥锁范围之外）
+- [x] Step 7: `abort()` 在树停止后调用 `cleanup_control()`（互斥锁范围之外）
 
 ```cpp
 void TaskExecutionEngine::abort() {
@@ -1432,14 +1432,14 @@ void TaskExecutionEngine::abort() {
 }
 ```
 
-- [ ] Step 8: `src/main.cpp` 的 TaskExecutionEngine 构造改为
+- [x] Step 8: `src/main.cpp` 的 TaskExecutionEngine 构造改为
 
 ```cpp
     auto task_engine = std::make_unique<plane::task::TaskExecutionEngine>(
         event_bus, config, *flight_control, *state_store, *system_param_store, *perception, *target_store);
 ```
 
-- [ ] Step 9: 构建并提交
+- [x] Step 9: 构建并提交
 
 ```bash
 cmake --build build -j
@@ -1462,7 +1462,7 @@ Expected: 构建通过；默认 `--task-code suicide` 不再报「未知任务�
 - Modify: `plugins/guidance_stub/guidance_stub.cpp`
 - Modify: `config/onboard.conf`（注释说明）
 
-- [ ] Step 1: `plugins/detection_stub/detection_stub.cpp` 改为
+- [x] Step 1: `plugins/detection_stub/detection_stub.cpp` 改为
 
 ```cpp
 #include <spdlog/spdlog.h>
@@ -1525,7 +1525,7 @@ bool connectToPlumaHost(pluma::Host& host) {
 }  // namespace plane::algorithm
 ```
 
-- [ ] Step 2: `plugins/tracking_stub/tracking_stub.cpp` 改为
+- [x] Step 2: `plugins/tracking_stub/tracking_stub.cpp` 改为
 
 ```cpp
 #include <spdlog/spdlog.h>
@@ -1594,7 +1594,7 @@ bool connectToPlumaHost(pluma::Host& host) {
 }  // namespace plane::algorithm
 ```
 
-- [ ] Step 3: `plugins/guidance_stub/guidance_stub.cpp` 改为
+- [x] Step 3: `plugins/guidance_stub/guidance_stub.cpp` 改为
 
 ```cpp
 #include <spdlog/spdlog.h>
@@ -1647,7 +1647,7 @@ bool connectToPlumaHost(pluma::Host& host) {
 }  // namespace plane::algorithm
 ```
 
-- [ ] Step 4: `config/onboard.conf` 的自检注释追加联调说明
+- [x] Step 4: `config/onboard.conf` 的自检注释追加联调说明
 
 ```text
 # 无真实算法/图像源时的联调开关（仅影响 stub 插件）：
@@ -1656,7 +1656,7 @@ bool connectToPlumaHost(pluma::Host& host) {
 #   PLANE_STUB_TRACK_LOST_AFTER=<n>   第 n 次跟踪后模拟丢失
 ```
 
-- [ ] Step 5: 构建并提交
+- [x] Step 5: 构建并提交
 
 ```bash
 cmake --build build -j
@@ -1675,20 +1675,20 @@ Expected: 构建通过；默认行为不变（未设环境变量时与 M6 一致
 
 - Modify: `tools/gcs_sim/main.cpp`
 
-- [ ] Step 1: `Options` 增加字段
+- [x] Step 1: `Options` 增加字段
 
 ```cpp
     std::string target_track_id;
 ```
 
-- [ ] Step 2: 参数解析中，在 `--task-code` 分支之后追加
+- [x] Step 2: 参数解析中，在 `--task-code` 分支之后追加
 
 ```cpp
         } else if (arg == "--target-track-id" && i + 1 < argc) {
             options.target_track_id = argv[++i];
 ```
 
-- [ ] Step 3: TaskInfo payload 改为
+- [x] Step 3: TaskInfo payload 改为
 
 ```cpp
         const std::string task_payload = nlohmann::json{
@@ -1699,7 +1699,7 @@ Expected: 构建通过；默认行为不变（未设环境变量时与 M6 一致
              options.task_action}}.dump();
 ```
 
-- [ ] Step 4: 构建并提交
+- [x] Step 4: 构建并提交
 
 ```bash
 cmake --build build -j
@@ -1720,7 +1720,7 @@ Expected: 构建通过；`--target-track-id t1` 时 TaskInfo 携带该字段。
 
 > 设计 §12 推荐 A（CMake install）；此处选择脚本方案（B）：CMake install 会把源配置原样复制，其中 `plugins_dir = build/plugins` 在 dist 布局下不可用；脚本可在打包时改写为 `plugins`，dist 开箱可运行。属设计偏差，记录于本任务。
 
-- [ ] Step 1: 写 `tools/package.sh`
+- [x] Step 1: 写 `tools/package.sh`
 
 ```bash
 #!/usr/bin/env bash
@@ -1742,7 +1742,7 @@ echo "运行: cd dist && ./onboard --config onboard.conf"
 echo "注意: 三方运行库 (mavsdk/zenoh/pluma/opencv/ffmpeg/ZLMediaKit) 需按部署环境提供"
 ```
 
-- [ ] Step 2: 赋可执行权限、验证并提交
+- [x] Step 2: 赋可执行权限、验证并提交
 
 ```bash
 chmod +x tools/package.sh
@@ -1763,7 +1763,7 @@ Expected: `dist/` 含 `onboard`、`onboard.conf`、`plugins/*.so`。
 - Modify: `docs/plans/m10-suicide-mission-tasks.md`（勾选与执行记录）
 - Modify: `docs/DEV_PLAN.md`（§11 索引状态）
 
-- [ ] Step 1: 构建与规范检查
+- [x] Step 1: 构建与规范检查
 
 ```bash
 cmake --build build -j
@@ -1773,7 +1773,7 @@ grep -rn "std::cout\|printf(" src/ tools/ plugins/ || echo "no cout/printf"
 
 Expected: 无 warning、格式通过、无 cout/printf。
 
-- [ ] Step 2: suicide 任务无 SITL 路径
+- [x] Step 2: suicide 任务无 SITL 路径
 
 ```bash
 # 终端 1
@@ -1787,7 +1787,7 @@ Expected（onboard）：`行为树已创建: suicide` → `中段制导目标: t
 `中段制导速度下发失败 (距离 ... m): ...飞控未连接...` → `行为树结束: suicide, status=Failed`；
 gcs_sim：`TaskState status=None`、`Ack 结果: TaskInfo=true`。
 
-- [ ] Step 3: 目标缺失失败路径
+- [x] Step 3: 目标缺失失败路径
 
 ```bash
 ./build/gcs_sim --task-code suicide --no-command --listen-seconds 4
@@ -1795,7 +1795,7 @@ gcs_sim：`TaskState status=None`、`Ack 结果: TaskInfo=true`。
 
 Expected：`无法确定 GCS 目标（targetTrackId 为空且 GCS 目标数不为 1）` → 任务 Failed。
 
-- [ ] Step 4: stub 合成输出验证（无图像源）
+- [x] Step 4: stub 合成输出验证（无图像源）
 
 ```bash
 PLANE_STUB_DETECT=center PLANE_STUB_GUIDE=forward PLANE_STUB_TRACK_LOST_AFTER=3 \
@@ -1807,7 +1807,7 @@ PLANE_STUB_DETECT=center PLANE_STUB_GUIDE=forward PLANE_STUB_TRACK_LOST_AFTER=3 
 Expected：`检测插件已实例化` → `自检 detect 成功: targets=1` → `自检 track 成功` → `自检 guide 成功: vn=1`。
 （验证后恢复 `perception_selftest_on_start = false`。）
 
-- [ ] Step 5: SPEC §12 验收清单走查
+- [x] Step 5: SPEC §12 验收清单走查
 
 在本文档末尾「执行记录」中逐项记录 SPEC §12 结果：
 
@@ -1815,13 +1815,13 @@ Expected：`检测插件已实例化` → `自检 detect 成功: targets=1` → 
 - 自杀式反无 5 项：阶段顺序/失败路径/替换由代码与日志确认，实际飞行项标注「待 SITL」；
 - 无法在当前环境验证的项统一标注「待 SITL/实流」。
 
-- [ ] Step 6: 勾选本文档并记录执行偏差，更新 DEV_PLAN §11
+- [x] Step 6: 勾选本文档并记录执行偏差，更新 DEV_PLAN §11
 
 ```markdown
 | `plans/m10-suicide-mission-tasks.md` | M10 任务级计划与执行记录 | 已完成（部分验收，SITL/实流待验） |
 ```
 
-- [ ] Step 7: 提交
+- [x] Step 7: 提交
 
 ```bash
 git add docs
@@ -1838,3 +1838,57 @@ git commit -m "docs(m10): M10 部分验收与文档更新"
 4. 导引阶段飞控控制（Perception 直连下发、`applied=true`）与撞击完成判定；
 5. 执行中替换/中止：`haltTree` 后 Offboard 停止（`clear_ned_velocity`）、检测/跟踪/导引全部退出；
 6. PX4 SITL 下 `suicide` 全流程演练与 SPEC §12 自杀式反无 5 项验收。
+
+---
+
+## 执行记录与偏差
+
+### 提交清单
+
+| 提交 | 内容 |
+|---|---|
+| `cf90490` | docs(m10): M10 设计确认与架构 ADR-018（ARCHITECTURE §15/§22/§23 + ADR-018、DEV_PLAN §11） |
+| `1894051` | feat(m10): 增加 suicide 任务配置项 |
+| `3012ad8` | feat(m10): 增加 Geographic Tool |
+| `4702eee` | feat(m10): TargetStore 暴露跟踪状态 |
+| `0d4454b` | feat(m10): Perception 直连飞控下发导引速度 |
+| `43ac868` | feat(m10): 增加 suicide 节点基类超时与逼近控制 |
+| `82177d5` | feat(m10): 增加中段制导与目标检测节点 |
+| `a68969e` | feat(m10): 增加跟踪与导引节点 |
+| `a6329ee` | fix(m10): 跟踪/导引节点本地时间函数重命名 |
+| `0e4805d` | feat(m10): 引擎注册 suicide 任务树与终结清理 |
+| `08311ac` | feat(m10): stub 插件支持合成输出联调 |
+| `c2ab0e5` | feat(m10): gcs_sim 支持 targetTrackId |
+| `3e44762` | chore(m10): 增加部署打包脚本 |
+
+### 验收证据（2026-09-18，无 SITL/无实流）
+
+1. **构建与规范**：构建 0 warning；`clang-format --dry-run --Werror`（src/tools/plugins 全部 .h/.cpp）通过；无 `std::cout/printf`。
+2. **suicide 任务无 SITL 路径**：`gcs_sim --task-code suicide --target-track-id t1 --send-gcs-target t1 --gcs-target-repeat 5` →
+   onboard `行为树已创建: suicide, taskId=task-1` → `任务结束: status=Failed, detail=节点执行失败: Arm`（飞控未连接，首个节点失败即任务失败，符合 SPEC §5.8）；
+   gcs_sim `Ack 结果: TaskInfo=true, Command=true`、`TaskState status=None`（终态回无任务）、`GCS 目标更新: trackId=t1, 历史=5`。
+3. **stub 合成输出**：`PLANE_STUB_DETECT=center PLANE_STUB_GUIDE=forward PLANE_STUB_TRACK_LOST_AFTER=3` + 临时 `perception_selftest_on_start=true` →
+   `DetectionStub init: synthetic_center=true`、`自检 detect 成功: targets=1`、`自检 track 成功: type=stub`、`GuidanceStub init: forward=true`、`自检 guide 成功: vn=1 ve=0 vd=0`。
+4. **部署打包**：`tools/package.sh` 产出 `dist/{onboard, onboard.conf, plugins/*.so}`，`plugins_dir` 自动改写为 `plugins`。
+5. **架构变更**：ARCHITECTURE §15/§22/§23 已更新，ADR-018 已记录；飞控下发通路现状核查（Scheduler/Engine 已直连，Perception 本次直连导引速度）。
+
+### 偏差
+
+1. **Task 8 编译修复**：`track_node.cpp`/`guide_node.cpp` 的匿名命名空间 `now_ms()` 与 `FlightActionNode` 私有成员同名，改用 `clock_now_ms()`（提交 `a6329ee`）。
+2. **Task 9 析构顺序修复**：`~TaskExecutionEngine` 原调用 `stop()`→`abort()`→`cleanup_control()` 会解引用同级模块；`Runtime` 的 `modules_.clear()` 按正序析构，Perception 可能先于引擎析构（实测 exit=139）。拆出 `halt_tree()`：析构仅停止自身行为树，`abort()` = `halt_tree()` + `cleanup_control()`（提交 `0e4805d`）。
+3. **Task 12 方案调整**：设计 §12 推荐 A（CMake install），实际采用脚本方案 B。原因：CMake install 原样复制 `config/onboard.conf`，其中 `plugins_dir = build/plugins` 在 dist 布局不可用；脚本打包时改写为 `plugins`，dist 可直接运行。另将 `dist/` 加入 `.gitignore`。
+4. **Task 13 阶段逻辑验收受限**：无 SITL 时 `Arm` 节点即失败，`Midcourse/Detect/Track/Guide` 的中段目标解析、距离/方位、阶段切换、丢失失败、撞击判定与 Perception 直连下发路径无法在运行期触发，整体列入 SITL 待验清单。
+
+### SPEC §12 验收清单走查
+
+| 分类 | 项数 | 当前结论 |
+|---|---|---|
+| 飞控（连接/2 秒判定/重连） | 4 | 待 SITL（M3 遗留） |
+| 指令与任务（执行/替换/ACK/顺序/中止/BT/状态上报） | 8 | ACK、替换、状态上报已验证；实际动作与顺序执行待 SITL（M4/M5 遗留 + M10） |
+| 自杀式反无（阶段顺序/中段/算法调用/失败/替换） | 5 | 树与代码就绪；全部待 SITL（M10） |
+| 安全高度 | 1 | 动态下发已验证；起飞使用待 SITL（M9） |
+| 状态与通信 | 6 | 已验证（M1/M2；8 机规模待联调） |
+| 相机/图像/AI/目标 | 3 | 链路已验收；实流取图/推流待源（M6/M7/M8） |
+| 安全告警 | 1 | 待 SITL（M9） |
+
+> 待 SITL 项按本文档「附：SITL/实流待用户验证清单」执行，结果回填本文档。
