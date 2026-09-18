@@ -39,14 +39,17 @@ class FlightActionNode : public BT::StatefulActionNode {
     }
 
     BT::NodeStatus onRunning() override {
-        if (now_ms() - start_ms_ > app_config_->bt_node_timeout_ms) {
-            spdlog::error("节点 {} 超时 ({} ms)", name(), app_config_->bt_node_timeout_ms);
+        if (now_ms() - start_ms_ > node_timeout_ms()) {
+            spdlog::error("节点 {} 超时 ({} ms)", name(), node_timeout_ms());
             return BT::NodeStatus::FAILURE;
         }
         return check();
     }
 
     void onHalted() override { spdlog::info("节点 {} 已中止", name()); }
+
+    /// 节点超时；默认取全局配置，长阶段节点可覆写（M10）。
+    virtual std::int64_t node_timeout_ms() const { return app_config_->bt_node_timeout_ms; }
 
     virtual bool dispatch(std::string& error) = 0;
     virtual BT::NodeStatus check() = 0;

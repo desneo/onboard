@@ -40,6 +40,7 @@ add_executable(onboard
   src/task/nodes/rtl_node.cpp
   src/task/nodes/hover_node.cpp
   src/task/nodes/stop_motor_node.cpp
+  src/task/nodes/approach_controller.cpp
   src/task/task_execution_engine.cpp
   src/perception/plugin_management.cpp
   src/perception/plugin_providers.cpp
