@@ -29,6 +29,8 @@ M5 交付 Task Execution Engine：
 | 3 | 完成判定数据源：FlightControl 新增 `FlightStatus`（armed/in_air/mission 进度）与同步查询；不改 `VehicleState`/common_include |
 | 4 | M5 节点范围：Arm/Takeoff/Land/RTL/Hover/StopMotor + 统一超时；Waypoint/Route 推迟到 M10 |
 | 5 | 无 SITL 部分验收；替换/中止与真实飞行动作待 SITL |
+| 6 | FlightControl 内部缓存 MAVSDK 飞行模式枚举，仅在生成上报 `VehicleState` 时转字符串；`mavsdk` 类型不出 FlightControl |
+| 7 | 行为树三项参数（tick 周期/节点超时/起飞容差）全部为配置项 |
 
 ## 3. FlightControl 扩展（M3 增量）
 
@@ -49,9 +51,10 @@ virtual plane::flight_control::FlightStatus flight_status() const = 0;
 
 `FlightControlModule`：
 
-- 遥测新增订阅：`subscribe_armed`、`subscribe_in_air`、`subscribe_mission_progress`，写入缓存；
+- 遥测新增订阅：`Telemetry::subscribe_armed`、`Telemetry::subscribe_in_air` 写入缓存；任务进度由 `Mission::subscribe_mission_progress`（Mission 插件）写入缓存；
+- **飞行模式在模块内部直接缓存 MAVSDK 枚举** `mavsdk::Telemetry::FlightMode`，仅在构造上报用的 `VehicleState`（发往地面站/其他飞机）时转成字符串；`mavsdk` 类型不出 FlightControl 模块；
 - `takeoff()` 成功时记录 `takeoff_altitude_m`；
-- `flight_status()` 返回锁保护快照；
+- `flight_status()` 返回锁保护快照（`armed/in_air/mission_current/mission_total/takeoff_altitude_m`）；
 - 系统移除时状态复位（armed/in_air=false，mission 归零）。
 
 ## 4. 执行引擎设计
@@ -63,7 +66,7 @@ virtual plane::flight_control::FlightStatus flight_status() const = 0;
 | `src/task/task_execution_engine.h/.cpp` | `IModule` + `TaskExecutionEngineApi`；策略映射、tick 线程、事件发布 |
 | `src/task/nodes/flight_action_node.h` | 动作节点基类：超时、分发一次、轮询完成 |
 | `src/task/nodes/arm_node.h/.cpp` | Arm：分发成功后以 `FlightStatus.armed` 判定 |
-| `src/task/nodes/takeoff_node.h/.cpp` | Takeoff：输入高度；`in_air && height >= 目标 - 容差` |
+| `src/task/nodes/takeoff_node.h/.cpp` | Takeoff：高度取 `safe_height_m`（无输入端口）；`in_air && height >= 目标 - 容差` |
 | `src/task/nodes/land_node.h/.cpp` | Land：`!in_air` |
 | `src/task/nodes/rtl_node.h/.cpp` | RTL：`!in_air` |
 | `src/task/nodes/hover_node.h/.cpp` | Hover：分发成功即 SUCCESS |
@@ -77,17 +80,24 @@ virtual plane::flight_control::FlightStatus flight_status() const = 0;
 - `onHalted()`：仅日志（动作不撤销；后续如需发 Hold 再评估）；
 - 完成判定只读 `FlightStatus` / `VehicleState`，不以「指令已发送成功」为准（SPEC §5.8）。
 
-### 4.3 内置任务 `basic_flight`
+### 4.3 内置任务 `basic_flight`（C++ 手工建树，已验证）
 
 ```text
 Sequence
  ├── Arm
- ├── Takeoff(height = safe_height_m)
+ ├── Takeoff（高度取 safe_height_m，无输入端口）
  └── Land
 ```
 
-- 树名 `basic_flight`；Takeoff 高度来自 `AppConfig.system_param.safeHeight_m`；
-- 映射：`if (task.taskCode == "basic_flight") build_basic_flight(factory)`；未知 taskCode → 启动失败（`Failed` + 错误事件）。
+建树方式（不依赖 XML，已用 BT.CPP 4.10 实测验证）：
+
+1. `factory.registerNodeType<XNode>("X", flight_control, state_store, config)`；
+2. 创建 `BT::Tree::Subtree`（含 `blackboard/tree_ID/instance_name`）与共享 `BT::NodeConfig`；
+3. `factory.instantiateTreeNode("Sequence", "Sequence", config)` 作为根，其余节点同理；
+4. `static_cast<BT::ControlNode*>(root.get())->addChild(...)` 逐层挂接；
+5. 所有节点 `unique_ptr` 放入 `subtree->nodes`（root 在前），`tree.subtrees.push_back(subtree)` 后 `tree.initialize()`。
+
+- 映射：`if (task.taskCode == "basic_flight") build_basic_flight();`；未知 taskCode → 启动失败（`Failed` + 错误事件，M10 前下发 `suicide` 即属此情况）。
 
 ### 4.4 tick 与进度
 
@@ -102,10 +112,12 @@ Sequence
 
 ## 5. 配置
 
+行为树三项参数全部为配置项：
+
 | key | 默认 | 说明 |
 |---|---|---|
-| `bt_tick_interval_ms` | 50 | 行为树 tick 周期 |
-| `bt_node_timeout_ms` | 30000 | 单节点超时（含分发与等待完成） |
+| `bt_tick_interval_ms` | 50 | 行为树 tick 线程周期（可配） |
+| `bt_node_timeout_ms` | 30000 | 单节点超时（含分发与等待完成），必配 |
 | `bt_takeoff_tolerance_m` | 1.0 | 起飞到达判定容差 |
 
 ## 6. main 接线
