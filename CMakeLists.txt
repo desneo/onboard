@@ -40,6 +40,7 @@ add_executable(onboard
   src/task/task_execution_engine.cpp
   src/perception/plugin_management.cpp
   src/perception/plugin_providers.cpp
+  src/perception/perception.cpp
 )
 target_include_directories(onboard PRIVATE src)
 target_compile_options(onboard PRIVATE -Wall -Wextra)
@@ -48,7 +49,7 @@ target_compile_definitions(onboard PRIVATE
   PLANE_GIT_HASH="${PLANE_GIT_HASH}"
   PLANE_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
 )
-target_link_libraries(onboard PRIVATE plane::common_include plane::deps)
+target_link_libraries(onboard PRIVATE plane::common_include plane::deps opencv_videoio)
 
 add_executable(gcs_sim tools/gcs_sim/main.cpp)
 target_include_directories(gcs_sim PRIVATE src)
