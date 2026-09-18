@@ -415,8 +415,8 @@ M3、M6、M9 与主线可并行；M10 必须最后。
 | `plans/m7-target-management-tasks.md` | M7 任务级计划与执行记录 | 已完成（部分验收） |
 | `plans/m8-video-streaming-design.md` | M8 Change Design（H264 + ZLMediaKit RTSP） | 已确认并实施 |
 | `plans/m8-video-streaming-tasks.md` | M8 任务级计划与执行记录 | 已完成（部分验收，实流待验） |
-| `plans/m9-state-monitor-design.md` | M9 Change Design（安全告警与系统参数） | 待确认 |
-| `plans/m9-state-monitor-tasks.md` | M9 任务级计划 | 待生成 |
+| `plans/m9-state-monitor-design.md` | M9 Change Design（安全告警与系统参数） | 已确认（逐项） |
+| `plans/m9-state-monitor-tasks.md` | M9 任务级计划 | 待执行 |
 
 约定：
 

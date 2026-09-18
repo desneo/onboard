@@ -1,6 +1,6 @@
 # M9 Change Design（安全告警与系统参数动态下发）
 
-> 状态：待用户确认（逐项）。任务级计划待确认后生成 `m9-state-monitor-tasks.md`。
+> 状态：已确认（2026-09-18 逐项；仅低电压告警）。任务级计划见 `m9-state-monitor-tasks.md`。
 > 来源：`DEV_PLAN.md` 路线图 M9。
 > 输入：SPEC §7/§10（已修订：仅低电压）、ARCHITECTURE §7/§12、M2 的 `state.own_changed` 事件、M4 的 Alert 发送先例、M5 的 TakeoffNode。
 
