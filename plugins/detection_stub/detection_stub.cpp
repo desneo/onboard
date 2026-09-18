@@ -2,6 +2,7 @@
 
 #include <Pluma/Connector.hpp>
 #include <Pluma/Pluma.hpp>
+#include <cstdlib>
 #include <memory>
 #include <opencv2/core.hpp>
 #include <string>
@@ -16,17 +17,30 @@ class DetectionStub final : public DetectionPlugin {
    public:
     bool init(const DetectConfig& config) override {
         config_ = config;
-        spdlog::info("DetectionStub init: model_path={}", config_.model_path);
+        const char* mode = std::getenv("PLANE_STUB_DETECT");
+        synthetic_center_ = (mode != nullptr && std::string(mode) == "center");
+        spdlog::info("DetectionStub init: model_path={}, synthetic_center={}", config_.model_path, synthetic_center_);
         return true;
     }
 
-    bool detect(const cv::Mat&, std::vector<DetectTarget>& out, std::string&) override {
+    bool detect(const cv::Mat& frame, std::vector<DetectTarget>& out, std::string&) override {
         out.clear();
+        if (synthetic_center_ && !frame.empty()) {
+            DetectTarget target;
+            target.type = "stub";
+            target.confidence = 0.9F;
+            target.bbox.width = 100;
+            target.bbox.height = 100;
+            target.bbox.x = frame.cols / 2 - target.bbox.width / 2;
+            target.bbox.y = frame.rows / 2 - target.bbox.height / 2;
+            out.push_back(target);
+        }
         return true;
     }
 
    private:
     DetectConfig config_;
+    bool synthetic_center_ = false;
 };
 
 }  // namespace

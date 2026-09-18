@@ -2,6 +2,7 @@
 
 #include <Pluma/Connector.hpp>
 #include <Pluma/Pluma.hpp>
+#include <cstdlib>
 #include <memory>
 #include <opencv2/core.hpp>
 #include <string>
@@ -15,7 +16,15 @@ class TrackingStub final : public TrackingPlugin {
    public:
     bool init(const TrackConfig& config) override {
         config_ = config;
-        spdlog::info("TrackingStub init: model_path={}", config_.model_path);
+        const char* lost_after = std::getenv("PLANE_STUB_TRACK_LOST_AFTER");
+        if (lost_after != nullptr) {
+            try {
+                lost_after_ = std::stoi(lost_after);
+            } catch (const std::exception&) {
+                lost_after_ = 0;
+            }
+        }
+        spdlog::info("TrackingStub init: model_path={}, lost_after={}", config_.model_path, lost_after_);
         return true;
     }
 
@@ -24,14 +33,21 @@ class TrackingStub final : public TrackingPlugin {
         return true;
     }
 
-    bool track(const cv::Mat&, DetectTarget& out, std::string&) override {
+    bool track(const cv::Mat&, DetectTarget& out, std::string& error) override {
+        ++call_count_;
         out = target_;
+        if (lost_after_ > 0 && call_count_ > lost_after_) {
+            error = "stub 模拟跟踪丢失";
+            return false;
+        }
         return true;
     }
 
    private:
     TrackConfig config_;
     DetectTarget target_;
+    int lost_after_ = 0;
+    int call_count_ = 0;
 };
 
 }  // namespace

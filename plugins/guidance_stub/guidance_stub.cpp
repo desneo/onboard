@@ -2,6 +2,7 @@
 
 #include <Pluma/Connector.hpp>
 #include <Pluma/Pluma.hpp>
+#include <cstdlib>
 #include <memory>
 #include <string>
 
@@ -14,17 +15,23 @@ class GuidanceStub final : public GuidancePlugin {
    public:
     bool init(const GuidanceConfig& config) override {
         config_ = config;
-        spdlog::info("GuidanceStub init: desired_distance_m={}", config_.desired_distance_m);
+        const char* mode = std::getenv("PLANE_STUB_GUIDE");
+        forward_ = (mode != nullptr && std::string(mode) == "forward");
+        spdlog::info("GuidanceStub init: desired_distance_m={}, forward={}", config_.desired_distance_m, forward_);
         return true;
     }
 
     bool guide(const DetectTarget&, const VehicleState&, NedVelocity& out, std::string&) override {
         out = NedVelocity{};
+        if (forward_) {
+            out.north_m_s = 1.0;
+        }
         return true;
     }
 
    private:
     GuidanceConfig config_;
+    bool forward_ = false;
 };
 
 }  // namespace
