@@ -1,6 +1,6 @@
 # M6 Change Design（相机、图像、插件框架与感知）
 
-> 状态：待用户确认（逐项）。任务级计划待确认后生成 `m6-perception-plugins-tasks.md`。
+> 状态：已确认（2026-09-18 逐项）。任务级计划见 `m6-perception-plugins-tasks.md`。
 > 来源：`DEV_PLAN.md` 路线图 M6。
 > 输入：SPEC §8.1–§8.3、ARCHITECTURE §14/§15/§19/§20/ADR-010、`common_include/functional/*.h`、Pluma 示例与头文件。
 
