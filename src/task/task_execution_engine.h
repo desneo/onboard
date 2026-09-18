@@ -11,6 +11,7 @@
 #include "core/config.h"
 #include "core/event_bus.h"
 #include "core/module.h"
+#include "core/system_param_api.h"
 #include "flight_control/flight_control_api.h"
 #include "state/state_store_api.h"
 #include "task/task_execution_engine_api.h"
@@ -22,7 +23,7 @@ class TaskExecutionEngine final : public plane::core::IModule, public TaskExecut
    public:
     TaskExecutionEngine(plane::core::EventBus& event_bus, const plane::core::AppConfig& config,
                         plane::flight_control::FlightControlApi& flight_control,
-                        plane::state::StateStoreApi& state_store);
+                        plane::state::StateStoreApi& state_store, plane::core::SystemParamApi& system_param);
     ~TaskExecutionEngine() override;
 
     std::string name() const override;
@@ -44,6 +45,7 @@ class TaskExecutionEngine final : public plane::core::IModule, public TaskExecut
     const plane::core::AppConfig& config_;
     plane::flight_control::FlightControlApi& flight_control_;
     plane::state::StateStoreApi& state_store_;
+    plane::core::SystemParamApi& system_param_;
 
     std::mutex mutex_;
     BT::Tree tree_;

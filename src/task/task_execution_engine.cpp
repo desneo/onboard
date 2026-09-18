@@ -18,8 +18,13 @@ namespace plane::task {
 
 TaskExecutionEngine::TaskExecutionEngine(plane::core::EventBus& event_bus, const plane::core::AppConfig& config,
                                          plane::flight_control::FlightControlApi& flight_control,
-                                         plane::state::StateStoreApi& state_store)
-    : event_bus_(event_bus), config_(config), flight_control_(flight_control), state_store_(state_store) {}
+                                         plane::state::StateStoreApi& state_store,
+                                         plane::core::SystemParamApi& system_param)
+    : event_bus_(event_bus),
+      config_(config),
+      flight_control_(flight_control),
+      state_store_(state_store),
+      system_param_(system_param) {}
 
 TaskExecutionEngine::~TaskExecutionEngine() { stop(); }
 
@@ -36,7 +41,7 @@ void TaskExecutionEngine::release() {}
 BT::Tree TaskExecutionEngine::build_basic_flight() {
     BT::BehaviorTreeFactory factory;
     factory.registerNodeType<ArmNode>("Arm", &flight_control_, &state_store_, &config_);
-    factory.registerNodeType<TakeoffNode>("Takeoff", &flight_control_, &state_store_, &config_);
+    factory.registerNodeType<TakeoffNode>("Takeoff", &flight_control_, &state_store_, &config_, &system_param_);
     factory.registerNodeType<LandNode>("Land", &flight_control_, &state_store_, &config_);
 
     auto subtree = std::make_shared<BT::Tree::Subtree>();
