@@ -16,6 +16,7 @@
 #include "perception/perception_api.h"
 #include "perception/plugin_manager_api.h"
 #include "state/state_store_api.h"
+#include "video/video_streaming_api.h"
 
 namespace cv {
 class VideoCapture;
@@ -27,7 +28,7 @@ namespace plane::perception {
 class Perception final : public plane::core::IModule, public PerceptionApi {
    public:
     Perception(plane::core::EventBus& event_bus, const plane::core::AppConfig& config, PluginManagerApi& plugin_manager,
-               plane::state::StateStoreApi& state_store);
+               plane::state::StateStoreApi& state_store, plane::video::VideoStreamingApi& video_streaming);
     ~Perception() override;
 
     std::string name() const override;
@@ -74,6 +75,8 @@ class Perception final : public plane::core::IModule, public PerceptionApi {
     std::atomic<bool> guidance_enabled_{false};
     std::mutex target_mutex_;
     plane::model::DetectTarget tracking_target_;
+    plane::video::VideoStreamingApi& video_streaming_;
+    std::vector<plane::model::DetectTarget> last_detection_targets_;
 
     std::thread capture_thread_;
     std::thread process_thread_;

@@ -22,8 +22,13 @@ bool is_numeric(const std::string& text) {
 }  // namespace
 
 Perception::Perception(plane::core::EventBus& event_bus, const plane::core::AppConfig& config,
-                       PluginManagerApi& plugin_manager, plane::state::StateStoreApi& state_store)
-    : event_bus_(event_bus), config_(config), plugin_manager_(plugin_manager), state_store_(state_store) {}
+                       PluginManagerApi& plugin_manager, plane::state::StateStoreApi& state_store,
+                       plane::video::VideoStreamingApi& video_streaming)
+    : event_bus_(event_bus),
+      config_(config),
+      plugin_manager_(plugin_manager),
+      state_store_(state_store),
+      video_streaming_(video_streaming) {}
 
 Perception::~Perception() { stop(); }
 
@@ -175,6 +180,19 @@ void Perception::process_loop() {
         if (!has_frame) {
             continue;
         }
+        plane::video::VideoOverlay overlay;
+        {
+            std::lock_guard<std::mutex> lock(target_mutex_);
+            overlay.targets = last_detection_targets_;
+            if (tracking_enabled_) {
+                overlay.has_tracked = true;
+                overlay.tracked = tracking_target_;
+            }
+        }
+        std::string video_error;
+        if (!video_streaming_.push_frame(frame, overlay, video_error)) {
+            spdlog::warn("推流帧提交失败: {}", video_error);
+        }
         if (detection_enabled_) {
             std::string error;
             if (ensure_detection(error)) {
@@ -182,6 +200,10 @@ void Perception::process_loop() {
                 if (detection_->detect(frame, targets, error)) {
                     DetectionResult result;
                     result.targets = std::move(targets);
+                    {
+                        std::lock_guard<std::mutex> lock(target_mutex_);
+                        last_detection_targets_ = result.targets;
+                    }
                     event_bus_.publish(events::kDetection, result);
                 } else {
                     report_error("检测失败: " + error);
