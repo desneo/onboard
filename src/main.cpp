@@ -19,7 +19,7 @@
 #include "flight_control/flight_control_events.h"
 #include "flight_control/flight_control_module.h"
 #include "state/state_store.h"
-#include "task/task_state_provider.h"
+#include "task/task_scheduler.h"
 
 namespace {
 
@@ -63,18 +63,20 @@ int main(int argc, char** argv) {
             spdlog::error("飞控错误事件: {}", error.detail);
         });
 
-    plane::task::NoTaskStateProvider task_state_provider;
     auto state_store = std::make_unique<plane::state::StateStore>(event_bus, config);
     auto flight_control = std::make_unique<plane::flight_control::FlightControlModule>(event_bus, config, *state_store);
-    auto communication = std::make_unique<plane::communication::CommunicationModule>(event_bus, config, *state_store,
-                                                                                     task_state_provider);
+    auto task_scheduler = std::make_unique<plane::task::TaskScheduler>(event_bus, config, *flight_control);
+    auto communication =
+        std::make_unique<plane::communication::CommunicationModule>(event_bus, config, *state_store, *task_scheduler);
+    task_scheduler->set_communication(*communication);
 
     plane::core::Runtime runtime;
     runtime.add_module(std::move(state_store));
     runtime.add_module(std::move(flight_control));
+    runtime.add_module(std::move(task_scheduler));
     runtime.add_module(std::move(communication));
-    for (auto& module :
-         plane::core::make_placeholder_modules({"Communication", "UAV State Management", "Flight Control"})) {
+    for (auto& module : plane::core::make_placeholder_modules(
+             {"Communication", "UAV State Management", "Flight Control", "Task Scheduler"})) {
         runtime.add_module(std::move(module));
     }
     if (!runtime.run()) {
