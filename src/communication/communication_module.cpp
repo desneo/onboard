@@ -134,6 +134,11 @@ void CommunicationModule::handle_envelope(const plane::model::Message& envelope)
     if (envelope.senderId == config_.station_id) {
         state_store_.notify_station_seen();
     }
+    if ((envelope.type == plane::model::MessageType::TaskInfo || envelope.type == plane::model::MessageType::Command) &&
+        envelope.senderId != config_.station_id) {
+        spdlog::warn("拒绝非地面站控制消息: senderId={}", envelope.senderId);
+        return;
+    }
     switch (envelope.type) {
         case plane::model::MessageType::TaskInfo: {
             plane::model::TaskInfo value;
