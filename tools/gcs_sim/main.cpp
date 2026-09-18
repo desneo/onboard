@@ -28,6 +28,8 @@ struct Options {
     std::string task_code = "suicide";
     std::string command_type = "Arm";
     float takeoff_height_m = 0.0F;
+    std::string gcs_target_id;
+    int gcs_target_repeat = 1;
 };
 
 struct Envelope {
@@ -77,6 +79,10 @@ Options parse_options(int argc, char** argv) {
             options.command_type = argv[++i];
         } else if (arg == "--takeoff-height" && i + 1 < argc) {
             options.takeoff_height_m = std::stof(argv[++i]);
+        } else if (arg == "--send-gcs-target" && i + 1 < argc) {
+            options.gcs_target_id = argv[++i];
+        } else if (arg == "--gcs-target-repeat" && i + 1 < argc) {
+            options.gcs_target_repeat = std::stoi(argv[++i]);
         }
     }
     return options;
@@ -195,6 +201,21 @@ int main(int argc, char** argv) {
                                     [&]() { return acked_ids.count(command_id) > 0; });
     }
     spdlog::info("Ack 结果: TaskInfo={}, Command={}", task_acked, command_acked);
+
+    if (!options.gcs_target_id.empty()) {
+        for (int i = 0; i < options.gcs_target_repeat; ++i) {
+            const std::string payload = nlohmann::json{
+                {"trackId", options.gcs_target_id},
+                {"geoPos",
+                 {{"latitude", 30.0 + 0.0001 * i}, {"longitude", 120.0}, {"height", 50.0F}, {"altitude", 60.0F}}},
+                {"velocity_m_s", 10.0F},
+                {"direction_deg", 90.0F}}.dump();
+            const std::string message_id = options.gcs_target_id + "-" + std::to_string(++sequence);
+            session.put(zenoh::KeyExpr("sendToPlane/" + options.plane_id),
+                        zenoh::Bytes(build_wire(options.sender_id, message_id, "GcsTarget", payload)));
+        }
+        spdlog::info("已发送 GcsTarget: trackId={}, count={}", options.gcs_target_id, options.gcs_target_repeat);
+    }
 
     if (!options.peer_plane_id.empty()) {
         const nlohmann::json payload{
