@@ -227,8 +227,15 @@ int main(int argc, char** argv) {
     }
 
     for (const auto& [key, value] : options.send_params) {
+        double numeric = 0.0;
+        try {
+            numeric = std::stod(value);
+        } catch (const std::exception&) {
+            spdlog::warn("忽略非法系统参数: {}={}", key, value);
+            continue;
+        }
         nlohmann::json payload = nlohmann::json::object();
-        payload[key] = std::stod(value);
+        payload[key] = numeric;
         const std::string message_id = options.sender_id + "-param-" + std::to_string(++sequence);
         session.put(zenoh::KeyExpr("sendToPlane/" + options.plane_id),
                     zenoh::Bytes(build_wire(options.sender_id, message_id, "SystemParam", payload.dump())));
