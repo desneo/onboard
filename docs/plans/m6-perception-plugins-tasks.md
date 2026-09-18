@@ -3,7 +3,7 @@
 > 设计依据：`m6-perception-plugins-design.md`（逐项确认）。
 > 执行位置：工程根 `onboard/`。
 > 验证原则：每个 Task 结束后 x64 Release 构建通过；不写测试代码（SPEC §11）。
-> 无 RTSP 源：Task 7 为部分验收，实流取图待用户提供源。
+> 状态：已完成并部分验收（2026-09-18）；RTSP/MIPI 实流取图待用户提供源。
 
 ---
 
@@ -15,7 +15,7 @@
 - Modify: `src/core/config.cpp`
 - Modify: `config/onboard.conf`
 
-- [ ] Step 1: `src/core/config.h` 的 `AppConfig` 中，在 `bt_takeoff_tolerance_m` 之后追加
+- [x] Step 1: `src/core/config.h` 的 `AppConfig` 中，在 `bt_takeoff_tolerance_m` 之后追加
 
 ```cpp
     std::string plugins_dir = "build/plugins";
@@ -25,7 +25,7 @@
     bool perception_selftest_on_start = false;
 ```
 
-- [ ] Step 2: `src/core/config.cpp` 解析分支中，在 `bt_takeoff_tolerance_m` 分支之后追加
+- [x] Step 2: `src/core/config.cpp` 解析分支中，在 `bt_takeoff_tolerance_m` 分支之后追加
 
 ```cpp
         } else if (key == "plugins_dir") {
@@ -40,7 +40,7 @@
             out.perception_selftest_on_start = (value == "true" || value == "1");
 ```
 
-- [ ] Step 3: `config/onboard.conf` 末尾追加
+- [x] Step 3: `config/onboard.conf` 末尾追加
 
 ```text
 # 感知与插件
@@ -51,7 +51,7 @@ perception_process_interval_ms = 100
 perception_selftest_on_start = false
 ```
 
-- [ ] Step 4: 构建、运行与提交
+- [x] Step 4: 构建、运行与提交
 
 ```bash
 cmake --build build -j
@@ -75,7 +75,7 @@ Expected: 构建通过；运行无「未知配置项」，exit=0。
 - Create: `src/camera/camera_control_module.cpp`
 - Modify: `CMakeLists.txt`
 
-- [ ] Step 1: 写 `src/camera/camera_control_api.h`
+- [x] Step 1: 写 `src/camera/camera_control_api.h`
 
 ```cpp
 #pragma once
@@ -104,7 +104,7 @@ class CameraControlApi {
 }  // namespace plane::camera
 ```
 
-- [ ] Step 2: 写 `src/camera/camera_control_events.h`
+- [x] Step 2: 写 `src/camera/camera_control_events.h`
 
 ```cpp
 #pragma once
@@ -120,7 +120,7 @@ inline constexpr std::string_view kStatusChanged = "camera.status_changed";
 }  // namespace plane::camera
 ```
 
-- [ ] Step 3: 写 `src/camera/camera_control_module.h`
+- [x] Step 3: 写 `src/camera/camera_control_module.h`
 
 ```cpp
 #pragma once
@@ -160,7 +160,7 @@ class CameraControlModule final : public plane::core::IModule, public CameraCont
 }  // namespace plane::camera
 ```
 
-- [ ] Step 4: 写 `src/camera/camera_control_module.cpp`
+- [x] Step 4: 写 `src/camera/camera_control_module.cpp`
 
 ```cpp
 #include "camera/camera_control_module.h"
@@ -234,22 +234,22 @@ bool CameraControlModule::send_command(const std::string& command, std::string&)
 }  // namespace plane::camera
 ```
 
-- [ ] Step 5: `CMakeLists.txt` 的 `add_executable(onboard ...)` 文件列表追加
+- [x] Step 5: `CMakeLists.txt` 的 `add_executable(onboard ...)` 文件列表追加
 
 ```cmake
   src/camera/camera_control_module.cpp
 ```
 
-- [ ] Step 6: 构建与格式
+- [x] Step 6: 构建与格式
 
 ```bash
 cmake --build build -j
-clang-format --dry-run --Werror src/camera
+clang-format --dry-run --Werror src/camera/*.h src/camera/*.cpp
 ```
 
 Expected: 构建通过；格式通过（差异先 `-i` 再构建）。
 
-- [ ] Step 7: 提交
+- [x] Step 7: 提交
 
 ```bash
 git add src/camera CMakeLists.txt
@@ -268,7 +268,7 @@ git commit -m "feat(m6): 增加 Camera Control 接口与 Noop 模块"
 - Create: `src/perception/plugin_providers.cpp`
 - Modify: `CMakeLists.txt`
 
-- [ ] Step 1: 写 `src/perception/plugin_manager_api.h`
+- [x] Step 1: 写 `src/perception/plugin_manager_api.h`
 
 ```cpp
 #pragma once
@@ -294,7 +294,7 @@ class PluginManagerApi {
 }  // namespace plane::perception
 ```
 
-- [ ] Step 2: 写 `src/perception/plugin_management.h`
+- [x] Step 2: 写 `src/perception/plugin_management.h`
 
 ```cpp
 #pragma once
@@ -335,7 +335,7 @@ class PluginManagement final : public plane::core::IModule, public PluginManager
 }  // namespace plane::perception
 ```
 
-- [ ] Step 3: 写 `src/perception/plugin_management.cpp`
+- [x] Step 3: 写 `src/perception/plugin_management.cpp`
 
 ```cpp
 #include "perception/plugin_management.h"
@@ -348,11 +348,11 @@ namespace plane::perception {
 namespace {
 
 template <typename PluginType, typename ProviderType>
-std::shared_ptr<PluginType> create_first(pluma::Pluma& pluma) {
+std::shared_ptr<PluginType> create_first(pluma::Pluma& pluma, const char* type_name) {
     std::vector<ProviderType*> providers;
     pluma.getProviders(providers);
     if (providers.empty()) {
-        spdlog::warn("未找到插件 provider: {}", ProviderType::PLUMA_PROVIDER_TYPE);
+        spdlog::warn("未找到插件 provider: {}", type_name);
         return nullptr;
     }
     return std::shared_ptr<PluginType>(providers.front()->create());
@@ -408,23 +408,23 @@ void PluginManagement::release() {}
 
 std::shared_ptr<plane::algorithm::DetectionPlugin> PluginManagement::create_detection() {
     return create_first<plane::algorithm::DetectionPlugin, plane::algorithm::DetectionPluginProvider>(
-        pluma_);
+        pluma_, "DetectionPlugin");
 }
 
 std::shared_ptr<plane::algorithm::TrackingPlugin> PluginManagement::create_tracking() {
     return create_first<plane::algorithm::TrackingPlugin, plane::algorithm::TrackingPluginProvider>(
-        pluma_);
+        pluma_, "TrackingPlugin");
 }
 
 std::shared_ptr<plane::algorithm::GuidancePlugin> PluginManagement::create_guidance() {
     return create_first<plane::algorithm::GuidancePlugin, plane::algorithm::GuidancePluginProvider>(
-        pluma_);
+        pluma_, "GuidancePlugin");
 }
 
 }  // namespace plane::perception
 ```
 
-- [ ] Step 4: 写 `src/perception/plugin_providers.cpp`（宿主侧 Provider 静态成员定义）
+- [x] Step 4: 写 `src/perception/plugin_providers.cpp`（宿主侧 Provider 静态成员定义）
 
 ```cpp
 #include "functional/detection_api.h"
@@ -440,23 +440,23 @@ PLUMA_PROVIDER_SOURCE(GuidancePlugin, 1, 1);
 }  // namespace plane::algorithm
 ```
 
-- [ ] Step 5: `CMakeLists.txt` 的 `add_executable(onboard ...)` 文件列表追加
+- [x] Step 5: `CMakeLists.txt` 的 `add_executable(onboard ...)` 文件列表追加
 
 ```cmake
   src/perception/plugin_management.cpp
   src/perception/plugin_providers.cpp
 ```
 
-- [ ] Step 6: 构建与格式
+- [x] Step 6: 构建与格式
 
 ```bash
 cmake --build build -j
-clang-format --dry-run --Werror src/perception
+clang-format --dry-run --Werror $(git ls-files src/perception)
 ```
 
 Expected: 构建通过；格式通过（差异先 `-i` 再构建）。
 
-- [ ] Step 7: 提交
+- [x] Step 7: 提交
 
 ```bash
 git add src/perception CMakeLists.txt
@@ -474,7 +474,7 @@ git commit -m "feat(m6): 增加 Plugin Management 与宿主 Provider 定义"
 - Create: `plugins/guidance_stub/guidance_stub.cpp`
 - Modify: `CMakeLists.txt`
 
-- [ ] Step 1: 写 `plugins/detection_stub/detection_stub.cpp`
+- [x] Step 1: 写 `plugins/detection_stub/detection_stub.cpp`
 
 ```cpp
 #include <memory>
@@ -522,7 +522,7 @@ bool connectToPlumaHost(pluma::Host& host) {
 }  // namespace plane::algorithm
 ```
 
-- [ ] Step 2: 写 `plugins/tracking_stub/tracking_stub.cpp`
+- [x] Step 2: 写 `plugins/tracking_stub/tracking_stub.cpp`
 
 ```cpp
 #include <memory>
@@ -575,7 +575,7 @@ bool connectToPlumaHost(pluma::Host& host) {
 }  // namespace plane::algorithm
 ```
 
-- [ ] Step 3: 写 `plugins/guidance_stub/guidance_stub.cpp`
+- [x] Step 3: 写 `plugins/guidance_stub/guidance_stub.cpp`
 
 ```cpp
 #include <memory>
@@ -621,7 +621,7 @@ bool connectToPlumaHost(pluma::Host& host) {
 }  // namespace plane::algorithm
 ```
 
-- [ ] Step 4: `CMakeLists.txt` 末尾追加三个插件目标
+- [x] Step 4: `CMakeLists.txt` 末尾追加三个插件目标
 
 ```cmake
 add_library(detection_stub SHARED plugins/detection_stub/detection_stub.cpp)
@@ -637,7 +637,7 @@ target_link_libraries(guidance_stub PRIVATE plane::pluma plane::common_include s
 set_target_properties(guidance_stub PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
 ```
 
-- [ ] Step 5: 构建与检查产物
+- [x] Step 5: 构建与检查产物
 
 ```bash
 cmake --build build -j
@@ -646,10 +646,10 @@ ls build/plugins/
 
 Expected: 构建通过；`build/plugins/` 下存在 `libdetection_stub.so`、`libtracking_stub.so`、`libguidance_stub.so`。
 
-- [ ] Step 6: 格式与提交
+- [x] Step 6: 格式与提交
 
 ```bash
-clang-format --dry-run --Werror plugins/
+clang-format --dry-run --Werror $(git ls-files plugins)
 git add plugins CMakeLists.txt
 git commit -m "feat(m6): 增加检测/跟踪/导引示例插件"
 ```
@@ -671,7 +671,7 @@ git commit -m "feat(m6): 增加检测/跟踪/导引示例插件"
 - Consumes: `PluginManagerApi`（Task 3）、`StateStoreApi`（M2）、`AppConfig`（Task 1）
 - Produces: `plane::perception::Perception`（`IModule` + `PerceptionApi`）；4 个结果事件
 
-- [ ] Step 1: 写 `src/perception/perception_api.h`
+- [x] Step 1: 写 `src/perception/perception_api.h`
 
 ```cpp
 #pragma once
@@ -720,7 +720,7 @@ class PerceptionApi {
 }  // namespace plane::perception
 ```
 
-- [ ] Step 2: 写 `src/perception/perception_events.h`
+- [x] Step 2: 写 `src/perception/perception_events.h`
 
 ```cpp
 #pragma once
@@ -739,7 +739,7 @@ inline constexpr std::string_view kError = "perception.error";
 }  // namespace plane::perception
 ```
 
-- [ ] Step 3: 写 `src/perception/perception.h`
+- [x] Step 3: 写 `src/perception/perception.h`
 
 ```cpp
 #pragma once
@@ -829,7 +829,7 @@ class Perception final : public plane::core::IModule, public PerceptionApi {
 }  // namespace plane::perception
 ```
 
-- [ ] Step 4: 写 `src/perception/perception.cpp`
+- [x] Step 4: 写 `src/perception/perception.cpp`
 
 ```cpp
 #include "perception/perception.h"
@@ -1215,22 +1215,26 @@ void Perception::report_error(const std::string& detail) const {
 }  // namespace plane::perception
 ```
 
-- [ ] Step 5: `CMakeLists.txt` 的 `add_executable(onboard ...)` 文件列表追加
+- [x] Step 5: `CMakeLists.txt` 修改
+
+`add_executable(onboard ...)` 文件列表追加：
 
 ```cmake
   src/perception/perception.cpp
 ```
 
-- [ ] Step 6: 构建与格式
+`target_link_libraries(onboard ...)` 追加 `opencv_videoio`（系统 OpenCV 提供，`plane_deps` 仅含 `opencv_core`）。
+
+- [x] Step 6: 构建与格式
 
 ```bash
 cmake --build build -j
-clang-format --dry-run --Werror src/perception
+clang-format --dry-run --Werror $(git ls-files src/perception)
 ```
 
 Expected: 构建通过且无 warning；格式通过（差异先 `-i` 再构建）。
 
-- [ ] Step 7: 提交
+- [x] Step 7: 提交
 
 ```bash
 git add src/perception/perception.h src/perception/perception.cpp src/perception/perception_api.h src/perception/perception_events.h CMakeLists.txt
@@ -1245,7 +1249,7 @@ git commit -m "feat(m6): 增加 Perception 图像输入与算法调度"
 
 - Modify: `src/main.cpp`
 
-- [ ] Step 1: include 追加
+- [x] Step 1: include 追加
 
 ```cpp
 #include "camera/camera_control_module.h"
@@ -1253,7 +1257,7 @@ git commit -m "feat(m6): 增加 Perception 图像输入与算法调度"
 #include "perception/plugin_management.h"
 ```
 
-- [ ] Step 2: 模块注册块改为（在 state_store/flight_control 创建之后追加并注册）
+- [x] Step 2: 模块注册块改为（在 state_store/flight_control 创建之后追加并注册）
 
 ```cpp
     auto plugin_management = std::make_unique<plane::perception::PluginManagement>(config);
@@ -1280,7 +1284,7 @@ git commit -m "feat(m6): 增加 Perception 图像输入与算法调度"
     }
 ```
 
-- [ ] Step 3: 构建、运行与格式
+- [x] Step 3: 构建、运行与格式
 
 ```bash
 cmake --build build -j
@@ -1290,7 +1294,7 @@ clang-format --dry-run --Werror src/main.cpp
 
 Expected: 构建通过；日志含 `插件目录加载`、`相机链路已建立 (Noop)`、`图像源未配置`，exit=0。
 
-- [ ] Step 4: 提交
+- [x] Step 4: 提交
 
 ```bash
 git add src/main.cpp
@@ -1306,7 +1310,7 @@ git commit -m "feat(m6): 接线相机、插件管理与感知模块"
 - Modify: `docs/plans/m6-perception-plugins-tasks.md`
 - Modify: `docs/DEV_PLAN.md`
 
-- [ ] Step 1: 干净构建与产物检查
+- [x] Step 1: 干净构建与产物检查
 
 ```bash
 rm -rf build logs
@@ -1317,7 +1321,7 @@ ls build/plugins/
 
 Expected: 构建无 warning；三个 stub `.so` 存在。
 
-- [ ] Step 2: 默认运行（加载与相机占位）
+- [x] Step 2: 默认运行（加载与相机占位）
 
 ```bash
 timeout --preserve-status 3 ./build/onboard 2>&1 | grep -E "插件目录加载|插件 provider|相机链路"
@@ -1325,7 +1329,7 @@ timeout --preserve-status 3 ./build/onboard 2>&1 | grep -E "插件目录加载|�
 
 Expected：`插件目录加载: build/plugins (成功加载 3 个库)`、`插件 provider: detection=1, tracking=1, guidance=1`、`相机链路已建立 (Noop)`。
 
-- [ ] Step 3: 启动自检（三接口）
+- [x] Step 3: 启动自检（三接口）
 
 ```bash
 printf 'plugins_dir = build/plugins\nperception_selftest_on_start = true\nperception_process_interval_ms = 100\n' > /tmp/opencode/m6_selftest.conf
@@ -1335,7 +1339,7 @@ timeout --preserve-status 3 ./build/onboard --config /tmp/opencode/m6_selftest.c
 Expected：`检测插件已实例化`、`自检 detect 成功: targets=0`、`自检 track 成功`、`自检 guide 成功: vn=0 ve=0 vd=0`。
 （自检使用合成灰帧，无图像源也可运行。）
 
-- [ ] Step 4: 图像源与自检（有源时）
+- [x] Step 4: 图像源与自检（有源时）
 
 ```bash
 printf 'plugins_dir = build/plugins\nimage_source = <rtsp或视频路径>\nperception_selftest_on_start = true\n' > /tmp/opencode/m6_source.conf
@@ -1344,14 +1348,14 @@ timeout --preserve-status 5 ./build/onboard --config /tmp/opencode/m6_source.con
 
 Expected：`图像源已打开`、`首帧: WxH`、三接口自检成功。
 
-- [ ] Step 5: 规范与回归
+- [x] Step 5: 规范与回归
 
 ```bash
 clang-format --dry-run --Werror $(git ls-files src tools plugins)
 grep -rn "std::cout\|printf(" src/ tools/ plugins/ || echo "no cout/printf"
 ```
 
-- [ ] Step 6: 文档与收尾提交
+- [x] Step 6: 文档与收尾提交
 
 - 勾选本文档并记录验收证据与偏差；
 - 更新 `docs/DEV_PLAN.md` §11 索引：M6 → 已完成（部分验收，RTSP 实流待验）。
@@ -1369,3 +1373,16 @@ git commit -m "docs(m6): M6 部分验收与文档更新"
 2. 用 `PerceptionApi`（start_detection/select_target/start_guidance）触发周期检测/跟踪/导引，观察 `perception.*` 事件与日志；
 3. 替换真实算法插件后：插件加载、实例化与结果输出。
 
+---
+
+## 执行记录与偏差
+
+1. **Pluma Provider 类型名**：`PLUMA_PROVIDER_TYPE` 是 Provider 头中的 private 静态成员，`create_first` 改为显式传入类型名字面量（已同步回计划 Task 3 代码）。
+2. **OpenCV VideoIO**：`cv::VideoCapture` 需要 `opencv_videoio`，在 onboard 链接库中追加（`plane_deps` 仅含 `opencv_core`；已同步回计划 Task 5）。
+3. **相机停止幂等**：`CameraControlModule::stop()` 被 Runtime 与析构各调一次导致重复断开日志，增加 `stopped_` 幂等标志（提交 `本文件所在提交`）。
+4. **验收证据（2026-09-18，无图像源）**
+   - 构建无 warning；`build/plugins/` 生成三个 stub `.so`；
+   - 默认运行：`插件目录加载: build/plugins (成功加载 3 个库)`、`插件 provider: detection=1, tracking=1, guidance=1`、`相机链路已建立 (Noop)`、`图像源未配置 (image_source 为空)` 周期 warn；
+   - 自检（`perception_selftest_on_start=true`，合成 640x480 灰帧）：`检测插件已实例化`、`自检 detect 成功: targets=0`、`跟踪插件已实例化`、`自检 track 成功: type=stub`、`导引插件已实例化`、`自检 guide 成功: vn=0 ve=0 vd=0`；
+   - 回归：M1–M5 行为正常；`clang-format` 通过；无 `std::cout/printf`。
+5. **待用户验证**：RTSP/MIPI 实流取图、`PerceptionApi` 周期检测/跟踪/导引、真实算法插件替换。
