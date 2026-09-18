@@ -78,7 +78,7 @@ int main(int argc, char** argv) {
     auto camera_control = std::make_unique<plane::camera::CameraControlModule>(event_bus);
     auto video_streaming = std::make_unique<plane::video::VideoStreaming>(config);
     auto perception = std::make_unique<plane::perception::Perception>(event_bus, config, *plugin_management,
-                                                                      *state_store, *video_streaming);
+                                                                      *state_store, *flight_control, *video_streaming);
     auto target_store = std::make_unique<plane::target::TargetStore>(event_bus);
     auto task_engine = std::make_unique<plane::task::TaskExecutionEngine>(event_bus, config, *flight_control,
                                                                           *state_store, *system_param_store);

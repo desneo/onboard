@@ -20,6 +20,7 @@ struct TrackingResult {
 struct GuidanceResult {
     plane::model::NedVelocity velocity;
     bool valid = false;
+    bool applied = false;  ///< 是否已成功下发飞控（M10 直连）
 };
 
 struct PerceptionError {

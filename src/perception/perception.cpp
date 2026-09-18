@@ -23,11 +23,13 @@ bool is_numeric(const std::string& text) {
 
 Perception::Perception(plane::core::EventBus& event_bus, const plane::core::AppConfig& config,
                        PluginManagerApi& plugin_manager, plane::state::StateStoreApi& state_store,
+                       plane::flight_control::FlightControlApi& flight_control,
                        plane::video::VideoStreamingApi& video_streaming)
     : event_bus_(event_bus),
       config_(config),
       plugin_manager_(plugin_manager),
       state_store_(state_store),
+      flight_control_(flight_control),
       video_streaming_(video_streaming) {}
 
 Perception::~Perception() { stop(); }
@@ -63,6 +65,7 @@ void Perception::stop() {
         tracking_.reset();
         guidance_.reset();
     }
+    flight_control_.clear_ned_velocity();
 }
 
 void Perception::release() {}
@@ -111,7 +114,10 @@ bool Perception::start_guidance(std::string& error) {
     return true;
 }
 
-void Perception::stop_guidance() { guidance_enabled_ = false; }
+void Perception::stop_guidance() {
+    guidance_enabled_ = false;
+    flight_control_.clear_ned_velocity();
+}
 
 bool Perception::latest_frame(cv::Mat& out) const { return latest_frame_locked(out); }
 
@@ -247,6 +253,12 @@ void Perception::process_loop() {
                     GuidanceResult result;
                     result.velocity = velocity;
                     result.valid = true;
+                    std::string dispatch_error;
+                    if (!flight_control_.set_ned_velocity(velocity, dispatch_error)) {
+                        report_error("导引速度下发失败: " + dispatch_error);
+                    } else {
+                        result.applied = true;
+                    }
                     event_bus_.publish(events::kGuidance, result);
                 } else {
                     GuidanceResult result;

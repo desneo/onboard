@@ -10,6 +10,7 @@
 #include "core/config.h"
 #include "core/event_bus.h"
 #include "core/module.h"
+#include "flight_control/flight_control_api.h"
 #include "functional/detection_api.h"
 #include "functional/guidance_api.h"
 #include "functional/tracking_api.h"
@@ -28,7 +29,8 @@ namespace plane::perception {
 class Perception final : public plane::core::IModule, public PerceptionApi {
    public:
     Perception(plane::core::EventBus& event_bus, const plane::core::AppConfig& config, PluginManagerApi& plugin_manager,
-               plane::state::StateStoreApi& state_store, plane::video::VideoStreamingApi& video_streaming);
+               plane::state::StateStoreApi& state_store, plane::flight_control::FlightControlApi& flight_control,
+               plane::video::VideoStreamingApi& video_streaming);
     ~Perception() override;
 
     std::string name() const override;
@@ -60,6 +62,7 @@ class Perception final : public plane::core::IModule, public PerceptionApi {
     const plane::core::AppConfig& config_;
     PluginManagerApi& plugin_manager_;
     plane::state::StateStoreApi& state_store_;
+    plane::flight_control::FlightControlApi& flight_control_;
 
     std::unique_ptr<cv::VideoCapture> capture_;
     mutable std::mutex frame_mutex_;
