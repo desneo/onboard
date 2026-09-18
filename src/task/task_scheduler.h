@@ -7,6 +7,7 @@
 #include "core/config.h"
 #include "core/event_bus.h"
 #include "core/module.h"
+#include "core/system_param_api.h"
 #include "flight_control/flight_control_api.h"
 #include "task/task_events.h"
 #include "task/task_execution_engine_api.h"
@@ -18,7 +19,8 @@ namespace plane::task {
 class TaskScheduler final : public plane::core::IModule, public TaskStateProvider {
    public:
     TaskScheduler(plane::core::EventBus& event_bus, const plane::core::AppConfig& config,
-                  plane::flight_control::FlightControlApi& flight_control, TaskExecutionEngineApi* engine = nullptr);
+                  plane::flight_control::FlightControlApi& flight_control, plane::core::SystemParamApi& system_param,
+                  TaskExecutionEngineApi* engine = nullptr);
     ~TaskScheduler() override;
 
     std::string name() const override;
@@ -46,6 +48,7 @@ class TaskScheduler final : public plane::core::IModule, public TaskStateProvide
     plane::core::EventBus& event_bus_;
     const plane::core::AppConfig& config_;
     plane::flight_control::FlightControlApi& flight_control_;
+    plane::core::SystemParamApi& system_param_;
     plane::communication::CommunicationApi* communication_ = nullptr;
     TaskExecutionEngineApi* engine_;
 

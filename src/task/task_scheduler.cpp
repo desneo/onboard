@@ -9,8 +9,13 @@
 namespace plane::task {
 
 TaskScheduler::TaskScheduler(plane::core::EventBus& event_bus, const plane::core::AppConfig& config,
-                             plane::flight_control::FlightControlApi& flight_control, TaskExecutionEngineApi* engine)
-    : event_bus_(event_bus), config_(config), flight_control_(flight_control), engine_(engine) {}
+                             plane::flight_control::FlightControlApi& flight_control,
+                             plane::core::SystemParamApi& system_param, TaskExecutionEngineApi* engine)
+    : event_bus_(event_bus),
+      config_(config),
+      flight_control_(flight_control),
+      system_param_(system_param),
+      engine_(engine) {}
 
 TaskScheduler::~TaskScheduler() { stop(); }
 
@@ -150,7 +155,7 @@ bool TaskScheduler::dispatch_command(const plane::model::Command& command) {
         case plane::model::CommandType::Takeoff: {
             float height = command.takeoffHeight_m;
             if (height <= 0.0F) {
-                height = static_cast<float>(config_.system_param.safeHeight_m);
+                height = static_cast<float>(system_param_.current().safeHeight_m);
                 spdlog::info("Takeoff 未指定高度，使用安全高度: {} m", height);
             }
             ok = flight_control_.takeoff(height, error);
