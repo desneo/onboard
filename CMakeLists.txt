@@ -29,6 +29,7 @@ add_executable(onboard
   src/core/runtime.cpp
   src/state/state_store.cpp
   src/flight_control/flight_control_module.cpp
+  src/task/task_scheduler.cpp
 )
 target_include_directories(onboard PRIVATE src)
 target_compile_options(onboard PRIVATE -Wall -Wextra)
