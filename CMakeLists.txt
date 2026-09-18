@@ -38,6 +38,8 @@ add_executable(onboard
   src/task/nodes/hover_node.cpp
   src/task/nodes/stop_motor_node.cpp
   src/task/task_execution_engine.cpp
+  src/perception/plugin_management.cpp
+  src/perception/plugin_providers.cpp
 )
 target_include_directories(onboard PRIVATE src)
 target_compile_options(onboard PRIVATE -Wall -Wextra)
