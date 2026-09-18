@@ -61,3 +61,15 @@ target_link_libraries(gcs_sim PRIVATE
   zenohc::lib
   zenohcxx::zenohc
 )
+
+add_library(detection_stub SHARED plugins/detection_stub/detection_stub.cpp)
+target_link_libraries(detection_stub PRIVATE plane::pluma plane::common_include opencv_core spdlog::spdlog)
+set_target_properties(detection_stub PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
+
+add_library(tracking_stub SHARED plugins/tracking_stub/tracking_stub.cpp)
+target_link_libraries(tracking_stub PRIVATE plane::pluma plane::common_include opencv_core spdlog::spdlog)
+set_target_properties(tracking_stub PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
+
+add_library(guidance_stub SHARED plugins/guidance_stub/guidance_stub.cpp)
+target_link_libraries(guidance_stub PRIVATE plane::pluma plane::common_include spdlog::spdlog)
+set_target_properties(guidance_stub PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
