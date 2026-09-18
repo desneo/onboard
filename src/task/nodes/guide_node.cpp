@@ -8,7 +8,7 @@
 namespace plane::task {
 namespace {
 
-std::int64_t now_ms() {
+std::int64_t clock_now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
         .count();
 }
@@ -44,7 +44,7 @@ BT::NodeStatus GuideNode::check() {
         return BT::NodeStatus::SUCCESS;
     }
     const plane::target::TrackingState tracking = target_store_->tracking_state();
-    const std::int64_t now = now_ms();
+    const std::int64_t now = clock_now_ms();
     if (!tracking.valid || tracking.lost) {
         if (lost_since_ms_ == 0) {
             lost_since_ms_ = now;
