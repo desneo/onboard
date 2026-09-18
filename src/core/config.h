@@ -28,6 +28,10 @@ struct AppConfig {
     int fc_serial_baud = 57600;
     int fc_heartbeat_timeout_ms = 2000;
     double fc_route_speed_m_s = 5.0;
+
+    int bt_tick_interval_ms = 50;
+    int bt_node_timeout_ms = 30000;
+    double bt_takeoff_tolerance_m = 1.0;
 };
 
 /// 从 key = value 文本文件加载配置；文件不存在时保留默认值并返回 false。

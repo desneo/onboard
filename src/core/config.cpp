@@ -75,6 +75,12 @@ bool load_config(const std::string& path, AppConfig& out) {
             out.fc_heartbeat_timeout_ms = std::stoi(value);
         } else if (key == "fc_route_speed_m_s") {
             out.fc_route_speed_m_s = std::stod(value);
+        } else if (key == "bt_tick_interval_ms") {
+            out.bt_tick_interval_ms = std::stoi(value);
+        } else if (key == "bt_node_timeout_ms") {
+            out.bt_node_timeout_ms = std::stoi(value);
+        } else if (key == "bt_takeoff_tolerance_m") {
+            out.bt_takeoff_tolerance_m = std::stod(value);
         } else {
             spdlog::warn("未知配置项: {}", key);
         }
