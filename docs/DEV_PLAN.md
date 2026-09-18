@@ -407,6 +407,8 @@ M3、M6、M9 与主线可并行；M10 必须最后。
 | `plans/m3-flight-control-tasks.md` | M3 任务级计划与执行记录 | 已完成（部分验收，SITL 待验） |
 | `plans/m4-task-scheduler-design.md` | M4 Change Design（Task Scheduler 与控制仲裁） | 已确认并实施 |
 | `plans/m4-task-scheduler-tasks.md` | M4 任务级计划与执行记录 | 已完成（部分验收，SITL 待验） |
+| `plans/m5-behaviortree-engine-design.md` | M5 Change Design（BehaviorTree 执行引擎） | 待确认 |
+| `plans/m5-behaviortree-engine-tasks.md` | M5 任务级计划 | 待生成 |
 
 约定：
 
