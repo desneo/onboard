@@ -43,6 +43,8 @@ add_executable(onboard
   src/task/nodes/approach_controller.cpp
   src/task/nodes/midcourse_node.cpp
   src/task/nodes/detect_node.cpp
+  src/task/nodes/track_node.cpp
+  src/task/nodes/guide_node.cpp
   src/task/task_execution_engine.cpp
   src/perception/plugin_management.cpp
   src/perception/plugin_providers.cpp
