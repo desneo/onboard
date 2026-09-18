@@ -28,6 +28,7 @@ class TargetStore final : public plane::core::IModule, public TargetStoreApi {
 
     std::vector<plane::model::DetectTarget> vision_targets() const override;
     bool tracked_target(plane::model::DetectTarget& out) const override;
+    TrackingState tracking_state() const override;
     std::vector<plane::model::GcsTarget> gcs_targets() const override;
     bool gcs_target(const std::string& track_id, plane::model::GcsTarget& out) const override;
     std::vector<plane::model::GcsTarget> gcs_target_history(const std::string& track_id) const override;
@@ -41,6 +42,8 @@ class TargetStore final : public plane::core::IModule, public TargetStoreApi {
     mutable std::mutex mutex_;
     std::vector<plane::model::DetectTarget> vision_targets_;
     std::optional<plane::model::DetectTarget> tracked_target_;
+    bool tracking_valid_ = false;
+    bool tracking_lost_ = false;
     std::unordered_map<std::string, plane::model::GcsTarget> gcs_latest_;
     std::unordered_map<std::string, std::deque<plane::model::GcsTarget>> gcs_history_;
 };

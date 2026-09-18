@@ -41,6 +41,8 @@ void TargetStore::stop() {
     std::lock_guard<std::mutex> lock(mutex_);
     vision_targets_.clear();
     tracked_target_.reset();
+    tracking_valid_ = false;
+    tracking_lost_ = false;
     gcs_latest_.clear();
     gcs_history_.clear();
 }
@@ -59,6 +61,17 @@ bool TargetStore::tracked_target(plane::model::DetectTarget& out) const {
     }
     out = *tracked_target_;
     return true;
+}
+
+TrackingState TargetStore::tracking_state() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    TrackingState state;
+    if (tracked_target_.has_value()) {
+        state.target = *tracked_target_;
+        state.valid = tracking_valid_;
+        state.lost = tracking_lost_;
+    }
+    return state;
 }
 
 std::vector<plane::model::GcsTarget> TargetStore::gcs_targets() const {
@@ -117,6 +130,8 @@ void TargetStore::on_tracking(const plane::perception::TrackingResult& result) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         tracked_target_ = result.target;
+        tracking_valid_ = true;
+        tracking_lost_ = result.lost;
     }
     spdlog::info("跟踪目标更新: type={}, lost={}", result.target.type, result.lost ? 1 : 0);
 }
