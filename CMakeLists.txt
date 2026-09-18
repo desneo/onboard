@@ -32,6 +32,7 @@ add_executable(onboard
   src/state/state_store.cpp
   src/state/state_monitor.cpp
   src/flight_control/flight_control_module.cpp
+  src/geo/geo_tool.cpp
   src/task/task_scheduler.cpp
   src/task/nodes/arm_node.cpp
   src/task/nodes/takeoff_node.cpp
