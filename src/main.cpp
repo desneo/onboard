@@ -7,6 +7,7 @@
 #include <thread>
 #include <utility>
 
+#include "camera/camera_control_module.h"
 #include "communication/communication_events.h"
 #include "communication/communication_module.h"
 #include "core/build_info.h"
@@ -18,6 +19,8 @@
 #include "core/runtime.h"
 #include "flight_control/flight_control_events.h"
 #include "flight_control/flight_control_module.h"
+#include "perception/perception.h"
+#include "perception/plugin_management.h"
 #include "state/state_store.h"
 #include "task/task_execution_engine.h"
 #include "task/task_scheduler.h"
@@ -66,6 +69,10 @@ int main(int argc, char** argv) {
 
     auto state_store = std::make_unique<plane::state::StateStore>(event_bus, config);
     auto flight_control = std::make_unique<plane::flight_control::FlightControlModule>(event_bus, config, *state_store);
+    auto plugin_management = std::make_unique<plane::perception::PluginManagement>(config);
+    auto camera_control = std::make_unique<plane::camera::CameraControlModule>(event_bus);
+    auto perception =
+        std::make_unique<plane::perception::Perception>(event_bus, config, *plugin_management, *state_store);
     auto task_engine =
         std::make_unique<plane::task::TaskExecutionEngine>(event_bus, config, *flight_control, *state_store);
     auto task_scheduler =
@@ -77,11 +84,15 @@ int main(int argc, char** argv) {
     plane::core::Runtime runtime;
     runtime.add_module(std::move(state_store));
     runtime.add_module(std::move(flight_control));
+    runtime.add_module(std::move(plugin_management));
+    runtime.add_module(std::move(camera_control));
+    runtime.add_module(std::move(perception));
     runtime.add_module(std::move(task_engine));
     runtime.add_module(std::move(task_scheduler));
     runtime.add_module(std::move(communication));
     for (auto& module : plane::core::make_placeholder_modules(
-             {"Communication", "UAV State Management", "Flight Control", "Task Scheduler", "Task Execution Engine"})) {
+             {"Communication", "UAV State Management", "Flight Control", "Task Scheduler", "Task Execution Engine",
+              "Plugin Management", "Camera Control", "Perception"})) {
         runtime.add_module(std::move(module));
     }
     if (!runtime.run()) {
