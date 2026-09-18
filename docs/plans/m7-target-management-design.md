@@ -1,6 +1,6 @@
 # M7 Change Design（Target Management）
 
-> 状态：待用户确认（逐项）。任务级计划待确认后生成 `m7-target-management-tasks.md`。
+> 状态：已确认（2026-09-18 逐项）。任务级计划见 `m7-target-management-tasks.md`。
 > 来源：`DEV_PLAN.md` 路线图 M7。
 > 输入：SPEC §8.4、ARCHITECTURE §16/ADR-015/§22、M6 产物（`perception.*` 事件）、M1 产物（`communication.gcs_target`）。
 
