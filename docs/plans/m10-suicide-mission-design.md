@@ -11,7 +11,7 @@
 
 M10 交付自杀式反无任务全链路：
 
-- 内置任务 `suicide`（BehaviorTree）：Arm → Takeoff（安全高度）→ 中段制导 → 目标检测 → 单目标跟踪 → 导引撞击；
+- 内置任务 `anti-uav`（BehaviorTree，`TaskCode::AntiUav`）：Arm → Takeoff（安全高度）→ 中段制导 → 目标检测 → 单目标跟踪 → 导引撞击；
 - 阶段切换条件与失败判定全部配置化（SPEC §6“配置/任务参数”）；
 - 新增 `src/geo/` Geographic Tool（GeographicLib 封装），供中段制导与撞击判定计算距离/方位（ARCHITECTURE §21、ADR-012）；
 - **Perception 直连 FlightControl** 下发导引速度并获取成败（用户最新要求，见 §3）；
@@ -40,6 +40,7 @@ M10 交付自杀式反无任务全链路：
 | 4 | 导引启动条件：**跟踪稳定**（连续无丢失达到配置时长）后启动 |
 | 5 | 撞击完成判定：**遥测异常判定**（具体条件见 §6.5，待逐项确认） |
 | 6 | 无 SITL/无实流：阶段控制与撞击无法端到端验证，按“部分验收 + SITL/实流待验清单”处理（同 M3–M9 口径） |
+| 7 | 用户 2026-09-18 追加：`TaskInfo.taskCode` 由 `std::string` 改为枚举 `enum class TaskCode { AntiUav }`（wire 字符串保持 `anti-uav`）；`basic_flight` 验证任务类型删除，引擎只注册 anti-uav 树 |
 
 ---
 
@@ -99,7 +100,7 @@ class GeoCalculator {
 
 | 文件 | 职责 |
 |---|---|
-| `src/task/task_execution_engine.h/.cpp` | 增加 `build_suicide(task)`；taskCode 映射 `suicide`；终结/中止统一清理 |
+| `src/task/task_execution_engine.h/.cpp` | 增加 `build_anti_uav()`；taskCode 固定 `TaskCode::AntiUav`；终结/中止统一清理 |
 | `src/task/nodes/midcourse_node.h/.cpp` | 中段制导：GCS 目标逼近，距离达标 → SUCCESS |
 | `src/task/nodes/detect_node.h/.cpp` | 启动检测，按规则选定目标并建立跟踪 |
 | `src/task/nodes/track_node.h/.cpp` | 跟踪监视：丢失超时 → FAILURE，稳定达标 → SUCCESS |
@@ -109,7 +110,7 @@ class GeoCalculator {
 ### 5.2 树结构（C++ 手工建树，沿用 M5 方式）
 
 ```text
-Sequence (suicide)
+Sequence (anti-uav)
  ├── Arm
  ├── Takeoff（SystemParamStore 安全高度）
  ├── Midcourse
@@ -120,7 +121,8 @@ Sequence (suicide)
 
 - 节点构造注入：`FlightControlApi*`、`StateStoreApi*`、`PerceptionApi*`、`TargetStoreApi*`、`SystemParamApi*`、`const AppConfig*`、`SuicideTaskContext*`；
 - `SuicideTaskContext`（引擎成员，树生命周期内有效）：`{ std::string targetTrackId; }`，由 `start(task)` 写入；
-- 行为树名固定 `suicide`，进度上报 `currentBehaviorTree=suicide`。
+- 行为树名固定 `anti-uav`，进度上报 `currentBehaviorTree=anti-uav`；
+- `common_include` 数据模型：`TaskInfo.taskCode` 为 `plane::model::TaskCode`（当前仅 `AntiUav`）；wire JSON 中 `taskCode` 为字符串 `"anti-uav"`，枚举↔字符串映射由 Communication 序列化负责（`serialization.cpp`）。
 
 ### 5.3 GCS 目标选择
 
@@ -238,8 +240,8 @@ virtual TrackingState tracking_state() const = 0;
 联调示例：
 
 ```bash
-# suicide 任务 + 指定 GCS 目标持续更新
-./build/gcs_sim --task-code suicide --target-track-id t1 \
+# anti-uav 任务 + 指定 GCS 目标持续更新
+./build/gcs_sim --task-code anti-uav --target-track-id t1 \
   --send-gcs-target t1 --gcs-target-repeat 100 --listen-seconds 5
 ```
 
@@ -266,7 +268,7 @@ StateStore → FlightControl → SystemParamStore → PluginManagement → Camer
 当前环境无 SITL、无实流图像源，M10 完成后：
 
 1. 构建无 warning；`clang-format` 通过；无 `std::cout/printf`；
-2. 任务启动与失败路径（无 SITL）：下发 `suicide` → Midcourse 分发失败（飞控未连接）→ 任务 Failed，`TaskState` 终态回 None；
+2. 任务启动与失败路径（无 SITL）：下发 `anti-uav` → Arm 分发失败（飞控未连接）→ 任务 Failed，`TaskState` 终态回 None；
 3. 阶段条件单测式验证（不依赖飞控）：
    - GCS 目标解析与距离/方位计算日志；
    - 目标选择规则（用自检检测结果或 stub 合成目标）；
@@ -307,7 +309,7 @@ DEV_PLAN M10 要求“部署打包（可执行 + 动态库 + 配置）”。候�
 | 3 | 撞击遥测判定在 SITL 可模拟性 | 条件含 `!in_air`/高度/下坠速度；SITL 下可人工触发，列为待验 |
 | 4 | 阶段超时沿用统一值可能不匹配真实任务 | 全部配置化，联调时调整 |
 | 5 | stub 合成输出可能被误用于产品 | 仅环境变量显式开启；默认行为不变；文档标注“联调用途” |
-| 6 | `suicide` 阶段树对 GCS 目标强依赖 | `targetTrackId` 为空时取唯一 GCS 目标；无法确定则任务失败并告警，行为可观测 |
+| 6 | anti-uav 阶段树对 GCS 目标强依赖 | `targetTrackId` 为空时取唯一 GCS 目标；无法确定则任务失败并告警，行为可观测 |
 | 7 | 跟踪阶段继续逼近可能提前接近目标 | 跟踪速度单独可配，默认降低；后续按实飞调参 |
 
 ---

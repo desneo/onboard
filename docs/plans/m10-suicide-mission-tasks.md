@@ -1229,7 +1229,7 @@ Expected: 构建通过。
 **Interfaces**
 
 - Consumes: Task 5 `PerceptionApi&`、Task 4 `TargetStoreApi&`、Task 6-8 节点类型
-- Produces: `taskCode=suicide` 可执行；行为树名 `suicide`
+- Produces: `TaskCode::AntiUav`（wire `"anti-uav"`）可执行；行为树名 `anti-uav`
 
 - [x] Step 1: `src/task/task_execution_engine.h` 增加 include
 
@@ -1251,7 +1251,7 @@ Expected: 构建通过。
 私有区追加
 
 ```cpp
-    BT::Tree build_suicide();
+    BT::Tree build_anti_uav();
     void cleanup_control();
 ```
 
@@ -1291,10 +1291,10 @@ TaskExecutionEngine::TaskExecutionEngine(plane::core::EventBus& event_bus, const
 #include "task/nodes/track_node.h"
 ```
 
-- [x] Step 4: 在 `build_basic_flight()` 之后新增 `build_suicide()`
+- [x] Step 4: 新增 `build_anti_uav()`（原 `build_suicide()`，后随 taskCode 枚举化重命名）
 
 ```cpp
-BT::Tree TaskExecutionEngine::build_suicide() {
+BT::Tree TaskExecutionEngine::build_anti_uav() {
     BT::BehaviorTreeFactory factory;
     factory.registerNodeType<ArmNode>("Arm", &flight_control_, &state_store_, &config_);
     factory.registerNodeType<TakeoffNode>("Takeoff", &flight_control_, &state_store_, &config_, &system_param_);
@@ -1309,8 +1309,8 @@ BT::Tree TaskExecutionEngine::build_suicide() {
 
     auto subtree = std::make_shared<BT::Tree::Subtree>();
     subtree->blackboard = BT::Blackboard::create();
-    subtree->tree_ID = "suicide";
-    subtree->instance_name = "suicide";
+    subtree->tree_ID = "anti-uav";
+    subtree->instance_name = "anti-uav";
 
     BT::NodeConfig node_config;
     node_config.blackboard = subtree->blackboard;
@@ -1346,33 +1346,26 @@ BT::Tree TaskExecutionEngine::build_suicide() {
 }
 ```
 
-- [x] Step 5: `start()` 改为按 taskCode 建树
+- [x] Step 5: `start()` 建树（taskCode 枚举化后的最终实现）
 
 ```cpp
 bool TaskExecutionEngine::start(const plane::model::TaskInfo& task, std::string& error) {
-    if (task.taskCode != "basic_flight" && task.taskCode != "suicide") {
-        error = "未知任务类型: " + task.taskCode;
-        return false;
-    }
     abort();
     std::lock_guard<std::mutex> lock(mutex_);
     try {
-        if (task.taskCode == "suicide") {
-            suicide_context_.targetTrackId = task.targetTrackId;
-            tree_ = build_suicide();
-        } else {
-            tree_ = build_basic_flight();
-        }
+        suicide_context_.targetTrackId = task.targetTrackId;
+        tree_ = build_anti_uav();
     } catch (const std::exception& e) {
         error = std::string("行为树创建失败: ") + e.what();
         return false;
     }
-    current_tree_name_ = task.taskCode;
+    current_tree_name_ = "anti-uav";
     tree_ready_ = true;
     current_node_.clear();
     ticking_ = true;
     tick_thread_ = std::thread([this]() { tick_loop(); });
-    spdlog::info("行为树已创建: {}, taskId={}", current_tree_name_, task.taskId);
+    spdlog::info("行为树已创建: {}, taskId={}, taskCode={}", current_tree_name_, task.taskId,
+                 std::string(magic_enum::enum_name(task.taskCode)));
     return true;
 }
 ```
@@ -1449,7 +1442,7 @@ git add src/task/task_execution_engine.h src/task/task_execution_engine.cpp src/
 git commit -m "feat(m10): 引擎注册 suicide 任务树与终结清理"
 ```
 
-Expected: 构建通过；默认 `--task-code suicide` 不再报「未知任务类型」。
+Expected: 构建通过；默认 `--task-code anti-uav` 正常建树（旧 `suicide` 会被序列化层拒绝）。
 
 ---
 
@@ -1773,24 +1766,23 @@ grep -rn "std::cout\|printf(" src/ tools/ plugins/ || echo "no cout/printf"
 
 Expected: 无 warning、格式通过、无 cout/printf。
 
-- [x] Step 2: suicide 任务无 SITL 路径
+- [x] Step 2: anti-uav 任务无 SITL 路径
 
 ```bash
 # 终端 1
 ./build/onboard
 # 终端 2
-./build/gcs_sim --task-code suicide --target-track-id t1 --send-gcs-target t1 \
+./build/gcs_sim --task-code anti-uav --target-track-id t1 --send-gcs-target t1 \
   --gcs-target-repeat 5 --listen-seconds 4
 ```
 
-Expected（onboard）：`行为树已创建: suicide` → `中段制导目标: trackId=t1, ...` →
-`中段制导速度下发失败 (距离 ... m): ...飞控未连接...` → `行为树结束: suicide, status=Failed`；
+Expected（onboard）：`行为树已创建: anti-uav` → （SITL 下继续中段）→ `行为树结束: anti-uav, status=Failed`（无 SITL 时在 Arm 节点失败）；
 gcs_sim：`TaskState status=None`、`Ack 结果: TaskInfo=true`。
 
 - [x] Step 3: 目标缺失失败路径
 
 ```bash
-./build/gcs_sim --task-code suicide --no-command --listen-seconds 4
+./build/gcs_sim --task-code anti-uav --no-command --listen-seconds 4
 ```
 
 Expected：`无法确定 GCS 目标（targetTrackId 为空且 GCS 目标数不为 1）` → 任务 Failed。
@@ -1837,7 +1829,7 @@ git commit -m "docs(m10): M10 部分验收与文档更新"
 3. 跟踪丢失恢复与超时失败（`PLANE_STUB_TRACK_LOST_AFTER` 或真实算法）；
 4. 导引阶段飞控控制（Perception 直连下发、`applied=true`）与撞击完成判定；
 5. 执行中替换/中止：`haltTree` 后 Offboard 停止（`clear_ned_velocity`）、检测/跟踪/导引全部退出；
-6. PX4 SITL 下 `suicide` 全流程演练与 SPEC §12 自杀式反无 5 项验收。
+6. PX4 SITL 下 anti-uav 全流程演练与 SPEC §12 自杀式反无 5 项验收。
 
 ---
 
@@ -1864,7 +1856,7 @@ git commit -m "docs(m10): M10 部分验收与文档更新"
 ### 验收证据（2026-09-18，无 SITL/无实流）
 
 1. **构建与规范**：构建 0 warning；`clang-format --dry-run --Werror`（src/tools/plugins 全部 .h/.cpp）通过；无 `std::cout/printf`。
-2. **suicide 任务无 SITL 路径**：`gcs_sim --task-code suicide --target-track-id t1 --send-gcs-target t1 --gcs-target-repeat 5` →
+2. **任务无 SITL 路径**（见「后续变更：taskCode 枚举化」最新证据）：`gcs_sim --task-code anti-uav --target-track-id t1 --send-gcs-target t1 --gcs-target-repeat 5` →
    onboard `行为树已创建: suicide, taskId=task-1` → `任务结束: status=Failed, detail=节点执行失败: Arm`（飞控未连接，首个节点失败即任务失败，符合 SPEC §5.8）；
    gcs_sim `Ack 结果: TaskInfo=true, Command=true`、`TaskState status=None`（终态回无任务）、`GCS 目标更新: trackId=t1, 历史=5`。
 3. **stub 合成输出**：`PLANE_STUB_DETECT=center PLANE_STUB_GUIDE=forward PLANE_STUB_TRACK_LOST_AFTER=3` + 临时 `perception_selftest_on_start=true` →
@@ -1892,3 +1884,35 @@ git commit -m "docs(m10): M10 部分验收与文档更新"
 | 安全告警 | 1 | 待 SITL（M9） |
 
 > 待 SITL 项按本文档「附：SITL/实流待用户验证清单」执行，结果回填本文档。
+
+---
+
+## 后续变更：taskCode 枚举化（用户 2026-09-18 追加）
+
+### 变更内容
+
+- `../common/common_include/message.h`：`TaskInfo.taskCode` 由 `std::string` 改为 `enum class TaskCode { AntiUav };`（当前仅一种任务类型）；
+- wire JSON 的 `taskCode` 保持字符串 `"anti-uav"`，枚举↔字符串映射由 Communication 层负责（`serialization.cpp`；common_include 不依赖第三方库）；
+- `TaskExecutionEngine`：删除 `basic_flight` 内置验证任务与 `build_basic_flight()`，只注册 anti-uav 树；行为树名/`currentBehaviorTree` 改为 `anti-uav`；
+- `gcs_sim`：默认 `--task-code anti-uav`；
+- 配置项 `suicide_*` 名称保留（指任务阶段参数，不随任务类型命名变化）。
+
+### 提交
+
+| 提交 | 内容 |
+|---|---|
+| `e1684f8` | refactor(m10): taskCode 改为枚举 TaskCode::AntiUav（onboard 侧） |
+| 待提交 | common 仓库 `common_include/message.h`（common 为独立仓库，当前未提交） |
+
+### 验证证据（2026-09-18）
+
+1. 构建 0 warning；
+2. `gcs_sim --target-track-id t1 --send-gcs-target t1 --no-command`（默认 anti-uav）→ onboard
+   `行为树已创建: anti-uav, taskId=task-1, taskCode=AntiUav` → `行为树结束: anti-uav, status=Failed, detail=节点执行失败: Arm`（无 SITL），gcs_sim `Ack 结果: TaskInfo=true`；
+3. `gcs_sim --task-code suicide`（旧值）→ onboard `通信错误事件: TaskInfo 解码失败: 未知 TaskCode: suicide`，gcs_sim `TaskInfo=false`（消息被拒绝，任务未启动）。
+
+### 影响与待办
+
+- 地面站需按 `"anti-uav"` 下发 `taskCode`；旧 `"suicide"`/`"basic_flight"` 不再被接受；
+- GCS 侧协议文档若引用旧值需同步；
+- common 仓库变更提交后，onboard 构建方可与其他仓库（GCS 等）对齐。
