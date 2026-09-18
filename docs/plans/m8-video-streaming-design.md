@@ -71,7 +71,7 @@ class H264Encoder {
 
 ## 5. RTSP 服务（ZLMediaKit）
 
-- `mk_env_init2(thread_num=2, log_level=3(warn), log_mask=LOG_FILE, "logs/zlmediakit.log", 1, 0, ini, 0, nullptr, nullptr)`；`ini` 内容设置 RTSP 端口：
+- `mk_env_init2(thread_num=2, log_level=3(warn), log_mask=LOG_FILE, "logs/zlmediakit.log", 1, 0, ini, 0, nullptr, nullptr)`（`log_file_path` 按目录处理，实际文件为 `logs/zlmediakit.log/<date>.log`）；`ini` 内容设置 RTSP 端口：
   ```ini
   [rtsp]
   port=8554

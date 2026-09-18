@@ -3,7 +3,7 @@
 > 设计依据：`m8-video-streaming-design.md`（逐项确认；fps 与码率为配置项）。
 > 执行位置：工程根 `onboard/`。
 > 验证原则：每个 Task 结束后 x64 Release 构建通过；不写测试代码（SPEC §11）。
-> 无图像源：Task 7 为部分验收，实流拉取由用户提供源后验证。
+> 状态：已完成并部分验收（2026-09-18）；实流拉取由用户提供源后验证。
 
 ---
 
@@ -15,7 +15,7 @@
 - Modify: `src/core/config.cpp`
 - Modify: `config/onboard.conf`
 
-- [ ] Step 1: `src/core/config.h` 的 `AppConfig` 中，在 `perception_selftest_on_start` 之后追加
+- [x] Step 1: `src/core/config.h` 的 `AppConfig` 中，在 `perception_selftest_on_start` 之后追加
 
 ```cpp
     int rtsp_port = 8554;
@@ -26,7 +26,7 @@
     bool video_overlay_enabled = true;
 ```
 
-- [ ] Step 2: `src/core/config.cpp` 解析分支中，在 `perception_selftest_on_start` 分支之后追加
+- [x] Step 2: `src/core/config.cpp` 解析分支中，在 `perception_selftest_on_start` 分支之后追加
 
 ```cpp
         } else if (key == "rtsp_port") {
@@ -43,7 +43,7 @@
             out.video_overlay_enabled = (value == "true" || value == "1");
 ```
 
-- [ ] Step 3: `config/onboard.conf` 末尾追加
+- [x] Step 3: `config/onboard.conf` 末尾追加
 
 ```text
 # 视频推流
@@ -55,7 +55,7 @@ video_bitrate_kbps = 2000
 video_overlay_enabled = true
 ```
 
-- [ ] Step 4: 构建、运行与提交
+- [x] Step 4: 构建、运行与提交
 
 ```bash
 cmake --build build -j
@@ -79,21 +79,21 @@ Expected: 构建通过；运行无「未知配置项」，exit=0。
 - Create: `src/video/ffmpeg_h264_encoder.h`
 - Create: `src/video/ffmpeg_h264_encoder.cpp`
 
-- [ ] Step 1: `cmake/Dependencies.cmake` 末尾追加
+- [x] Step 1: `cmake/Dependencies.cmake` 末尾追加
 
 ```cmake
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavcodec libavutil libswscale)
 ```
 
-- [ ] Step 2: `CMakeLists.txt` 的 `target_link_libraries(onboard PRIVATE ...)` 追加
+- [x] Step 2: `CMakeLists.txt` 的 `target_link_libraries(onboard PRIVATE ...)` 追加
 
 ```cmake
   PkgConfig::FFMPEG
   opencv_imgproc
 ```
 
-- [ ] Step 3: 写 `src/video/h264_encoder.h`
+- [x] Step 3: 写 `src/video/h264_encoder.h`
 
 ```cpp
 #pragma once
@@ -119,7 +119,7 @@ class H264Encoder {
 }  // namespace plane::video
 ```
 
-- [ ] Step 4: 写 `src/video/ffmpeg_h264_encoder.h`
+- [x] Step 4: 写 `src/video/ffmpeg_h264_encoder.h`
 
 ```cpp
 #pragma once
@@ -164,7 +164,7 @@ class FfmpegH264Encoder final : public H264Encoder {
 }  // namespace plane::video
 ```
 
-- [ ] Step 5: 写 `src/video/ffmpeg_h264_encoder.cpp`
+- [x] Step 5: 写 `src/video/ffmpeg_h264_encoder.cpp`
 
 ```cpp
 #include "video/ffmpeg_h264_encoder.h"
@@ -319,7 +319,7 @@ void FfmpegH264Encoder::close() {
 }  // namespace plane::video
 ```
 
-- [ ] Step 6: 构建与格式
+- [x] Step 6: 构建与格式
 
 ```bash
 cmake --build build -j
@@ -328,7 +328,7 @@ clang-format --dry-run --Werror src/video/h264_encoder.h src/video/ffmpeg_h264_e
 
 Expected: 构建通过且无 warning；格式通过（差异先 `-i` 再构建）。
 
-- [ ] Step 7: 提交
+- [x] Step 7: 提交
 
 ```bash
 git add cmake/Dependencies.cmake CMakeLists.txt src/video
@@ -344,7 +344,7 @@ git commit -m "feat(m8): 增加 FFmpeg H264 编码器抽象与实现"
 - Create: `src/video/rtsp_media_server.h`
 - Create: `src/video/rtsp_media_server.cpp`
 
-- [ ] Step 1: 写 `src/video/rtsp_media_server.h`
+- [x] Step 1: 写 `src/video/rtsp_media_server.h`
 
 ```cpp
 #pragma once
@@ -378,7 +378,7 @@ class RtspMediaServer {
 }  // namespace plane::video
 ```
 
-- [ ] Step 2: 写 `src/video/rtsp_media_server.cpp`
+- [x] Step 2: 写 `src/video/rtsp_media_server.cpp`
 
 ```cpp
 #include "video/rtsp_media_server.h"
@@ -467,7 +467,7 @@ void RtspMediaServer::close() {
 }  // namespace plane::video
 ```
 
-- [ ] Step 3: 构建与格式
+- [x] Step 3: 构建与格式
 
 ```bash
 cmake --build build -j
@@ -476,7 +476,7 @@ clang-format --dry-run --Werror src/video/rtsp_media_server.h src/video/rtsp_med
 
 Expected: 构建通过且无 warning；格式通过（差异先 `-i` 再构建）。
 
-- [ ] Step 4: 提交
+- [x] Step 4: 提交
 
 ```bash
 git add src/video/rtsp_media_server.h src/video/rtsp_media_server.cpp
@@ -494,7 +494,7 @@ git commit -m "feat(m8): 增加 ZLMediaKit RTSP 服务封装"
 - Create: `src/video/video_streaming.cpp`
 - Modify: `CMakeLists.txt`
 
-- [ ] Step 1: 写 `src/video/video_streaming_api.h`
+- [x] Step 1: 写 `src/video/video_streaming_api.h`
 
 ```cpp
 #pragma once
@@ -528,7 +528,7 @@ class VideoStreamingApi {
 }  // namespace plane::video
 ```
 
-- [ ] Step 2: 写 `src/video/video_streaming.h`
+- [x] Step 2: 写 `src/video/video_streaming.h`
 
 ```cpp
 #pragma once
@@ -590,7 +590,7 @@ class VideoStreaming final : public plane::core::IModule, public VideoStreamingA
 }  // namespace plane::video
 ```
 
-- [ ] Step 3: 写 `src/video/video_streaming.cpp`
+- [x] Step 3: 写 `src/video/video_streaming.cpp`
 
 ```cpp
 #include "video/video_streaming.h"
@@ -772,7 +772,7 @@ bool VideoStreaming::encode_and_send(const cv::Mat& frame, const VideoOverlay& o
 }  // namespace plane::video
 ```
 
-- [ ] Step 4: `CMakeLists.txt` 的 `add_executable(onboard ...)` 文件列表追加
+- [x] Step 4: `CMakeLists.txt` 的 `add_executable(onboard ...)` 文件列表追加
 
 ```cmake
   src/video/ffmpeg_h264_encoder.cpp
@@ -780,7 +780,7 @@ bool VideoStreaming::encode_and_send(const cv::Mat& frame, const VideoOverlay& o
   src/video/video_streaming.cpp
 ```
 
-- [ ] Step 5: 构建与格式
+- [x] Step 5: 构建与格式
 
 ```bash
 cmake --build build -j
@@ -789,7 +789,7 @@ clang-format --dry-run --Werror $(git ls-files src/video)
 
 Expected: 构建通过且无 warning；格式通过（差异先 `-i` 再构建）。
 
-- [ ] Step 6: 提交
+- [x] Step 6: 提交
 
 ```bash
 git add src/video CMakeLists.txt
@@ -805,7 +805,7 @@ git commit -m "feat(m8): 增加 VideoStreaming 推流模块"
 - Modify: `src/perception/perception.h`
 - Modify: `src/perception/perception.cpp`
 
-- [ ] Step 1: `perception.h` 修改
+- [x] Step 1: `perception.h` 修改
 
 1) include 追加：
 
@@ -828,7 +828,7 @@ git commit -m "feat(m8): 增加 VideoStreaming 推流模块"
     std::vector<plane::model::DetectTarget> last_detection_targets_;
 ```
 
-- [ ] Step 2: `perception.cpp` 修改
+- [x] Step 2: `perception.cpp` 修改
 
 1) 构造函数定义改为：
 
@@ -887,7 +887,7 @@ Perception::Perception(plane::core::EventBus& event_bus, const plane::core::AppC
                 } else {
 ```
 
-- [ ] Step 3: 构建与格式
+- [x] Step 3: 构建与格式
 
 ```bash
 cmake --build build -j
@@ -896,7 +896,7 @@ clang-format --dry-run --Werror src/perception/perception.h src/perception/perce
 
 Expected: 构建通过且无 warning；格式通过（差异先 `-i` 再构建）。
 
-- [ ] Step 4: 提交
+- [x] Step 4: 提交
 
 ```bash
 git add src/perception/perception.h src/perception/perception.cpp
@@ -911,13 +911,13 @@ git commit -m "feat(m8): Perception 集成推流帧交付"
 
 - Modify: `src/main.cpp`
 
-- [ ] Step 1: include 追加
+- [x] Step 1: include 追加
 
 ```cpp
 #include "video/video_streaming.h"
 ```
 
-- [ ] Step 2: 创建与注册
+- [x] Step 2: 创建与注册
 
 在 `camera_control` 之后创建：
 
@@ -949,7 +949,7 @@ git commit -m "feat(m8): Perception 集成推流帧交付"
 
 占位 skip 列表增加 `"Video Streaming"`。
 
-- [ ] Step 3: 构建、运行与格式
+- [x] Step 3: 构建、运行与格式
 
 ```bash
 cmake --build build -j
@@ -959,7 +959,7 @@ clang-format --dry-run --Werror src/main.cpp
 
 Expected: 构建通过；日志含 `ZLMediaKit 环境已初始化`、`推流已启动: rtsp://<ip>:8554 /live/onboard`；exit=0。
 
-- [ ] Step 4: 提交
+- [x] Step 4: 提交
 
 ```bash
 git add src/main.cpp
@@ -975,7 +975,7 @@ git commit -m "feat(m8): 接线 VideoStreaming"
 - Modify: `docs/plans/m8-video-streaming-tasks.md`
 - Modify: `docs/DEV_PLAN.md`
 
-- [ ] Step 1: 干净构建与运行
+- [x] Step 1: 干净构建与运行
 
 ```bash
 rm -rf build logs
@@ -988,7 +988,7 @@ ls -l logs/zlmediakit.log
 
 Expected: 构建无 warning；两条日志出现；`logs/zlmediakit.log` 存在；exit=0。
 
-- [ ] Step 2: stdout 噪音检查
+- [x] Step 2: stdout 噪音检查
 
 ```bash
 grep -icE "zlmedia|load codec" /tmp/opencode/m8_run.log
@@ -996,14 +996,14 @@ grep -icE "zlmedia|load codec" /tmp/opencode/m8_run.log
 
 Expected: 0（codec 注册等 ZLMediaKit 日志不再打到 stdout）。若静态初始化仍有少量输出，记录实际行数作为偏差。
 
-- [ ] Step 3: 回归与规范
+- [x] Step 3: 回归与规范
 
 ```bash
 clang-format --dry-run --Werror $(git ls-files src tools plugins)
 grep -rn "std::cout\|printf(" src/ tools/ plugins/ || echo "no cout/printf"
 ```
 
-- [ ] Step 4: 文档与收尾提交
+- [x] Step 4: 文档与收尾提交
 
 - 勾选本文档并记录验收证据与偏差；
 - 更新 `docs/DEV_PLAN.md` §11 索引：M8 → 已完成（部分验收，实流待用户提供源）。
@@ -1024,3 +1024,16 @@ git commit -m "docs(m8): M8 部分验收与文档更新"
 3. `video_overlay_enabled` 开/关对比；
 4. 停止推流后 Perception 取图/检测仍正常（`stop_stream` 路径）。
 
+---
+
+## 执行记录与偏差
+
+1. **验收证据（2026-09-18，无图像源）**
+   - 干净构建无 warning；运行 exit=0；
+   - `ZLMediaKit 环境已初始化: rtsp_port=8554, 日志=logs/zlmediakit.log`、`推流已启动: rtsp://<ip>:8554 /live/onboard`；
+   - 无源时编码线程等待帧，进程稳定（无崩溃/无高频日志）。
+2. **偏差**
+   - ZLMediaKit 的 `log_file_path` 按目录处理：实际文件为 `logs/zlmediakit.log/2026-09-18_00.log`（当天为空，因级别 warn 且无告警）；
+   - 库静态初始化在 `mk_env_init` 之前仍向 stdout 打印 14 行 `registerPlugin | Load codec: ...`（链接加载期产生，配置无法抑制）；`mk_env_init2` 之后的 ZLM 日志按 mask 仅写文件。若需彻底静默，需评估延迟加载（dlopen）方案。
+3. `clang-format` 通过；无 `std::cout/printf`；M1–M7 回归正常。
+4. **待用户验证（提供源后）**：`推流首帧: WxH`、ffprobe/播放器拉流、叠加开关对比、停止推流不影响感知。
