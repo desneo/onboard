@@ -3,7 +3,7 @@
 > 设计依据：`m9-state-monitor-design.md`（逐项确认；仅低电压告警）。
 > 执行位置：工程根 `onboard/`。
 > 验证原则：每个 Task 结束后 x64 Release 构建通过；不写测试代码（SPEC §11）。
-> 无 SITL：Task 8 为部分验收，低电压告警链路待 SITL。
+> 状态：已完成并部分验收（2026-09-18）；低电压告警链路待 SITL。
 
 ---
 
@@ -15,27 +15,27 @@
 - Modify: `src/core/config.cpp`
 - Modify: `config/onboard.conf`
 
-- [ ] Step 1: `src/core/config.h` 的 `AppConfig` 中，在 `video_overlay_enabled` 之后追加
+- [x] Step 1: `src/core/config.h` 的 `AppConfig` 中，在 `video_overlay_enabled` 之后追加
 
 ```cpp
     double alert_voltage_threshold_v = 21.0;
 ```
 
-- [ ] Step 2: `src/core/config.cpp` 解析分支中，在 `video_overlay_enabled` 分支之后追加
+- [x] Step 2: `src/core/config.cpp` 解析分支中，在 `video_overlay_enabled` 分支之后追加
 
 ```cpp
         } else if (key == "alert_voltage_threshold_v") {
             out.alert_voltage_threshold_v = std::stod(value);
 ```
 
-- [ ] Step 3: `config/onboard.conf` 末尾追加
+- [x] Step 3: `config/onboard.conf` 末尾追加
 
 ```text
 # 安全告警（低电压阈值，按实机电池配置）
 alert_voltage_threshold_v = 21.0
 ```
 
-- [ ] Step 4: 构建、运行与提交
+- [x] Step 4: 构建、运行与提交
 
 ```bash
 cmake --build build -j
@@ -59,7 +59,7 @@ Expected: 构建通过；运行无「未知配置项」，exit=0。
 - Create: `src/core/system_param_store.cpp`
 - Modify: `CMakeLists.txt`
 
-- [ ] Step 1: 写 `src/core/system_param_api.h`
+- [x] Step 1: 写 `src/core/system_param_api.h`
 
 ```cpp
 #pragma once
@@ -79,7 +79,7 @@ class SystemParamApi {
 }  // namespace plane::core
 ```
 
-- [ ] Step 2: 写 `src/core/system_param_events.h`
+- [x] Step 2: 写 `src/core/system_param_events.h`
 
 ```cpp
 #pragma once
@@ -95,7 +95,7 @@ inline constexpr std::string_view kSystemParamChanged = "system_param.changed";
 }  // namespace plane::core
 ```
 
-- [ ] Step 3: 写 `src/core/system_param_store.h`
+- [x] Step 3: 写 `src/core/system_param_store.h`
 
 ```cpp
 #pragma once
@@ -135,7 +135,7 @@ class SystemParamStore final : public IModule, public SystemParamApi {
 }  // namespace plane::core
 ```
 
-- [ ] Step 4: 写 `src/core/system_param_store.cpp`
+- [x] Step 4: 写 `src/core/system_param_store.cpp`
 
 ```cpp
 #include "core/system_param_store.h"
@@ -191,13 +191,13 @@ void SystemParamStore::on_system_param(const plane::model::SystemParam& param) {
 }  // namespace plane::core
 ```
 
-- [ ] Step 5: `CMakeLists.txt` 的 `add_executable(onboard ...)` 文件列表追加
+- [x] Step 5: `CMakeLists.txt` 的 `add_executable(onboard ...)` 文件列表追加
 
 ```cmake
   src/core/system_param_store.cpp
 ```
 
-- [ ] Step 6: 构建与格式
+- [x] Step 6: 构建与格式
 
 ```bash
 cmake --build build -j
@@ -206,7 +206,7 @@ clang-format --dry-run --Werror src/core/system_param_api.h src/core/system_para
 
 Expected: 构建通过且无 warning；格式通过（差异先 `-i` 再构建）。
 
-- [ ] Step 7: 提交
+- [x] Step 7: 提交
 
 ```bash
 git add src/core/system_param_api.h src/core/system_param_events.h src/core/system_param_store.h src/core/system_param_store.cpp CMakeLists.txt
@@ -222,7 +222,7 @@ git commit -m "feat(m9): 增加 SystemParamStore 运行时参数"
 - Modify: `src/task/task_scheduler.h`
 - Modify: `src/task/task_scheduler.cpp`
 
-- [ ] Step 1: `task_scheduler.h` 修改
+- [x] Step 1: `task_scheduler.h` 修改
 
 1) include 追加：
 
@@ -245,7 +245,7 @@ git commit -m "feat(m9): 增加 SystemParamStore 运行时参数"
     plane::core::SystemParamApi& system_param_;
 ```
 
-- [ ] Step 2: `task_scheduler.cpp` 修改
+- [x] Step 2: `task_scheduler.cpp` 修改
 
 1) 构造函数定义改为：
 
@@ -281,7 +281,7 @@ TaskScheduler::TaskScheduler(plane::core::EventBus& event_bus, const plane::core
             }
 ```
 
-- [ ] Step 3: 语法检查（main 暂断属预期，Task 7 修复）
+- [x] Step 3: 语法检查（main 暂断属预期，Task 7 修复）
 
 ```bash
 cmake --build build -j 2>&1 | grep -E "task_scheduler|main" | head
@@ -289,7 +289,7 @@ cmake --build build -j 2>&1 | grep -E "task_scheduler|main" | head
 
 Expected: task_scheduler 无错误；main.cpp 因构造参数不匹配报错（预期）。
 
-- [ ] Step 4: 格式与提交
+- [x] Step 4: 格式与提交
 
 ```bash
 clang-format --dry-run --Werror src/task/task_scheduler.h src/task/task_scheduler.cpp
@@ -308,7 +308,7 @@ git commit -m "feat(m9): TaskScheduler 使用动态安全高度"
 - Modify: `src/task/task_execution_engine.h`
 - Modify: `src/task/task_execution_engine.cpp`
 
-- [ ] Step 1: `takeoff_node.h` 改为
+- [x] Step 1: `takeoff_node.h` 改为
 
 ```cpp
 #pragma once
@@ -341,7 +341,7 @@ class TakeoffNode final : public FlightActionNode {
 }  // namespace plane::task
 ```
 
-- [ ] Step 2: `takeoff_node.cpp` 改为
+- [x] Step 2: `takeoff_node.cpp` 改为
 
 ```cpp
 #include "task/nodes/takeoff_node.h"
@@ -367,7 +367,7 @@ BT::NodeStatus TakeoffNode::check() {
 }  // namespace plane::task
 ```
 
-- [ ] Step 3: `task_execution_engine.h` 修改
+- [x] Step 3: `task_execution_engine.h` 修改
 
 1) include 追加：
 
@@ -390,7 +390,7 @@ BT::NodeStatus TakeoffNode::check() {
     plane::core::SystemParamApi& system_param_;
 ```
 
-- [ ] Step 4: `task_execution_engine.cpp` 修改
+- [x] Step 4: `task_execution_engine.cpp` 修改
 
 1) 构造函数定义改为：
 
@@ -414,7 +414,7 @@ TaskExecutionEngine::TaskExecutionEngine(plane::core::EventBus& event_bus,
                                           &system_param_);
 ```
 
-- [ ] Step 5: 语法检查与格式
+- [x] Step 5: 语法检查与格式
 
 ```bash
 cmake --build build -j 2>&1 | grep -E "takeoff_node|task_execution_engine|main" | head
@@ -423,7 +423,7 @@ clang-format --dry-run --Werror src/task/nodes/takeoff_node.h src/task/nodes/tak
 
 Expected: 节点/引擎无编译错误（main 仍报构造参数错，Task 7 修复）；格式通过。
 
-- [ ] Step 6: 提交
+- [x] Step 6: 提交
 
 ```bash
 git add src/task/nodes/takeoff_node.h src/task/nodes/takeoff_node.cpp src/task/task_execution_engine.h src/task/task_execution_engine.cpp
@@ -440,7 +440,7 @@ git commit -m "feat(m9): TakeoffNode 使用动态安全高度"
 - Create: `src/state/state_monitor.cpp`
 - Modify: `CMakeLists.txt`
 
-- [ ] Step 1: 写 `src/state/state_monitor.h`
+- [x] Step 1: 写 `src/state/state_monitor.h`
 
 ```cpp
 #pragma once
@@ -482,7 +482,7 @@ class StateMonitor final : public plane::core::IModule {
 }  // namespace plane::state
 ```
 
-- [ ] Step 2: 写 `src/state/state_monitor.cpp`
+- [x] Step 2: 写 `src/state/state_monitor.cpp`
 
 ```cpp
 #include "state/state_monitor.h"
@@ -565,13 +565,13 @@ void StateMonitor::send_alert(const std::string& detail) {
 }  // namespace plane::state
 ```
 
-- [ ] Step 3: `CMakeLists.txt` 的 `add_executable(onboard ...)` 文件列表追加
+- [x] Step 3: `CMakeLists.txt` 的 `add_executable(onboard ...)` 文件列表追加
 
 ```cmake
   src/state/state_monitor.cpp
 ```
 
-- [ ] Step 4: 构建与格式
+- [x] Step 4: 构建与格式
 
 ```bash
 cmake --build build -j 2>&1 | grep -E "state_monitor|main" | head
@@ -580,7 +580,7 @@ clang-format --dry-run --Werror src/state/state_monitor.h src/state/state_monito
 
 Expected: state_monitor 无错误；main 仍报构造参数错（Task 7 修复）；格式通过。
 
-- [ ] Step 5: 提交
+- [x] Step 5: 提交
 
 ```bash
 git add src/state/state_monitor.h src/state/state_monitor.cpp CMakeLists.txt
@@ -595,7 +595,7 @@ git commit -m "feat(m9): 增加 StateMonitor 低电压告警"
 
 - Modify: `tools/gcs_sim/main.cpp`
 
-- [ ] Step 1: `Options` 增加
+- [x] Step 1: `Options` 增加
 
 ```cpp
     std::vector<std::pair<std::string, std::string>> send_params;
@@ -603,7 +603,7 @@ git commit -m "feat(m9): 增加 StateMonitor 低电压告警"
 
 （若文件未包含 `<utility>`/`<vector>`，补充 include。）
 
-- [ ] Step 2: 解析追加
+- [x] Step 2: 解析追加
 
 ```cpp
         } else if (arg == "--send-param" && i + 1 < argc) {
@@ -614,7 +614,7 @@ git commit -m "feat(m9): 增加 StateMonitor 低电压告警"
             }
 ```
 
-- [ ] Step 3: 发送逻辑（放在 GcsTarget 发送之后、友机状态/listen 之前）
+- [x] Step 3: 发送逻辑（放在 GcsTarget 发送之后、友机状态/listen 之前）
 
 ```cpp
     for (const auto& [key, value] : options.send_params) {
@@ -629,7 +629,7 @@ git commit -m "feat(m9): 增加 StateMonitor 低电压告警"
     }
 ```
 
-- [ ] Step 4: 构建、格式与提交
+- [x] Step 4: 构建、格式与提交
 
 ```bash
 cmake --build build -j
@@ -646,14 +646,14 @@ git commit -m "feat(m9): gcs_sim 支持系统参数下发"
 
 - Modify: `src/main.cpp`
 
-- [ ] Step 1: include 追加
+- [x] Step 1: include 追加
 
 ```cpp
 #include "core/system_param_store.h"
 #include "state/state_monitor.h"
 ```
 
-- [ ] Step 2: 创建与接线
+- [x] Step 2: 创建与接线
 
 在 `flight_control` 之后创建：
 
@@ -700,7 +700,7 @@ git commit -m "feat(m9): gcs_sim 支持系统参数下发"
 
 占位 skip 列表增加 `"StateMonitor"`。
 
-- [ ] Step 3: 构建、运行与格式
+- [x] Step 3: 构建、运行与格式
 
 ```bash
 cmake --build build -j
@@ -710,7 +710,7 @@ clang-format --dry-run --Werror src/main.cpp
 
 Expected: 构建通过；日志含 `系统参数就绪: safe_height_m=30`；`StateMonitor` 为真实模块；exit=0。
 
-- [ ] Step 4: 提交
+- [x] Step 4: 提交
 
 ```bash
 git add src/main.cpp
@@ -726,7 +726,7 @@ git commit -m "feat(m9): 接线 SystemParamStore 与 StateMonitor"
 - Modify: `docs/plans/m9-state-monitor-tasks.md`
 - Modify: `docs/DEV_PLAN.md`
 
-- [ ] Step 1: 干净构建与启动
+- [x] Step 1: 干净构建与启动
 
 ```bash
 rm -rf build logs
@@ -737,7 +737,7 @@ timeout --preserve-status 2 ./build/onboard 2>&1 | grep -E "系统参数就绪|�
 
 Expected：`系统参数就绪: safe_height_m=30`；`StateMonitor` 启动；无低电压告警（飞控未连接不评估）。
 
-- [ ] Step 2: 动态参数下发（终端 A/B）
+- [x] Step 2: 动态参数下发（终端 A/B）
 
 终端 A：`./build/onboard`
 
@@ -753,14 +753,14 @@ Expected：
 - onboard `系统参数更新: safe_height_m=50`；
 - 第二条运行后 onboard `Takeoff 未指定高度，使用安全高度: 50 m`，随后派发失败告警（飞控未连接，预期）。
 
-- [ ] Step 3: 规范与回归
+- [x] Step 3: 规范与回归
 
 ```bash
 clang-format --dry-run --Werror $(git ls-files src tools plugins)
 grep -rn "std::cout\|printf(" src/ tools/ plugins/ || echo "no cout/printf"
 ```
 
-- [ ] Step 4: 文档与收尾提交
+- [x] Step 4: 文档与收尾提交
 
 - 勾选本文档并记录验收证据与偏差；
 - 更新 `docs/DEV_PLAN.md` §11 索引：M9 → 已完成（部分验收，告警待 SITL）。
@@ -776,3 +776,15 @@ git commit -m "docs(m9): M9 部分验收与文档更新"
 
 1. 低电压告警：SITL 电压低于 `alert_voltage_threshold_v` → GCS 收到 `Alert{low_voltage}`，恢复后再次触发有效；系统无自动处置；
 2. `basic_flight` 的 TakeoffNode 使用动态安全高度（先 `--send-param safe_height_m=50` 再执行任务）。
+
+---
+
+## 执行记录与偏差
+
+1. **线协议键名修正**：gcs_sim 原按配置键 `safe_height_m` 发送，而 SystemParam 线字段为 `safeHeight_m`，导致反序列化为 0；已在 gcs_sim 做键映射（提交 `f01e944`）。
+2. **gcs_sim 非法数值防护**：`--send-param key=abc` 原会抛异常退出，改为 warn 并忽略（提交 `8f36eeb`）。
+3. **验收证据（2026-09-18，无 SITL）**
+   - 启动：`系统参数就绪: safe_height_m=30`；`StateMonitor` 为真实模块；飞控未连接时无低电压告警；
+   - 动态参数：`--send-param safe_height_m=50` → onboard `系统参数更新: safe_height_m=50`；随后 Takeoff（高度 0）→ `Takeoff 未指定高度，使用安全高度: 50 m`（TaskScheduler 读取运行时值）；
+   - 构建无 warning；`clang-format` 通过；无 `std::cout/printf`；M1–M8 回归正常。
+4. **待 SITL 验证**：低电压告警（边沿触发/恢复重触发/无自动处置）；`basic_flight` TakeoffNode 使用动态安全高度。
