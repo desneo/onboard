@@ -80,8 +80,8 @@ int main(int argc, char** argv) {
     auto perception = std::make_unique<plane::perception::Perception>(event_bus, config, *plugin_management,
                                                                       *state_store, *flight_control, *video_streaming);
     auto target_store = std::make_unique<plane::target::TargetStore>(event_bus);
-    auto task_engine = std::make_unique<plane::task::TaskExecutionEngine>(event_bus, config, *flight_control,
-                                                                          *state_store, *system_param_store);
+    auto task_engine = std::make_unique<plane::task::TaskExecutionEngine>(
+        event_bus, config, *flight_control, *state_store, *system_param_store, *perception, *target_store);
     auto task_scheduler = std::make_unique<plane::task::TaskScheduler>(event_bus, config, *flight_control,
                                                                        *system_param_store, task_engine.get());
     auto communication =

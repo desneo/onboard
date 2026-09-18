@@ -13,7 +13,10 @@
 #include "core/module.h"
 #include "core/system_param_api.h"
 #include "flight_control/flight_control_api.h"
+#include "perception/perception_api.h"
 #include "state/state_store_api.h"
+#include "target/target_store_api.h"
+#include "task/suicide_task_context.h"
 #include "task/task_execution_engine_api.h"
 
 namespace plane::task {
@@ -23,7 +26,8 @@ class TaskExecutionEngine final : public plane::core::IModule, public TaskExecut
    public:
     TaskExecutionEngine(plane::core::EventBus& event_bus, const plane::core::AppConfig& config,
                         plane::flight_control::FlightControlApi& flight_control,
-                        plane::state::StateStoreApi& state_store, plane::core::SystemParamApi& system_param);
+                        plane::state::StateStoreApi& state_store, plane::core::SystemParamApi& system_param,
+                        plane::perception::PerceptionApi& perception, plane::target::TargetStoreApi& target_store);
     ~TaskExecutionEngine() override;
 
     std::string name() const override;
@@ -37,20 +41,27 @@ class TaskExecutionEngine final : public plane::core::IModule, public TaskExecut
 
    private:
     BT::Tree build_basic_flight();
+    BT::Tree build_suicide();
     void tick_loop();
     void publish_progress(const std::string& node);
     void finish(plane::model::TaskStatus status, const std::string& detail);
+    void halt_tree();
+    void cleanup_control();
 
     plane::core::EventBus& event_bus_;
     const plane::core::AppConfig& config_;
     plane::flight_control::FlightControlApi& flight_control_;
     plane::state::StateStoreApi& state_store_;
     plane::core::SystemParamApi& system_param_;
+    plane::perception::PerceptionApi& perception_;
+    plane::target::TargetStoreApi& target_store_;
 
     std::mutex mutex_;
     BT::Tree tree_;
     bool tree_ready_ = false;
     std::string current_node_;
+    std::string current_tree_name_;
+    SuicideTaskContext suicide_context_;
     std::thread tick_thread_;
     std::atomic<bool> ticking_{false};
 };
