@@ -28,6 +28,7 @@ add_executable(onboard
   src/core/log.cpp
   src/core/placeholder_modules.cpp
   src/core/runtime.cpp
+  src/core/system_param_store.cpp
   src/state/state_store.cpp
   src/flight_control/flight_control_module.cpp
   src/task/task_scheduler.cpp
