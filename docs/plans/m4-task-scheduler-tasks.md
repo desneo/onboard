@@ -3,7 +3,7 @@
 > 设计依据：`m4-task-scheduler-design.md`（逐项确认；任务终态立即回到无任务）。
 > 执行位置：工程根 `onboard/`。
 > 验证原则：每个 Task 结束后 x64 Release 构建通过；不写测试代码（SPEC §11）。
-> SITL 不可用：Task 6 为部分验收，实际动作待用户 SITL 验证。
+> 状态：已完成并部分验收（2026-09-18）；实际动作待用户 SITL 验证（清单见文末）。
 
 ---
 
@@ -18,7 +18,7 @@
 
 - Produces: `TaskExecutionEngineApi`、`TaskEngineResult`、`TaskProgress`、`TaskSchedulerError` 与事件 ID
 
-- [ ] Step 1: 写 `src/task/task_execution_engine_api.h`
+- [x] Step 1: 写 `src/task/task_execution_engine_api.h`
 
 ```cpp
 #pragma once
@@ -41,7 +41,7 @@ class TaskExecutionEngineApi {
 }  // namespace plane::task
 ```
 
-- [ ] Step 2: 写 `src/task/task_events.h`
+- [x] Step 2: 写 `src/task/task_events.h`
 
 ```cpp
 #pragma once
@@ -81,7 +81,7 @@ inline constexpr std::string_view kError = "task_scheduler.error";
 }  // namespace plane::task
 ```
 
-- [ ] Step 3: 构建与提交
+- [x] Step 3: 构建与提交
 
 ```bash
 cmake --build build -j
@@ -107,7 +107,7 @@ git commit -m "feat(m4): 增加任务引擎接口与调度事件"
 
 说明：Scheduler 需要 `CommunicationApi` 发送派发失败告警，而 Communication 需要 `TaskStateProvider`（Scheduler 实现）——存在构造循环。采用两阶段接线：Scheduler 先以 `nullptr` 构造，Communication 用 Scheduler 作 provider 构造，再 `scheduler.set_communication(*communication)`（Task 5 执行）。
 
-- [ ] Step 1: 写 `src/task/task_scheduler.h`
+- [x] Step 1: 写 `src/task/task_scheduler.h`
 
 ```cpp
 #pragma once
@@ -170,7 +170,7 @@ class TaskScheduler final : public plane::core::IModule, public TaskStateProvide
 }  // namespace plane::task
 ```
 
-- [ ] Step 2: 写 `src/task/task_scheduler.cpp`
+- [x] Step 2: 写 `src/task/task_scheduler.cpp`
 
 ```cpp
 #include "task/task_scheduler.h"
@@ -404,13 +404,13 @@ void TaskScheduler::report_error(const std::string& detail) const {
 }  // namespace plane::task
 ```
 
-- [ ] Step 3: `CMakeLists.txt` 的 `add_executable(onboard ...)` 文件列表追加
+- [x] Step 3: `CMakeLists.txt` 的 `add_executable(onboard ...)` 文件列表追加
 
 ```cmake
   src/task/task_scheduler.cpp
 ```
 
-- [ ] Step 4: 构建与格式
+- [x] Step 4: 构建与格式
 
 ```bash
 cmake --build build -j
@@ -419,7 +419,7 @@ clang-format --dry-run --Werror src/task/task_scheduler.h src/task/task_schedule
 
 Expected: 构建通过且无 warning；格式通过（差异先 `clang-format -i` 再构建）。
 
-- [ ] Step 5: 提交
+- [x] Step 5: 提交
 
 ```bash
 git add src/task/task_scheduler.h src/task/task_scheduler.cpp CMakeLists.txt
@@ -438,7 +438,7 @@ git commit -m "feat(m4): 增加 TaskScheduler 控制仲裁"
 
 - 保证 `communication.task_info` / `communication.command` 仅由 `senderId == station_id` 产生
 
-- [ ] Step 1: `handle_envelope()` 开头、station seen 判断之后插入
+- [x] Step 1: `handle_envelope()` 开头、station seen 判断之后插入
 
 ```cpp
     if ((envelope.type == plane::model::MessageType::TaskInfo ||
@@ -449,7 +449,7 @@ git commit -m "feat(m4): 增加 TaskScheduler 控制仲裁"
     }
 ```
 
-- [ ] Step 2: 构建、格式与提交
+- [x] Step 2: 构建、格式与提交
 
 ```bash
 cmake --build build -j
@@ -470,7 +470,7 @@ git commit -m "feat(m4): 通信边界拒绝非地面站控制消息"
 
 - Produces: `--no-command`、`--no-task`、`--task-action`、`--command-type`、`--takeoff-height`
 
-- [ ] Step 1: `Options` 增加字段
+- [x] Step 1: `Options` 增加字段
 
 ```cpp
     bool send_task = true;
@@ -480,7 +480,7 @@ git commit -m "feat(m4): 通信边界拒绝非地面站控制消息"
     float takeoff_height_m = 0.0F;
 ```
 
-- [ ] Step 2: 参数解析追加
+- [x] Step 2: 参数解析追加
 
 ```cpp
         } else if (arg == "--no-command") {
@@ -495,7 +495,7 @@ git commit -m "feat(m4): 通信边界拒绝非地面站控制消息"
             options.takeoff_height_m = std::stof(argv[++i]);
 ```
 
-- [ ] Step 3: 发送与等待逻辑改为可选
+- [x] Step 3: 发送与等待逻辑改为可选
 
 将现有「构造 task_payload/TaskInfo、command_payload/Command、顺序等待两个 Ack」的代码块替换为：
 
@@ -532,7 +532,7 @@ git commit -m "feat(m4): 通信边界拒绝非地面站控制消息"
 
 （删除原有 task_payload/task_id/command_payload/command_id 与合并等待块。）
 
-- [ ] Step 4: 构建、格式与提交
+- [x] Step 4: 构建、格式与提交
 
 ```bash
 cmake --build build -j
@@ -555,7 +555,7 @@ git commit -m "feat(m4): gcs_sim 支持调度联调选项"
 
 - 两阶段接线：Scheduler 先构造（无 Communication），Communication 以 Scheduler 为 provider，再 `set_communication`
 
-- [ ] Step 1: 删除 `src/task/task_state_provider.h` 中的 `NoTaskStateProvider` 类
+- [x] Step 1: 删除 `src/task/task_state_provider.h` 中的 `NoTaskStateProvider` 类
 
 文件最终保留：
 
@@ -577,7 +577,7 @@ class TaskStateProvider {
 }  // namespace plane::task
 ```
 
-- [ ] Step 2: `src/main.cpp` include 追加
+- [x] Step 2: `src/main.cpp` include 追加
 
 ```cpp
 #include "task/task_scheduler.h"
@@ -585,7 +585,7 @@ class TaskStateProvider {
 
 并移除 `NoTaskStateProvider` 的 include/使用。
 
-- [ ] Step 3: 模块注册块改为
+- [x] Step 3: 模块注册块改为
 
 ```cpp
     auto state_store = std::make_unique<plane::state::StateStore>(event_bus, config);
@@ -608,7 +608,7 @@ class TaskStateProvider {
     }
 ```
 
-- [ ] Step 4: 构建、运行与格式
+- [x] Step 4: 构建、运行与格式
 
 ```bash
 cmake --build build -j
@@ -618,7 +618,7 @@ clang-format --dry-run --Werror src/main.cpp
 
 Expected: 构建通过；日志中 `Task Scheduler` 为真实模块（非占位）；exit=0。
 
-- [ ] Step 5: 提交
+- [x] Step 5: 提交
 
 ```bash
 git add src/main.cpp src/task/task_state_provider.h
@@ -634,7 +634,7 @@ git commit -m "feat(m4): 接线 TaskScheduler 并移除 NoTaskStateProvider"
 - Modify: `docs/plans/m4-task-scheduler-tasks.md`
 - Modify: `docs/DEV_PLAN.md`
 
-- [ ] Step 1: 干净构建
+- [x] Step 1: 干净构建
 
 ```bash
 rm -rf build logs
@@ -642,7 +642,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
-- [ ] Step 2: 任务接收与 Pending 上报
+- [x] Step 2: 任务接收与 Pending 上报
 
 终端 A：`./build/onboard`
 
@@ -653,7 +653,7 @@ Expected：
 - onboard 日志 `执行引擎未接入，任务保持 Pending: taskId=task-1`；
 - gcs_sim 周期 `TaskState` 显示 `status=Pending`（行为树/节点为空）。
 
-- [ ] Step 3: 指令替换任务 + 派发失败告警
+- [x] Step 3: 指令替换任务 + 派发失败告警
 
 终端 B：`./build/gcs_sim --listen-seconds 3`
 
@@ -663,13 +663,13 @@ Expected：
 - gcs_sim 收到 `Alert`（payload `type=command_dispatch_failed`）并回 Ack；
 - gcs_sim 周期 `TaskState` 为 `status=None`（独立指令不产生任务状态）。
 
-- [ ] Step 4: 补安全高度
+- [x] Step 4: 补安全高度
 
 终端 B：`./build/gcs_sim --no-task --command-type Takeoff --takeoff-height 0 --listen-seconds 2`
 
 Expected：onboard 日志 `Takeoff 未指定高度，使用安全高度: 30 m`，随后派发失败告警。
 
-- [ ] Step 5: 任务中止
+- [x] Step 5: 任务中止
 
 终端 B（两次运行间保持 onboard 运行）：
 
@@ -680,7 +680,7 @@ Expected：onboard 日志 `Takeoff 未指定高度，使用安全高度: 30 m`�
 
 Expected：onboard 日志 `任务中止: taskId=task-1`；gcs_sim `TaskState` 回到 `status=None`。
 
-- [ ] Step 6: 边界拒绝
+- [x] Step 6: 边界拒绝
 
 终端 B（sender-id 非 gcs）：
 
@@ -690,7 +690,7 @@ Expected：onboard 日志 `任务中止: taskId=task-1`；gcs_sim `TaskState` �
 
 Expected：onboard 日志 `拒绝非地面站控制消息: senderId=uav2`，无仲裁行为与告警。
 
-- [ ] Step 7: 规范与回归
+- [x] Step 7: 规范与回归
 
 ```bash
 clang-format --dry-run --Werror $(git ls-files src tools)
@@ -699,7 +699,7 @@ grep -rn "std::cout\|printf(" src/ tools/ || echo "no cout/printf"
 
 Expected：格式通过、无 cout/printf；M1/M2/M3 行为正常（Ack、状态上报、飞控连接日志）。
 
-- [ ] Step 8: 文档与收尾提交
+- [x] Step 8: 文档与收尾提交
 
 - 勾选本文档并记录验收证据与偏差；
 - 更新 `docs/DEV_PLAN.md` §11 索引：M4 状态 → 已完成（部分验收，SITL 待验）。
@@ -717,3 +717,18 @@ git commit -m "docs(m4): M4 部分验收与文档更新"
 2. 执行中下发新指令/新任务：旧内容被终止、新内容立即执行；
 3. Takeoff 未指定高度时使用安全高度；
 4. NED Velocity 不在 M4（M10 由任务逻辑产生）。
+
+---
+
+## 执行记录与偏差
+
+1. **构造循环依赖处理**：Scheduler 需要 CommunicationApi（告警），Communication 需要 TaskStateProvider（Scheduler 实现）。采用两阶段接线：Scheduler 先构造（`engine=nullptr`），Communication 以其为 provider，再 `set_communication`。与设计的接口语义一致，仅为构造顺序调整。
+2. **验收证据（2026-09-18，无 SITL）**
+   - 任务 Pending：`--no-command` 时 gcs_sim 周期 `TaskState status=Pending`，onboard 日志 `执行引擎未接入，任务保持 Pending: taskId=task-1`；
+   - 指令替换 + 告警：`任务被独立指令替换: taskId=task-1`、`指令派发失败: cmd-1 (飞控未连接)`，gcs_sim 收到 `Alert`，随后 `TaskState status=None`（独立指令不产生任务状态）；
+   - 安全高度：`--no-task --command-type Takeoff --takeoff-height 0` → `Takeoff 未指定高度，使用安全高度: 30 m`；
+   - 任务中止：Stop 后 onboard `任务中止: taskId=task-1`，gcs_sim `TaskState status=None`；
+   - 边界拒绝：`--sender-id uav2` → onboard `拒绝非地面站控制消息: senderId=uav2`，gcs_sim 未收到 Ack（`TaskInfo=false, Command=false`）；
+   - 回归：M1 Ack、M2 状态上报、M3 飞控连接日志均正常。
+3. `clang-format --dry-run --Werror $(git ls-files src tools)` 通过；无 `std::cout/printf`。
+4. 任务终态按已确认口径立即回到无任务，终态仅日志/事件可见。
