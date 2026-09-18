@@ -417,6 +417,8 @@ M3、M6、M9 与主线可并行；M10 必须最后。
 | `plans/m8-video-streaming-tasks.md` | M8 任务级计划与执行记录 | 已完成（部分验收，实流待验） |
 | `plans/m9-state-monitor-design.md` | M9 Change Design（安全告警与系统参数） | 已确认并实施 |
 | `plans/m9-state-monitor-tasks.md` | M9 任务级计划与执行记录 | 已完成（部分验收，告警待 SITL） |
+| `plans/m10-suicide-mission-design.md` | M10 Change Design（自杀式反无任务全链路） | 已确认（2026-09-18），实施中 |
+| `plans/m10-suicide-mission-tasks.md` | M10 任务级计划与执行记录 | 执行中 |
 
 约定：
 

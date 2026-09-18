@@ -666,6 +666,10 @@ Perception 对外提供业务级 Tracking / Guidance 控制能力。
 
 Detection / Tracking / Guidance 结果也通过 eventcpp 向相关模块发布。
 
+导引阶段的飞控控制下发：Perception 在导引启用且跟踪有效时，将 Guidance Plugin 输出的
+NedVelocity 通过 FlightControlApi::set_ned_velocity 同步直连下发并获取下发结果（ADR-018）。
+启停仍由 Task Execution Engine 经 PerceptionApi 控制；导引停止或任务中止时调用 clear_ned_velocity。
+
 ---
 
 # 16. Target Management
@@ -949,6 +953,7 @@ Geographic Tool 作为系统内部统一地理计算能力。
 | 状态变化 | eventcpp |
 | 异步执行结果 | eventcpp |
 | 异步控制请求 | eventcpp |
+| 下发飞控指令（含导引速度） | C++ 同步调用 FlightControl，必须获取下发结果 |
 | GCS ↔ UAV | Zenoh |
 | UAV ↔ UAV | Zenoh |
 
@@ -1020,6 +1025,10 @@ Business A
 形成循环依赖。
 
 Task Scheduler 可以向 Flight Control 派发独立 Command。
+
+Perception 仅在下发导引速度时直连 Flight Control（ADR-018）。
+
+统一原则：业务模块下发飞控指令必须采用同步调用并获取结果，不得以「事件发布」代替直连下发。
 
 Task Execution Engine 可以调用 Flight Control、UAV State Management、Perception、Target Management。
 
@@ -1941,6 +1950,40 @@ Target Management 为每个 GCS Target 保留最近 20 条历史记录。
 - `DetectTarget` 暂不携带时间戳，后续如需再扩展；
 - `TaskState` 与 `VehicleState` 同时包含行为树/节点字段，存在冗余，按需求接受。
 - `Message` 增加 `senderId`，用于 Ack 路由与消息来源标识。
+
+---
+
+## ADR-018：业务模块下发飞控指令采用同步直连
+
+### Context
+
+导引阶段需要将 Guidance Plugin 输出的 NED 速度持续下发给飞控，并立即知道本次下发是否被飞控接受；
+事件发布方式无法让下发方获得成功/失败结果。
+
+### Decision
+
+- 下发飞控指令统一采用 C++ 同步能力调用（`FlightControlApi`），调用方必须获取并处理 `bool + error` 结果；
+- Perception 被允许在导引启用且跟踪有效时直连 FlightControl 下发 NED 速度（仅此一项能力），
+  并在停止导引/任务中止时调用 `clear_ned_velocity()`；
+- 启停与阶段控制仍由 Task Execution Engine（经 `PerceptionApi`）负责，Perception 不承担任务编排。
+
+### Alternatives
+
+- 保持仅事件发布（`perception.guidance`），由任务执行层消费后再下发；
+- 新增独立桥接模块转发事件到飞控。
+
+### Rationale
+
+- 下发方需要拿到下发结果，才能对失败做出业务反应（日志、事件、任务失败判定），
+  符合 SPEC §5.8「不能仅以指令已发送成功为准」的精神；
+- 避免为单一下发通路引入额外模块；
+- 阶段控制留在任务执行层，Perception 只承担「算法输出 → 下发」的窄职责。
+
+### Consequences
+
+- Perception 依赖 `FlightControlApi`（稳定能力接口），不是实现依赖；不产生循环依赖；
+- 依赖方向图中新增 Perception → Flight Control（仅导引速度）；
+- 后续任何模块下发飞控指令，均需同步直连并获得结果，不再新增事件式下发通路。
 
 ---
 
