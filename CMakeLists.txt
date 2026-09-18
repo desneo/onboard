@@ -30,6 +30,12 @@ add_executable(onboard
   src/state/state_store.cpp
   src/flight_control/flight_control_module.cpp
   src/task/task_scheduler.cpp
+  src/task/nodes/arm_node.cpp
+  src/task/nodes/takeoff_node.cpp
+  src/task/nodes/land_node.cpp
+  src/task/nodes/rtl_node.cpp
+  src/task/nodes/hover_node.cpp
+  src/task/nodes/stop_motor_node.cpp
 )
 target_include_directories(onboard PRIVATE src)
 target_compile_options(onboard PRIVATE -Wall -Wextra)
