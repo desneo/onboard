@@ -1902,7 +1902,7 @@ git commit -m "docs(m10): M10 部分验收与文档更新"
 | 提交 | 内容 |
 |---|---|
 | `e1684f8` | refactor(m10): taskCode 改为枚举 TaskCode::AntiUav（onboard 侧） |
-| 待提交 | common 仓库 `common_include/message.h`（common 为独立仓库，当前未提交） |
+| `8ad0052` | feat(common): TaskInfo.taskCode 改为 TaskCode 枚举（common 仓库） |
 
 ### 验证证据（2026-09-18）
 
@@ -1915,4 +1915,4 @@ git commit -m "docs(m10): M10 部分验收与文档更新"
 
 - 地面站需按 `"anti-uav"` 下发 `taskCode`；旧 `"suicide"`/`"basic_flight"` 不再被接受；
 - GCS 侧协议文档若引用旧值需同步；
-- common 仓库变更提交后，onboard 构建方可与其他仓库（GCS 等）对齐。
+- common 仓库变更已提交（`8ad0052`），onboard 与其他仓库（GCS 等）据此对齐。
