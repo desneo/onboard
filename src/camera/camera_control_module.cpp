@@ -15,6 +15,7 @@ std::string CameraControlModule::name() const { return "Camera Control"; }
 bool CameraControlModule::init() { return true; }
 
 bool CameraControlModule::start() {
+    stopped_ = false;
     std::string error;
     if (!connect(error)) {
         spdlog::error("相机链路自动建联失败: {}", error);
@@ -23,7 +24,13 @@ bool CameraControlModule::start() {
     return true;
 }
 
-void CameraControlModule::stop() { disconnect(); }
+void CameraControlModule::stop() {
+    if (stopped_) {
+        return;
+    }
+    stopped_ = true;
+    disconnect();
+}
 
 void CameraControlModule::release() {}
 

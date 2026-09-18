@@ -30,6 +30,7 @@ class CameraControlModule final : public plane::core::IModule, public CameraCont
     plane::core::EventBus& event_bus_;
     mutable std::mutex mutex_;
     CameraStatus status_;
+    bool stopped_ = false;
 };
 
 }  // namespace plane::camera
