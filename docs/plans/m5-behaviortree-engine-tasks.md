@@ -3,7 +3,7 @@
 > 设计依据：`m5-behaviortree-engine-design.md`（逐项确认；FlightControl 内部用 MAVSDK 枚举、上报转字符串；BT 三项参数配置化）。
 > 执行位置：工程根 `onboard/`。
 > 验证原则：每个 Task 结束后 x64 Release 构建通过；不写测试代码（SPEC §11）。
-> SITL 不可用：Task 6 为部分验收，basic_flight 完整执行与替换/中止待 SITL。
+> 状态：已完成并部分验收（2026-09-18）；basic_flight 完整执行与替换/中止待 SITL。
 
 ---
 
@@ -15,7 +15,7 @@
 - Modify: `src/core/config.cpp`
 - Modify: `config/onboard.conf`
 
-- [ ] Step 1: `src/core/config.h` 的 `AppConfig` 中，在 `fc_route_speed_m_s` 之后追加
+- [x] Step 1: `src/core/config.h` 的 `AppConfig` 中，在 `fc_route_speed_m_s` 之后追加
 
 ```cpp
     int bt_tick_interval_ms = 50;
@@ -23,7 +23,7 @@
     double bt_takeoff_tolerance_m = 1.0;
 ```
 
-- [ ] Step 2: `src/core/config.cpp` 解析分支中，在 `fc_route_speed_m_s` 分支之后追加
+- [x] Step 2: `src/core/config.cpp` 解析分支中，在 `fc_route_speed_m_s` 分支之后追加
 
 ```cpp
         } else if (key == "bt_tick_interval_ms") {
@@ -34,7 +34,7 @@
             out.bt_takeoff_tolerance_m = std::stod(value);
 ```
 
-- [ ] Step 3: `config/onboard.conf` 末尾追加
+- [x] Step 3: `config/onboard.conf` 末尾追加
 
 ```text
 # 行为树执行参数
@@ -43,7 +43,7 @@ bt_node_timeout_ms = 30000
 bt_takeoff_tolerance_m = 1.0
 ```
 
-- [ ] Step 4: 构建、运行与提交
+- [x] Step 4: 构建、运行与提交
 
 ```bash
 cmake --build build -j
@@ -69,7 +69,7 @@ Expected: 构建通过；运行无「未知配置项」警告，exit=0。
 
 - Produces: `FlightStatus{armed, in_air, mission_current, mission_total, takeoff_altitude_m}` 与 `flight_status()`
 
-- [ ] Step 1: `flight_control_api.h` 在 `FlightControlApi` 之前追加
+- [x] Step 1: `flight_control_api.h` 在 `FlightControlApi` 之前追加
 
 ```cpp
 /// 飞控运行状态快照；模块内部使用 MAVSDK 枚举，对外只暴露基础字段。
@@ -88,7 +88,7 @@ struct FlightStatus {
     virtual plane::flight_control::FlightStatus flight_status() const = 0;
 ```
 
-- [ ] Step 2: `flight_control_module.h` 修改
+- [x] Step 2: `flight_control_module.h` 修改
 
 1) `TelemetryCache` 中把 `std::string flight_mode;` 改为：
 
@@ -112,7 +112,7 @@ struct FlightStatus {
     plane::flight_control::FlightStatus flight_status() const override;
 ```
 
-- [ ] Step 3: `flight_control_module.cpp` 修改
+- [x] Step 3: `flight_control_module.cpp` 修改
 
 1) `subscribe_flight_mode` 回调改为直接存枚举：
 
@@ -183,7 +183,7 @@ plane::flight_control::FlightStatus FlightControlModule::flight_status() const {
 }
 ```
 
-- [ ] Step 4: 构建、格式与提交
+- [x] Step 4: 构建、格式与提交
 
 ```bash
 cmake --build build -j
@@ -210,7 +210,7 @@ Expected: 构建通过，运行正常退出 exit=0（飞控仍不可用，不影
 - Create: `src/task/nodes/stop_motor_node.h/.cpp`
 - Modify: `CMakeLists.txt`
 
-- [ ] Step 1: 写 `src/task/nodes/flight_action_node.h`
+- [x] Step 1: 写 `src/task/nodes/flight_action_node.h`
 
 ```cpp
 #pragma once
@@ -283,7 +283,7 @@ class FlightActionNode : public BT::StatefulActionNode {
 }  // namespace plane::task
 ```
 
-- [ ] Step 2: 写六个节点（`.h` 结构一致，仅类名不同）
+- [x] Step 2: 写六个节点（`.h` 结构一致，仅类名不同）
 
 `arm_node.h`：
 
@@ -428,7 +428,7 @@ BT::NodeStatus StopMotorNode::check() {
 }  // namespace plane::task
 ```
 
-- [ ] Step 3: `CMakeLists.txt` 的 `add_executable(onboard ...)` 文件列表追加
+- [x] Step 3: `CMakeLists.txt` 的 `add_executable(onboard ...)` 文件列表追加
 
 ```cmake
   src/task/nodes/arm_node.cpp
@@ -439,7 +439,7 @@ BT::NodeStatus StopMotorNode::check() {
   src/task/nodes/stop_motor_node.cpp
 ```
 
-- [ ] Step 4: 构建与格式
+- [x] Step 4: 构建与格式
 
 ```bash
 cmake --build build -j
@@ -448,7 +448,7 @@ clang-format --dry-run --Werror $(git ls-files src/task/nodes)
 
 Expected: 构建通过且无 warning；格式通过（差异先 `clang-format -i` 再构建）。
 
-- [ ] Step 5: 提交
+- [x] Step 5: 提交
 
 ```bash
 git add src/task/nodes CMakeLists.txt
@@ -470,7 +470,7 @@ git commit -m "feat(m5): 增加基础指令动作节点库"
 - Consumes: 节点库（Task 3）、`FlightStatus`（Task 2）、配置（Task 1）、M4 的 `TaskExecutionEngineApi`/事件
 - Produces: `plane::task::TaskExecutionEngine`（`IModule` + `TaskExecutionEngineApi`）
 
-- [ ] Step 1: 写 `src/task/task_execution_engine.h`
+- [x] Step 1: 写 `src/task/task_execution_engine.h`
 
 ```cpp
 #pragma once
@@ -531,7 +531,7 @@ class TaskExecutionEngine final : public plane::core::IModule, public TaskExecut
 }  // namespace plane::task
 ```
 
-- [ ] Step 2: 写 `src/task/task_execution_engine.cpp`
+- [x] Step 2: 写 `src/task/task_execution_engine.cpp`
 
 ```cpp
 #include "task/task_execution_engine.h"
@@ -678,8 +678,8 @@ void TaskExecutionEngine::tick_loop() {
                 exception_text = e.what();
             }
             if (!exception_thrown && !tree_.subtrees.empty() && tree_.subtrees.front()->blackboard) {
-                tree_.subtrees.front()->blackboard->get("current_node", node);
-                if (!node.empty() && node != current_node_) {
+                const bool has_node = tree_.subtrees.front()->blackboard->get("current_node", node);
+                if (has_node && !node.empty() && node != current_node_) {
                     current_node_ = node;
                     changed = true;
                 }
@@ -725,13 +725,13 @@ void TaskExecutionEngine::finish(plane::model::TaskStatus status, const std::str
 }  // namespace plane::task
 ```
 
-- [ ] Step 3: `CMakeLists.txt` 的 `add_executable(onboard ...)` 文件列表追加
+- [x] Step 3: `CMakeLists.txt` 的 `add_executable(onboard ...)` 文件列表追加
 
 ```cmake
   src/task/task_execution_engine.cpp
 ```
 
-- [ ] Step 4: 构建与格式
+- [x] Step 4: 构建与格式
 
 ```bash
 cmake --build build -j
@@ -741,7 +741,7 @@ clang-format --dry-run --Werror src/task/task_execution_engine.h src/task/task_e
 Expected: 构建通过且无 warning；格式通过（差异先 `clang-format -i` 再构建）。
 若 `registerNodeType` 的 ExtraArgs 形式编译失败，回退为显式 PortsList：`factory.registerNodeType<ArmNode>("Arm", ArmNode::providedPorts(), &flight_control_, &state_store_, &config_);`（其余节点同理）；若指针参数仍不兼容，改用 `std::ref` 包装。修正后在报告说明。
 
-- [ ] Step 5: 提交
+- [x] Step 5: 提交
 
 ```bash
 git add src/task/task_execution_engine.h src/task/task_execution_engine.cpp CMakeLists.txt
@@ -757,7 +757,7 @@ git commit -m "feat(m5): 增加 BehaviorTree 任务执行引擎"
 - Modify: `tools/gcs_sim/main.cpp`
 - Modify: `src/main.cpp`
 
-- [ ] Step 1: gcs_sim 增加 `--task-code`
+- [x] Step 1: gcs_sim 增加 `--task-code`
 
 `Options` 增加：
 
@@ -781,7 +781,7 @@ git add tools/gcs_sim/main.cpp
 git commit -m "feat(m5): gcs_sim 支持指定任务类型"
 ```
 
-- [ ] Step 2: `src/main.cpp` 接线
+- [x] Step 2: `src/main.cpp` 接线
 
 include 追加：
 
@@ -817,7 +817,7 @@ include 追加：
     }
 ```
 
-- [ ] Step 3: 构建、运行与格式
+- [x] Step 3: 构建、运行与格式
 
 ```bash
 cmake --build build -j
@@ -827,7 +827,7 @@ clang-format --dry-run --Werror src/main.cpp
 
 Expected: 构建通过；Task Execution Engine 为真实模块，exit=0。
 
-- [ ] Step 4: 提交
+- [x] Step 4: 提交
 
 ```bash
 git add src/main.cpp
@@ -843,7 +843,7 @@ git commit -m "feat(m5): 接线 TaskExecutionEngine"
 - Modify: `docs/plans/m5-behaviortree-engine-tasks.md`
 - Modify: `docs/DEV_PLAN.md`
 
-- [ ] Step 1: 干净构建
+- [x] Step 1: 干净构建
 
 ```bash
 rm -rf build logs
@@ -851,7 +851,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
-- [ ] Step 2: basic_flight 失败链路
+- [x] Step 2: basic_flight 失败链路
 
 终端 A：`./build/onboard`
 
@@ -870,7 +870,7 @@ Expected（onboard 日志）：
 - `任务结束: taskId=task-1, status=Failed`（Scheduler 日志）；
 - gcs_sim `TaskState`：短暂 InProgress 或直接 None（立即回无任务）。
 
-- [ ] Step 3: 未知任务类型
+- [x] Step 3: 未知任务类型
 
 终端 B：
 
@@ -880,7 +880,7 @@ Expected（onboard 日志）：
 
 Expected：onboard 日志 `任务启动失败: 未知任务类型: suicide`；gcs_sim `TaskState status=None`。
 
-- [ ] Step 4: 规范与回归
+- [x] Step 4: 规范与回归
 
 ```bash
 clang-format --dry-run --Werror $(git ls-files src tools)
@@ -889,7 +889,7 @@ grep -rn "std::cout\|printf(" src/ tools/ || echo "no cout/printf"
 
 Expected：格式通过、无 cout/printf；M1–M4 行为正常。
 
-- [ ] Step 5: 文档与收尾提交
+- [x] Step 5: 文档与收尾提交
 
 - 勾选本文档并记录验收证据与偏差；
 - 更新 `docs/DEV_PLAN.md` §11 索引：M5 → 已完成（部分验收，SITL 待验）。
@@ -907,3 +907,15 @@ git commit -m "docs(m5): M5 部分验收与文档更新"
 2. 执行中下发新任务/新指令：`haltTree` 后旧任务终止、新内容执行，`TaskState` 期间上报 InProgress+树/节点；
 3. 节点超时（`bt_node_timeout_ms`）触发任务 Failed；
 4. `bt_tick_interval_ms` 调整后的 tick 频率影响。
+
+---
+
+## 执行记录与偏差
+
+1. **`[[nodiscard]]` 最小修正**：BT.CPP 4.10 的 `Blackboard::get` 带 `[[nodiscard]]`；`task_execution_engine.cpp` 中改为 `const bool has_node = ...` 接收返回值（已同步回本计划 Task 4 代码）。
+2. **验收证据（2026-09-18，无 SITL）**
+   - A（`--task-code basic_flight`）：onboard 日志 `行为树已创建: basic_flight, taskId=task-1` → `任务执行进度: basic_flight / Arm` → `节点 Arm 分发失败: 飞控未连接` → `行为树结束: status=Failed` 与 Scheduler `任务结束: status=Failed`；gcs_sim `TaskState status=None`（终态立即回无任务）；
+   - B（默认 `taskCode=suicide`）：onboard `任务启动失败: 未知任务类型: suicide`，`TaskState status=None`；
+   - 回归：TaskInfo/Command Ack、状态上报、飞控连接日志正常。
+3. **偏差**：Task 4 首编译因 `[[nodiscard]]` 触发 -Wunused-result，按计划回退条款做最小修正（非设计变更）；其余仅 clang-format 排版。
+4. **SITL 待验**：basic_flight 完整执行（Arm→Takeoff→Land 以实际状态判定）、执行中替换/中止、节点超时。
