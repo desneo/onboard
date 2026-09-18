@@ -91,6 +91,18 @@ bool load_config(const std::string& path, AppConfig& out) {
             out.perception_process_interval_ms = std::stoi(value);
         } else if (key == "perception_selftest_on_start") {
             out.perception_selftest_on_start = (value == "true" || value == "1");
+        } else if (key == "rtsp_port") {
+            out.rtsp_port = std::stoi(value);
+        } else if (key == "rtsp_app") {
+            out.rtsp_app = value;
+        } else if (key == "rtsp_stream") {
+            out.rtsp_stream = value;
+        } else if (key == "video_fps") {
+            out.video_fps = std::stoi(value);
+        } else if (key == "video_bitrate_kbps") {
+            out.video_bitrate_kbps = std::stoi(value);
+        } else if (key == "video_overlay_enabled") {
+            out.video_overlay_enabled = (value == "true" || value == "1");
         } else {
             spdlog::warn("未知配置项: {}", key);
         }

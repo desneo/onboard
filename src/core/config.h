@@ -38,6 +38,13 @@ struct AppConfig {
     int image_reconnect_interval_ms = 2000;
     int perception_process_interval_ms = 100;
     bool perception_selftest_on_start = false;
+
+    int rtsp_port = 8554;
+    std::string rtsp_app = "live";
+    std::string rtsp_stream = "onboard";
+    int video_fps = 25;
+    int video_bitrate_kbps = 2000;
+    bool video_overlay_enabled = true;
 };
 
 /// 从 key = value 文本文件加载配置；文件不存在时保留默认值并返回 false。
