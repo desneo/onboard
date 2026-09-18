@@ -235,7 +235,8 @@ int main(int argc, char** argv) {
             continue;
         }
         nlohmann::json payload = nlohmann::json::object();
-        payload[key] = numeric;
+        const std::string wire_key = (key == "safe_height_m") ? "safeHeight_m" : key;
+        payload[wire_key] = numeric;
         const std::string message_id = options.sender_id + "-param-" + std::to_string(++sequence);
         session.put(zenoh::KeyExpr("sendToPlane/" + options.plane_id),
                     zenoh::Bytes(build_wire(options.sender_id, message_id, "SystemParam", payload.dump())));
