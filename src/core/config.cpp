@@ -81,6 +81,16 @@ bool load_config(const std::string& path, AppConfig& out) {
             out.bt_node_timeout_ms = std::stoi(value);
         } else if (key == "bt_takeoff_tolerance_m") {
             out.bt_takeoff_tolerance_m = std::stod(value);
+        } else if (key == "plugins_dir") {
+            out.plugins_dir = value;
+        } else if (key == "image_source") {
+            out.image_source = value;
+        } else if (key == "image_reconnect_interval_ms") {
+            out.image_reconnect_interval_ms = std::stoi(value);
+        } else if (key == "perception_process_interval_ms") {
+            out.perception_process_interval_ms = std::stoi(value);
+        } else if (key == "perception_selftest_on_start") {
+            out.perception_selftest_on_start = (value == "true" || value == "1");
         } else {
             spdlog::warn("未知配置项: {}", key);
         }

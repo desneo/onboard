@@ -32,6 +32,12 @@ struct AppConfig {
     int bt_tick_interval_ms = 50;
     int bt_node_timeout_ms = 30000;
     double bt_takeoff_tolerance_m = 1.0;
+
+    std::string plugins_dir = "build/plugins";
+    std::string image_source;
+    int image_reconnect_interval_ms = 2000;
+    int perception_process_interval_ms = 100;
+    bool perception_selftest_on_start = false;
 };
 
 /// 从 key = value 文本文件加载配置；文件不存在时保留默认值并返回 false。
