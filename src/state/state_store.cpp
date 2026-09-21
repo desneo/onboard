@@ -88,7 +88,7 @@ void StateStore::update_peer_state(const plane::model::VehicleState& state) {
         std::lock_guard<std::mutex> lock(mutex_);
         peers_[state.planeId] = state;
     }
-    spdlog::info("他机状态更新: {}", state.planeId);
+    SPDLOG_INFO("他机状态更新: {}", state.planeId);
     event_bus_.publish(events::kPeerStateChanged, state);
 }
 
@@ -109,7 +109,7 @@ void StateStore::notify_station_seen() {
             link.connected = gcs_connected_;
             link.last_seen_ms = gcs_last_seen_ms_;
         }
-        spdlog::info("地面站链路: connected=true");
+        SPDLOG_INFO("地面站链路: connected=true");
         event_bus_.publish(events::kGcsLinkChanged, link);
     }
 }
@@ -129,7 +129,7 @@ void StateStore::tick_loop() {
             link.last_seen_ms = gcs_last_seen_ms_;
         }
         if (became_disconnected) {
-            spdlog::info("地面站链路: connected=false");
+            SPDLOG_INFO("地面站链路: connected=false");
             event_bus_.publish(events::kGcsLinkChanged, link);
         }
     }

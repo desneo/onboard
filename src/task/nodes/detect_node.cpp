@@ -40,7 +40,7 @@ bool DetectNode::dispatch(std::string& error) {
     if (!perception_->start_detection(error)) {
         return false;
     }
-    spdlog::info("目标检测已启动");
+    SPDLOG_INFO("目标检测已启动");
     return true;
 }
 
@@ -49,7 +49,7 @@ BT::NodeStatus DetectNode::check() {
     if (controller_.resolve_target(context_->targetTrackId, gcs_target)) {
         std::string approach_error;
         if (!controller_.approach(gcs_target, app_config_->suicide_approach_speed_m_s, approach_error)) {
-            spdlog::error("检测阶段逼近速度下发失败: {}", approach_error);
+            SPDLOG_ERROR("检测阶段逼近速度下发失败: {}", approach_error);
             return BT::NodeStatus::FAILURE;
         }
     }
@@ -63,10 +63,10 @@ BT::NodeStatus DetectNode::check() {
         select_target(targets, has_frame ? &frame : nullptr, app_config_->suicide_target_select_rule);
     std::string error;
     if (!perception_->select_target(selected, error)) {
-        spdlog::error("建立跟踪失败: {}", error);
+        SPDLOG_ERROR("建立跟踪失败: {}", error);
         return BT::NodeStatus::FAILURE;
     }
-    spdlog::info("已选定跟踪目标: type={}, confidence={:.2f}", selected.type, selected.confidence);
+    SPDLOG_INFO("已选定跟踪目标: type={}, confidence={:.2f}", selected.type, selected.confidence);
     return BT::NodeStatus::SUCCESS;
 }
 

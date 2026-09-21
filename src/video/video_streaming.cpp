@@ -30,7 +30,7 @@ bool VideoStreaming::init() { return true; }
 bool VideoStreaming::start() {
     std::string error;
     if (!start_stream(error)) {
-        spdlog::error("推流启动失败: {}", error);
+        SPDLOG_ERROR("推流启动失败: {}", error);
         return false;
     }
     return true;
@@ -52,7 +52,7 @@ bool VideoStreaming::start_stream(std::string& error) {
         stream_running_ = true;
     }
     worker_ = std::thread([this]() { worker_loop(); });
-    spdlog::info("推流已启动: rtsp://<ip>:{} /{}/{}", config_.rtsp_port, config_.rtsp_app, config_.rtsp_stream);
+    SPDLOG_INFO("推流已启动: rtsp://<ip>:{} /{}/{}", config_.rtsp_port, config_.rtsp_app, config_.rtsp_stream);
     return true;
 }
 
@@ -69,7 +69,7 @@ void VideoStreaming::stop_stream() {
         worker_.join();
     }
     server_.close();
-    spdlog::info("推流已停止");
+    SPDLOG_INFO("推流已停止");
 }
 
 bool VideoStreaming::push_frame(const cv::Mat& frame, const VideoOverlay& overlay, std::string&) {
@@ -109,7 +109,7 @@ void VideoStreaming::worker_loop() {
         last_encode_ms_ = now_ms();
         std::string error;
         if (!encode_and_send(frame, overlay, error)) {
-            spdlog::warn("推流编码/发送失败: {}", error);
+            SPDLOG_WARN("推流编码/发送失败: {}", error);
         }
     }
 }
@@ -151,7 +151,7 @@ bool VideoStreaming::encode_and_send(const cv::Mat& frame, const VideoOverlay& o
     }
     if (!first_frame_logged_) {
         first_frame_logged_ = true;
-        spdlog::info("推流首帧: {}x{}", canvas.cols, canvas.rows);
+        SPDLOG_INFO("推流首帧: {}x{}", canvas.cols, canvas.rows);
     }
     ++frame_index_;
     return true;

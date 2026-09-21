@@ -15,7 +15,7 @@ std::int64_t clock_now_ms() {
 }  // namespace
 
 bool TrackNode::dispatch(std::string&) {
-    spdlog::info("单目标跟踪监视开始");
+    SPDLOG_INFO("单目标跟踪监视开始");
     return true;
 }
 
@@ -24,7 +24,7 @@ BT::NodeStatus TrackNode::check() {
     if (controller_.resolve_target(context_->targetTrackId, gcs_target)) {
         std::string error;
         if (!controller_.approach(gcs_target, app_config_->suicide_track_approach_speed_m_s, error)) {
-            spdlog::error("跟踪阶段逼近速度下发失败: {}", error);
+            SPDLOG_ERROR("跟踪阶段逼近速度下发失败: {}", error);
             return BT::NodeStatus::FAILURE;
         }
     }
@@ -35,7 +35,7 @@ BT::NodeStatus TrackNode::check() {
             lost_since_ms_ = now;
         }
         if (now - lost_since_ms_ >= app_config_->suicide_track_lost_timeout_ms) {
-            spdlog::error("跟踪未建立且超时");
+            SPDLOG_ERROR("跟踪未建立且超时");
             return BT::NodeStatus::FAILURE;
         }
         return BT::NodeStatus::RUNNING;
@@ -44,10 +44,10 @@ BT::NodeStatus TrackNode::check() {
         stable_since_ms_ = 0;
         if (lost_since_ms_ == 0) {
             lost_since_ms_ = now;
-            spdlog::warn("跟踪目标丢失，等待恢复");
+            SPDLOG_WARN("跟踪目标丢失，等待恢复");
         }
         if (now - lost_since_ms_ >= app_config_->suicide_track_lost_timeout_ms) {
-            spdlog::error("跟踪丢失超过 {} ms，任务失败", app_config_->suicide_track_lost_timeout_ms);
+            SPDLOG_ERROR("跟踪丢失超过 {} ms，任务失败", app_config_->suicide_track_lost_timeout_ms);
             return BT::NodeStatus::FAILURE;
         }
         return BT::NodeStatus::RUNNING;
@@ -57,7 +57,7 @@ BT::NodeStatus TrackNode::check() {
         stable_since_ms_ = now;
     }
     if (now - stable_since_ms_ >= app_config_->suicide_guidance_start_stable_ms) {
-        spdlog::info("跟踪稳定，进入导引阶段");
+        SPDLOG_INFO("跟踪稳定，进入导引阶段");
         return BT::NodeStatus::SUCCESS;
     }
     return BT::NodeStatus::RUNNING;

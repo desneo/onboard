@@ -18,7 +18,7 @@ bool CameraControlModule::start() {
     stopped_ = false;
     std::string error;
     if (!connect(error)) {
-        spdlog::error("相机链路自动建联失败: {}", error);
+        SPDLOG_ERROR("相机链路自动建联失败: {}", error);
         return false;
     }
     return true;
@@ -40,7 +40,7 @@ bool CameraControlModule::connect(std::string&) {
         status_.connected = true;
         status_.detail = "noop";
     }
-    spdlog::info("相机链路已建立 (Noop)");
+    SPDLOG_INFO("相机链路已建立 (Noop)");
     event_bus_.publish(events::kStatusChanged, status());
     return true;
 }
@@ -51,7 +51,7 @@ void CameraControlModule::disconnect() {
         status_.connected = false;
         status_.detail = "noop";
     }
-    spdlog::info("相机链路已断开 (Noop)");
+    SPDLOG_INFO("相机链路已断开 (Noop)");
     event_bus_.publish(events::kStatusChanged, status());
 }
 
@@ -61,7 +61,7 @@ CameraStatus CameraControlModule::status() const {
 }
 
 bool CameraControlModule::send_command(const std::string& command, std::string&) {
-    spdlog::info("相机指令 (Noop): {}", command);
+    SPDLOG_INFO("相机指令 (Noop): {}", command);
     return true;
 }
 

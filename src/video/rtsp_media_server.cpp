@@ -29,7 +29,7 @@ bool RtspMediaServer::init(int rtsp_port, std::string&) {
     mk_env_init2(2, 3, LOG_FILE, "logs/zlmediakit.log", 1, 0, ini.c_str(), 0, nullptr, nullptr);
     mk_set_log(50, 5);
     impl_->env_initialized = true;
-    spdlog::info("ZLMediaKit 环境已初始化: rtsp_port={}, 日志=logs/zlmediakit.log", rtsp_port);
+    SPDLOG_INFO("ZLMediaKit 环境已初始化: rtsp_port={}, 日志=logs/zlmediakit.log", rtsp_port);
     return true;
 }
 
@@ -59,8 +59,8 @@ bool RtspMediaServer::ensure_media(const std::string& app, const std::string& st
     impl_->width = width;
     impl_->height = height;
     impl_->fps = fps;
-    spdlog::info("RTSP 流已创建: rtsp://<ip>:<port>/{}/{} ({}x{}@{}fps, {}kbps)", app, stream, width, height, fps,
-                 bitrate_kbps);
+    SPDLOG_INFO("RTSP 流已创建: rtsp://<ip>:<port>/{}/{} ({}x{}@{}fps, {}kbps)", app, stream, width, height, fps,
+                bitrate_kbps);
     return true;
 }
 

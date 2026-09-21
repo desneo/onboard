@@ -50,26 +50,29 @@ int main(int argc, char** argv) {
     }
 
     plane::core::AppConfig config;
-    plane::core::load_config(config_path, config);
-
     plane::core::LogOptions log_options;
-    log_options.log_dir = config.log_dir;
     plane::core::init_logging(log_options);
 
+    plane::core::load_config(config_path, config);
+    if (!config.log_dir.empty() && config.log_dir != log_options.log_dir) {
+        log_options.log_dir = config.log_dir;
+        plane::core::shutdown_logging();
+        plane::core::init_logging(log_options);
+    }
+
     const plane::core::BuildInfo build_info = plane::core::current_build_info();
-    spdlog::info("onboard 启动: version={} git={} build={}", build_info.version, build_info.git_hash,
-                 build_info.build_type);
-    spdlog::info("配置: safe_height_m={} state_report_period_ms={}", config.system_param.safeHeight_m,
-                 config.state_report_period_ms);
+    SPDLOG_INFO("onboard 启动: version={} git={} build={}", build_info.version, build_info.git_hash,
+                build_info.build_type);
+    SPDLOG_INFO("配置: safe_height_m={} state_report_period_ms={}", config.system_param.safeHeight_m,
+                config.state_report_period_ms);
 
     plane::core::EventBus event_bus;
     event_bus.subscribe<plane::communication::CommunicationError>(
         plane::communication::events::kError,
-        [](const plane::communication::CommunicationError& error) { spdlog::error("通信错误事件: {}", error.detail); });
+        [](const plane::communication::CommunicationError& error) { SPDLOG_ERROR("通信错误事件: {}", error.detail); });
     event_bus.subscribe<plane::flight_control::FlightControlError>(
-        plane::flight_control::events::kError, [](const plane::flight_control::FlightControlError& error) {
-            spdlog::error("飞控错误事件: {}", error.detail);
-        });
+        plane::flight_control::events::kError,
+        [](const plane::flight_control::FlightControlError& error) { SPDLOG_ERROR("飞控错误事件: {}", error.detail); });
 
     auto state_store = std::make_unique<plane::state::StateStore>(event_bus, config);
     auto flight_control = std::make_unique<plane::flight_control::FlightControlModule>(event_bus, config, *state_store);
@@ -115,11 +118,11 @@ int main(int argc, char** argv) {
 
     std::signal(SIGINT, handle_stop_signal);
     std::signal(SIGTERM, handle_stop_signal);
-    spdlog::info("系统运行中，Ctrl+C 退出");
+    SPDLOG_INFO("系统运行中，Ctrl+C 退出");
     while (g_stop_requested == 0) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-    spdlog::info("收到退出信号，开始关闭");
+    SPDLOG_INFO("收到退出信号，开始关闭");
 
     runtime.shutdown();
 

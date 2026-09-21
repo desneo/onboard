@@ -24,7 +24,7 @@ class TrackingStub final : public TrackingPlugin {
                 lost_after_ = 0;
             }
         }
-        spdlog::info("TrackingStub init: model_path={}, lost_after={}", config_.model_path, lost_after_);
+        SPDLOG_INFO("TrackingStub init: model_path={}, lost_after={}", config_.model_path, lost_after_);
         return true;
     }
 

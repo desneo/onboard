@@ -19,7 +19,7 @@ class DetectionStub final : public DetectionPlugin {
         config_ = config;
         const char* mode = std::getenv("PLANE_STUB_DETECT");
         synthetic_center_ = (mode != nullptr && std::string(mode) == "center");
-        spdlog::info("DetectionStub init: model_path={}, synthetic_center={}", config_.model_path, synthetic_center_);
+        SPDLOG_INFO("DetectionStub init: model_path={}, synthetic_center={}", config_.model_path, synthetic_center_);
         return true;
     }
 

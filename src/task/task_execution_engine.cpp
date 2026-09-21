@@ -108,8 +108,8 @@ bool TaskExecutionEngine::start(const plane::model::TaskInfo& task, std::string&
     current_node_.clear();
     ticking_ = true;
     tick_thread_ = std::thread([this]() { tick_loop(); });
-    spdlog::info("行为树已创建: {}, taskId={}, taskCode={}", current_tree_name_, task.taskId,
-                 std::string(magic_enum::enum_name(task.taskCode)));
+    SPDLOG_INFO("行为树已创建: {}, taskId={}, taskCode={}", current_tree_name_, task.taskId,
+                std::string(magic_enum::enum_name(task.taskCode)));
     return true;
 }
 
@@ -134,7 +134,7 @@ void TaskExecutionEngine::halt_tree() {
         current_node_.clear();
     }
     if (had_tree) {
-        spdlog::info("任务中止，行为树已停止");
+        SPDLOG_INFO("任务中止，行为树已停止");
     }
 }
 
@@ -188,7 +188,7 @@ void TaskExecutionEngine::publish_progress(const std::string& node) {
     progress.currentBehaviorTree = current_tree_name_;
     progress.currentNode = node;
     event_bus_.publish(events::kExecutionProgress, progress);
-    spdlog::info("任务执行进度: {} / {}", current_tree_name_, node);
+    SPDLOG_INFO("任务执行进度: {} / {}", current_tree_name_, node);
 }
 
 void TaskExecutionEngine::finish(plane::model::TaskStatus status, const std::string& detail) {
@@ -198,8 +198,8 @@ void TaskExecutionEngine::finish(plane::model::TaskStatus status, const std::str
     result.status = status;
     result.detail = detail;
     event_bus_.publish(events::kEngineResult, result);
-    spdlog::info("行为树结束: {}, status={}, detail={}", current_tree_name_, std::string(magic_enum::enum_name(status)),
-                 detail);
+    SPDLOG_INFO("行为树结束: {}, status={}, detail={}", current_tree_name_, std::string(magic_enum::enum_name(status)),
+                detail);
 }
 
 void TaskExecutionEngine::cleanup_control() {

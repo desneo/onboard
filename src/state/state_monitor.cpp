@@ -52,10 +52,10 @@ void StateMonitor::on_own_state(const plane::model::VehicleState& state) {
     if (trigger) {
         const std::string detail =
             "voltage=" + std::to_string(voltage) + "V < threshold=" + std::to_string(threshold) + "V";
-        spdlog::warn("低电压告警: {}", detail);
+        SPDLOG_WARN("低电压告警: {}", detail);
         send_alert(detail);
     } else if (recovered) {
-        spdlog::info("电压恢复正常: {} V", voltage);
+        SPDLOG_INFO("电压恢复正常: {} V", voltage);
     }
 }
 
@@ -64,7 +64,7 @@ void StateMonitor::send_alert(const std::string& detail) {
     alert.type = "low_voltage";
     alert.detail = detail;
     if (!communication_.sendToStation(plane::communication::OutgoingMessage{alert})) {
-        spdlog::error("低电压告警发送失败: {}", detail);
+        SPDLOG_ERROR("低电压告警发送失败: {}", detail);
     }
 }
 

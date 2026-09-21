@@ -112,7 +112,7 @@ std::string send_typed(const zenoh::Session& session, const Options& options, co
     const std::string message_id = options.sender_id + "-" + std::to_string(sequence);
     const std::string topic = "sendToPlane/" + options.plane_id;
     session.put(zenoh::KeyExpr(topic), zenoh::Bytes(build_wire(options.sender_id, message_id, type, payload)));
-    spdlog::info("已发送 {}: messageId={}", type, message_id);
+    SPDLOG_INFO("已发送 {}: messageId={}", type, message_id);
     return message_id;
 }
 
@@ -134,7 +134,7 @@ int main(int argc, char** argv) {
     auto on_sample = [&](zenoh::Sample& sample) {
         Envelope envelope;
         if (!parse_envelope(sample.get_payload().as_string(), envelope)) {
-            spdlog::warn("收到无法解析的报文");
+            SPDLOG_WARN("收到无法解析的报文");
             return;
         }
         if (envelope.sender_id == options.sender_id) {
@@ -144,7 +144,7 @@ int main(int argc, char** argv) {
             const nlohmann::json payload = nlohmann::json::parse(envelope.payload, nullptr, false);
             if (!payload.is_discarded()) {
                 const nlohmann::json geo = payload.value("geoPos", nlohmann::json::object());
-                spdlog::info(
+                SPDLOG_INFO(
                     "收到 VehicleState: planeId={}, fcLinkState={}, flightMode={}, voltage={}, lat={}, lon={}, "
                     "height={}",
                     payload.value("planeId", std::string{}), payload.value("fcLinkState", std::string{}),
@@ -157,8 +157,8 @@ int main(int argc, char** argv) {
         if (envelope.type == "TaskState") {
             const nlohmann::json payload = nlohmann::json::parse(envelope.payload, nullptr, false);
             if (!payload.is_discarded()) {
-                spdlog::info("收到 TaskState: taskId={}, status={}, node={}", payload.value("taskId", std::string{}),
-                             payload.value("status", std::string{}), payload.value("currentNode", std::string{}));
+                SPDLOG_INFO("收到 TaskState: taskId={}, status={}, node={}", payload.value("taskId", std::string{}),
+                            payload.value("status", std::string{}), payload.value("currentNode", std::string{}));
             }
             task_state_count.fetch_add(1);
             return;
@@ -171,7 +171,7 @@ int main(int argc, char** argv) {
                 cv.notify_all();
             }
         }
-        spdlog::info("收到 {}: senderId={}, messageId={}", envelope.type, envelope.sender_id, envelope.message_id);
+        SPDLOG_INFO("收到 {}: senderId={}, messageId={}", envelope.type, envelope.sender_id, envelope.message_id);
         if (!options.no_ack && (envelope.type == "Alert" || envelope.type == "Ack")) {
             const nlohmann::json payload{{"ackId", envelope.message_id}};
             const std::string message_id = options.sender_id + "-ack-" + std::to_string(++sequence);
@@ -212,7 +212,7 @@ int main(int argc, char** argv) {
         command_acked = cv.wait_for(lock, std::chrono::milliseconds(options.ack_timeout_ms),
                                     [&]() { return acked_ids.count(command_id) > 0; });
     }
-    spdlog::info("Ack 结果: TaskInfo={}, Command={}", task_acked, command_acked);
+    SPDLOG_INFO("Ack 结果: TaskInfo={}, Command={}", task_acked, command_acked);
 
     if (!options.gcs_target_id.empty()) {
         for (int i = 0; i < options.gcs_target_repeat; ++i) {
@@ -226,7 +226,7 @@ int main(int argc, char** argv) {
             session.put(zenoh::KeyExpr("sendToPlane/" + options.plane_id),
                         zenoh::Bytes(build_wire(options.sender_id, message_id, "GcsTarget", payload)));
         }
-        spdlog::info("已发送 GcsTarget: trackId={}, count={}", options.gcs_target_id, options.gcs_target_repeat);
+        SPDLOG_INFO("已发送 GcsTarget: trackId={}, count={}", options.gcs_target_id, options.gcs_target_repeat);
     }
 
     for (const auto& [key, value] : options.send_params) {
@@ -234,7 +234,7 @@ int main(int argc, char** argv) {
         try {
             numeric = std::stod(value);
         } catch (const std::exception&) {
-            spdlog::warn("忽略非法系统参数: {}={}", key, value);
+            SPDLOG_WARN("忽略非法系统参数: {}={}", key, value);
             continue;
         }
         nlohmann::json payload = nlohmann::json::object();
@@ -245,7 +245,7 @@ int main(int argc, char** argv) {
                     zenoh::Bytes(build_wire(options.sender_id, message_id, "SystemParam", payload.dump())));
     }
     if (!options.send_params.empty()) {
-        spdlog::info("已发送 SystemParam: {} 条", options.send_params.size());
+        SPDLOG_INFO("已发送 SystemParam: {} 条", options.send_params.size());
     }
 
     if (!options.peer_plane_id.empty()) {
@@ -259,10 +259,10 @@ int main(int argc, char** argv) {
         const std::string message_id = options.peer_plane_id + "-" + std::to_string(++sequence);
         session.put(zenoh::KeyExpr("sendToPlane/" + options.plane_id),
                     zenoh::Bytes(build_wire(options.peer_plane_id, message_id, "VehicleState", payload.dump())));
-        spdlog::info("已发送友机状态: planeId={}", options.peer_plane_id);
+        SPDLOG_INFO("已发送友机状态: planeId={}", options.peer_plane_id);
     }
 
     std::this_thread::sleep_for(std::chrono::seconds(options.listen_seconds));
-    spdlog::info("状态统计: VehicleState={}, TaskState={}", vehicle_state_count.load(), task_state_count.load());
+    SPDLOG_INFO("状态统计: VehicleState={}, TaskState={}", vehicle_state_count.load(), task_state_count.load());
     return task_acked && command_acked ? 0 : 1;
 }

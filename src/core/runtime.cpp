@@ -12,21 +12,21 @@ void Runtime::add_module(std::unique_ptr<IModule> module) { modules_.push_back(s
 bool Runtime::run() {
     for (std::size_t i = 0; i < modules_.size(); ++i) {
         if (!modules_[i]->init()) {
-            spdlog::error("模块 init 失败: {}", modules_[i]->name());
+            SPDLOG_ERROR("模块 init 失败: {}", modules_[i]->name());
             shutdown();
             return false;
         }
-        spdlog::info("模块 init: {}", modules_[i]->name());
+        SPDLOG_INFO("模块 init: {}", modules_[i]->name());
     }
     for (auto& module : modules_) {
         if (!module->start()) {
-            spdlog::error("模块 start 失败: {}", module->name());
+            SPDLOG_ERROR("模块 start 失败: {}", module->name());
             shutdown();
             return false;
         }
-        spdlog::info("模块 start: {}", module->name());
+        SPDLOG_INFO("模块 start: {}", module->name());
     }
-    spdlog::info("系统就绪");
+    SPDLOG_INFO("系统就绪");
     return true;
 }
 
@@ -34,7 +34,7 @@ void Runtime::shutdown() {
     for (auto it = modules_.rbegin(); it != modules_.rend(); ++it) {
         (*it)->stop();
         (*it)->release();
-        spdlog::info("模块停止: {}", (*it)->name());
+        SPDLOG_INFO("模块停止: {}", (*it)->name());
     }
     modules_.clear();
 }

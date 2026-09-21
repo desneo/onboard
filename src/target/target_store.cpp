@@ -115,7 +115,7 @@ void TargetStore::on_gcs_target(const plane::model::GcsTarget& target) {
         }
         history_size = history.size();
     }
-    spdlog::info("GCS 目标更新: trackId={}, 历史={}", target.trackId, history_size);
+    SPDLOG_INFO("GCS 目标更新: trackId={}, 历史={}", target.trackId, history_size);
 }
 
 void TargetStore::on_detection(const plane::perception::DetectionResult& result) {
@@ -123,7 +123,7 @@ void TargetStore::on_detection(const plane::perception::DetectionResult& result)
         std::lock_guard<std::mutex> lock(mutex_);
         vision_targets_ = result.targets;
     }
-    spdlog::info("视觉目标更新: {} 个", result.targets.size());
+    SPDLOG_INFO("视觉目标更新: {} 个", result.targets.size());
 }
 
 void TargetStore::on_tracking(const plane::perception::TrackingResult& result) {
@@ -133,7 +133,7 @@ void TargetStore::on_tracking(const plane::perception::TrackingResult& result) {
         tracking_valid_ = true;
         tracking_lost_ = result.lost;
     }
-    spdlog::info("跟踪目标更新: type={}, lost={}", result.target.type, result.lost ? 1 : 0);
+    SPDLOG_INFO("跟踪目标更新: type={}, lost={}", result.target.type, result.lost ? 1 : 0);
 }
 
 }  // namespace plane::target

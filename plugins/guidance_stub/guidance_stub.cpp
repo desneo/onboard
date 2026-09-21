@@ -17,7 +17,7 @@ class GuidanceStub final : public GuidancePlugin {
         config_ = config;
         const char* mode = std::getenv("PLANE_STUB_GUIDE");
         forward_ = (mode != nullptr && std::string(mode) == "forward");
-        spdlog::info("GuidanceStub init: desired_distance_m={}, forward={}", config_.desired_distance_m, forward_);
+        SPDLOG_INFO("GuidanceStub init: desired_distance_m={}, forward={}", config_.desired_distance_m, forward_);
         return true;
     }
 

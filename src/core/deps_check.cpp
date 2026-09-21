@@ -52,9 +52,9 @@ int run_deps_check() {
         mk_free(exe_dir);
     }
 
-    spdlog::info("deps-check: magic_enum={} nlohmann={} fmt={} spdlog={} bt={} geodesic={:.1f}m cv={}", state,
-                 NLOHMANN_JSON_VERSION_MAJOR, FMT_VERSION, SPDLOG_VERSION, BT::LibraryVersionString(), distance_m,
-                 CV_VERSION);
+    SPDLOG_INFO("deps-check: magic_enum={} nlohmann={} fmt={} spdlog={} bt={} geodesic={:.1f}m cv={}", state,
+                NLOHMANN_JSON_VERSION_MAJOR, FMT_VERSION, SPDLOG_VERSION, BT::LibraryVersionString(), distance_m,
+                CV_VERSION);
     return 0;
 }
 

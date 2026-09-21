@@ -12,7 +12,7 @@ std::shared_ptr<PluginType> create_first(pluma::Pluma& pluma, const char* provid
     std::vector<ProviderType*> providers;
     pluma.getProviders(providers);
     if (providers.empty()) {
-        spdlog::warn("未找到插件 provider: {}", provider_type);
+        SPDLOG_WARN("未找到插件 provider: {}", provider_type);
         return nullptr;
     }
     return std::shared_ptr<PluginType>(providers.front()->create());
@@ -42,11 +42,11 @@ bool PluginManagement::start() {
 
     const int loaded = pluma_.loadFromFolder(config_.plugins_dir);
     loaded_ = true;
-    spdlog::info("插件目录加载: {} (成功加载 {} 个库)", config_.plugins_dir, loaded);
-    spdlog::info("插件 provider: detection={}, tracking={}, guidance={}",
-                 provider_count<plane::algorithm::DetectionPluginProvider>(pluma_),
-                 provider_count<plane::algorithm::TrackingPluginProvider>(pluma_),
-                 provider_count<plane::algorithm::GuidancePluginProvider>(pluma_));
+    SPDLOG_INFO("插件目录加载: {} (成功加载 {} 个库)", config_.plugins_dir, loaded);
+    SPDLOG_INFO("插件 provider: detection={}, tracking={}, guidance={}",
+                provider_count<plane::algorithm::DetectionPluginProvider>(pluma_),
+                provider_count<plane::algorithm::TrackingPluginProvider>(pluma_),
+                provider_count<plane::algorithm::GuidancePluginProvider>(pluma_));
     return true;
 }
 

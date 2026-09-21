@@ -49,7 +49,7 @@ bool FlightControlModule::start() {
         report_error("飞控连接初始化失败: " + url + " (" + result_text(result) + ")");
         return false;
     }
-    spdlog::info("飞控连接参数: {} (心跳超时 {} ms)", url, config_.fc_heartbeat_timeout_ms);
+    SPDLOG_INFO("飞控连接参数: {} (心跳超时 {} ms)", url, config_.fc_heartbeat_timeout_ms);
 
     running_ = true;
     monitor_thread_ = std::thread([this]() { monitor_loop(); });
@@ -93,7 +93,7 @@ void FlightControlModule::monitor_loop() {
                 const std::int64_t now = now_ms();
                 if (now - last_wait_log_ms_ >= kWaitLogIntervalMs) {
                     last_wait_log_ms_ = now;
-                    spdlog::info("等待飞控连接: {}", connection_url());
+                    SPDLOG_INFO("等待飞控连接: {}", connection_url());
                 }
             }
             continue;
@@ -171,10 +171,10 @@ void FlightControlModule::attach_system(const std::shared_ptr<mavsdk::System>& s
     });
     system_->subscribe_is_connected([this](bool connected) {
         connected_ = connected;
-        spdlog::info("飞控连接{}", connected ? "建立" : "异常");
+        SPDLOG_INFO("飞控连接{}", connected ? "建立" : "异常");
     });
 
-    spdlog::info("飞控系统已接入: system_id={}", system_->get_system_id());
+    SPDLOG_INFO("飞控系统已接入: system_id={}", system_->get_system_id());
 }
 
 void FlightControlModule::detach_system() {
@@ -195,7 +195,7 @@ void FlightControlModule::detach_system() {
     telemetry_.reset();
     action_.reset();
     if (system_) {
-        spdlog::info("飞控系统已移除");
+        SPDLOG_INFO("飞控系统已移除");
         system_.reset();
     }
 }
@@ -419,7 +419,7 @@ bool FlightControlModule::set_ned_velocity(const plane::model::NedVelocity& velo
         return false;
     }
     offboard_active_ = true;
-    spdlog::info("Offboard 已启动");
+    SPDLOG_INFO("Offboard 已启动");
     return true;
 }
 
@@ -431,7 +431,7 @@ void FlightControlModule::clear_ned_velocity() {
     offboard_active_ = false;
     if (offboard_) {
         offboard_->stop();
-        spdlog::info("Offboard 已停止");
+        SPDLOG_INFO("Offboard 已停止");
     }
 }
 

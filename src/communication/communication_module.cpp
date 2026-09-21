@@ -55,7 +55,7 @@ bool CommunicationModule::start() {
 
     running_ = true;
     worker_ = std::thread([this]() { worker_loop(); });
-    spdlog::info("Communication 已启动: plane_id={}, station_id={}", config_.plane_id, config_.station_id);
+    SPDLOG_INFO("Communication 已启动: plane_id={}, station_id={}", config_.plane_id, config_.station_id);
     return true;
 }
 
@@ -92,7 +92,7 @@ void CommunicationModule::enqueue_wire(std::string raw) {
         const auto limit = static_cast<std::size_t>(config_.comm_rx_queue_max);
         if (rx_queue_.size() >= limit) {
             rx_queue_.pop_front();
-            spdlog::warn("通信接收队列已满，丢弃最旧消息");
+            SPDLOG_WARN("通信接收队列已满，丢弃最旧消息");
         }
         rx_queue_.push_back(std::move(raw));
     }
@@ -136,7 +136,7 @@ void CommunicationModule::handle_envelope(const plane::model::Message& envelope)
     }
     if ((envelope.type == plane::model::MessageType::TaskInfo || envelope.type == plane::model::MessageType::Command) &&
         envelope.senderId != config_.station_id) {
-        spdlog::warn("拒绝非地面站控制消息: senderId={}", envelope.senderId);
+        SPDLOG_WARN("拒绝非地面站控制消息: senderId={}", envelope.senderId);
         return;
     }
     switch (envelope.type) {
@@ -195,7 +195,7 @@ void CommunicationModule::handle_envelope(const plane::model::Message& envelope)
             break;
         }
         default: {
-            spdlog::warn("忽略未处理的消息类型: {}", message_type_to_string(envelope.type));
+            SPDLOG_WARN("忽略未处理的消息类型: {}", message_type_to_string(envelope.type));
             break;
         }
     }
@@ -210,7 +210,7 @@ void CommunicationModule::handle_ack(const plane::model::Message& envelope) {
     }
     std::lock_guard<std::mutex> lock(pending_mutex_);
     if (pending_.erase(ack.ackId) > 0) {
-        spdlog::debug("收到 Ack: {}", ack.ackId);
+        SPDLOG_DEBUG("收到 Ack: {}", ack.ackId);
     }
 }
 
@@ -280,7 +280,7 @@ void CommunicationModule::check_pending() {
     for (const auto& pending : resend) {
         std::string error;
         if (transport_.put(pending.topic, pending.wire, error)) {
-            spdlog::warn("可靠消息重试: topic={}, attempts={}", pending.topic, pending.attempts);
+            SPDLOG_WARN("可靠消息重试: topic={}, attempts={}", pending.topic, pending.attempts);
         } else {
             report_error("重试发送失败: " + error);
         }

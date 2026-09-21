@@ -57,10 +57,10 @@ void TaskScheduler::on_task_info(const plane::model::TaskInfo& task) {
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (control_ != ControlKind::Task || task_state_.taskId != task.taskId) {
-                spdlog::warn("忽略不匹配的任务停止: taskId={}", task.taskId);
+                SPDLOG_WARN("忽略不匹配的任务停止: taskId={}", task.taskId);
                 return;
             }
-            spdlog::info("任务中止: taskId={}", task_state_.taskId);
+            SPDLOG_INFO("任务中止: taskId={}", task_state_.taskId);
             control_ = ControlKind::None;
             task_state_ = plane::model::TaskState{};
         }
@@ -75,7 +75,7 @@ void TaskScheduler::on_task_info(const plane::model::TaskInfo& task) {
         std::lock_guard<std::mutex> lock(mutex_);
         replaced_task = control_ == ControlKind::Task;
         if (replaced_task) {
-            spdlog::info("任务被新任务替换: taskId={}", task_state_.taskId);
+            SPDLOG_INFO("任务被新任务替换: taskId={}", task_state_.taskId);
         }
         control_ = ControlKind::Task;
         task_state_ = plane::model::TaskState{};
@@ -86,14 +86,14 @@ void TaskScheduler::on_task_info(const plane::model::TaskInfo& task) {
         engine_->abort();
     }
     if (engine_ == nullptr) {
-        spdlog::warn("执行引擎未接入，任务保持 Pending: taskId={}", task.taskId);
+        SPDLOG_WARN("执行引擎未接入，任务保持 Pending: taskId={}", task.taskId);
         return;
     }
     std::string error;
     if (engine_->start(task, error)) {
         std::lock_guard<std::mutex> lock(mutex_);
         task_state_.status = plane::model::TaskStatus::InProgress;
-        spdlog::info("任务接收并启动: taskId={}", task.taskId);
+        SPDLOG_INFO("任务接收并启动: taskId={}", task.taskId);
     } else {
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -110,7 +110,7 @@ void TaskScheduler::on_command(const plane::model::Command& command) {
         std::lock_guard<std::mutex> lock(mutex_);
         replaced_task = control_ == ControlKind::Task;
         if (replaced_task) {
-            spdlog::info("任务被独立指令替换: taskId={}", task_state_.taskId);
+            SPDLOG_INFO("任务被独立指令替换: taskId={}", task_state_.taskId);
         }
         control_ = ControlKind::Command;
         task_state_ = plane::model::TaskState{};
@@ -124,11 +124,11 @@ void TaskScheduler::on_command(const plane::model::Command& command) {
 void TaskScheduler::on_engine_result(const TaskEngineResult& result) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (control_ != ControlKind::Task) {
-        spdlog::warn("忽略非当前任务的引擎结果");
+        SPDLOG_WARN("忽略非当前任务的引擎结果");
         return;
     }
-    spdlog::info("任务结束: taskId={}, status={}, detail={}", task_state_.taskId,
-                 std::string(magic_enum::enum_name(result.status)), result.detail);
+    SPDLOG_INFO("任务结束: taskId={}, status={}, detail={}", task_state_.taskId,
+                std::string(magic_enum::enum_name(result.status)), result.detail);
     control_ = ControlKind::None;
     task_state_ = plane::model::TaskState{};
 }
@@ -156,7 +156,7 @@ bool TaskScheduler::dispatch_command(const plane::model::Command& command) {
             float height = command.takeoffHeight_m;
             if (height <= 0.0F) {
                 height = static_cast<float>(system_param_.current().safeHeight_m);
-                spdlog::info("Takeoff 未指定高度，使用安全高度: {} m", height);
+                SPDLOG_INFO("Takeoff 未指定高度，使用安全高度: {} m", height);
             }
             ok = flight_control_.takeoff(height, error);
             break;
@@ -189,7 +189,7 @@ bool TaskScheduler::dispatch_command(const plane::model::Command& command) {
             break;
     }
     if (ok) {
-        spdlog::info("指令已派发: {}", command.commandId);
+        SPDLOG_INFO("指令已派发: {}", command.commandId);
         return true;
     }
     const std::string detail = "指令派发失败: " + command.commandId + " (" + error + ")";
@@ -200,19 +200,19 @@ bool TaskScheduler::dispatch_command(const plane::model::Command& command) {
 
 void TaskScheduler::send_alert(const std::string& detail) {
     if (communication_ == nullptr) {
-        spdlog::error("通信模块未接入，告警未发送: {}", detail);
+        SPDLOG_ERROR("通信模块未接入，告警未发送: {}", detail);
         return;
     }
     plane::model::Alert alert;
     alert.type = "command_dispatch_failed";
     alert.detail = detail;
     if (!communication_->sendToStation(plane::communication::OutgoingMessage{alert})) {
-        spdlog::error("告警发送失败: {}", detail);
+        SPDLOG_ERROR("告警发送失败: {}", detail);
     }
 }
 
 void TaskScheduler::report_error(const std::string& detail) const {
-    spdlog::error("TaskScheduler: {}", detail);
+    SPDLOG_ERROR("TaskScheduler: {}", detail);
     TaskSchedulerError event;
     event.detail = detail;
     event_bus_.publish(events::kError, event);

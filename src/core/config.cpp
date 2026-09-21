@@ -22,7 +22,7 @@ std::string trim(const std::string& text) {
 bool load_config(const std::string& path, AppConfig& out) {
     std::ifstream file(path);
     if (!file.is_open()) {
-        spdlog::warn("配置文件不存在，使用默认配置: {}", path);
+        SPDLOG_WARN("配置文件不存在，使用默认配置: {}", path);
         return false;
     }
 
@@ -34,7 +34,7 @@ bool load_config(const std::string& path, AppConfig& out) {
         }
         const auto pos = line.find('=');
         if (pos == std::string::npos) {
-            spdlog::warn("忽略无法解析的配置行: {}", line);
+            SPDLOG_WARN("忽略无法解析的配置行: {}", line);
             continue;
         }
         const std::string key = trim(line.substr(0, pos));
@@ -126,7 +126,7 @@ bool load_config(const std::string& path, AppConfig& out) {
         } else if (key == "suicide_impact_vd_m_s") {
             out.suicide_impact_vd_m_s = std::stod(value);
         } else {
-            spdlog::warn("未知配置项: {}", key);
+            SPDLOG_WARN("未知配置项: {}", key);
         }
     }
     return true;

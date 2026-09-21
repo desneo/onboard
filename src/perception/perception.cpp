@@ -145,7 +145,7 @@ bool Perception::open_source() {
 void Perception::capture_loop() {
     while (running_) {
         if (config_.image_source.empty()) {
-            spdlog::warn("图像源未配置 (image_source 为空)");
+            SPDLOG_WARN("图像源未配置 (image_source 为空)");
             std::this_thread::sleep_for(std::chrono::milliseconds(config_.image_reconnect_interval_ms));
             continue;
         }
@@ -154,17 +154,17 @@ void Perception::capture_loop() {
             std::this_thread::sleep_for(std::chrono::milliseconds(config_.image_reconnect_interval_ms));
             continue;
         }
-        spdlog::info("图像源已打开: {}", config_.image_source);
+        SPDLOG_INFO("图像源已打开: {}", config_.image_source);
         bool first_frame = true;
         while (running_) {
             cv::Mat frame;
             if (!capture_->read(frame) || frame.empty()) {
-                spdlog::warn("图像读取失败，尝试重连: {}", config_.image_source);
+                SPDLOG_WARN("图像读取失败，尝试重连: {}", config_.image_source);
                 break;
             }
             if (first_frame) {
                 first_frame = false;
-                spdlog::info("首帧: {}x{}", frame.cols, frame.rows);
+                SPDLOG_INFO("首帧: {}x{}", frame.cols, frame.rows);
             }
             std::lock_guard<std::mutex> lock(frame_mutex_);
             latest_frame_ = frame;
@@ -197,7 +197,7 @@ void Perception::process_loop() {
         }
         std::string video_error;
         if (!video_streaming_.push_frame(frame, overlay, video_error)) {
-            spdlog::warn("推流帧提交失败: {}", video_error);
+            SPDLOG_WARN("推流帧提交失败: {}", video_error);
         }
         if (detection_enabled_) {
             std::string error;
@@ -271,7 +271,7 @@ void Perception::process_loop() {
 }
 
 void Perception::run_selftest(const cv::Mat& frame) {
-    spdlog::info("感知自检开始 (frame {}x{})", frame.cols, frame.rows);
+    SPDLOG_INFO("感知自检开始 (frame {}x{})", frame.cols, frame.rows);
     std::string error;
     if (!ensure_detection(error)) {
         report_error("自检检测插件不可用: " + error);
@@ -279,7 +279,7 @@ void Perception::run_selftest(const cv::Mat& frame) {
     }
     std::vector<plane::model::DetectTarget> targets;
     if (detection_->detect(frame, targets, error)) {
-        spdlog::info("自检 detect 成功: targets={}", targets.size());
+        SPDLOG_INFO("自检 detect 成功: targets={}", targets.size());
         DetectionResult result;
         result.targets = targets;
         event_bus_.publish(events::kDetection, result);
@@ -308,7 +308,7 @@ void Perception::run_selftest(const cv::Mat& frame) {
     }
     plane::model::DetectTarget tracked;
     if (tracking_->track(frame, tracked, error)) {
-        spdlog::info("自检 track 成功: type={}", tracked.type);
+        SPDLOG_INFO("自检 track 成功: type={}", tracked.type);
         TrackingResult result;
         result.target = tracked;
         result.lost = false;
@@ -323,7 +323,7 @@ void Perception::run_selftest(const cv::Mat& frame) {
     }
     plane::model::NedVelocity velocity;
     if (guidance_->guide(tracked, state_store_.own_state(), velocity, error)) {
-        spdlog::info("自检 guide 成功: vn={} ve={} vd={}", velocity.north_m_s, velocity.east_m_s, velocity.down_m_s);
+        SPDLOG_INFO("自检 guide 成功: vn={} ve={} vd={}", velocity.north_m_s, velocity.east_m_s, velocity.down_m_s);
         GuidanceResult result;
         result.velocity = velocity;
         result.valid = true;
@@ -349,7 +349,7 @@ bool Perception::ensure_detection(std::string& error) {
         error = "检测插件初始化失败";
         return false;
     }
-    spdlog::info("检测插件已实例化");
+    SPDLOG_INFO("检测插件已实例化");
     return true;
 }
 
@@ -369,7 +369,7 @@ bool Perception::ensure_tracking(std::string& error) {
         error = "跟踪插件初始化失败";
         return false;
     }
-    spdlog::info("跟踪插件已实例化");
+    SPDLOG_INFO("跟踪插件已实例化");
     return true;
 }
 
@@ -389,12 +389,12 @@ bool Perception::ensure_guidance(std::string& error) {
         error = "导引插件初始化失败";
         return false;
     }
-    spdlog::info("导引插件已实例化");
+    SPDLOG_INFO("导引插件已实例化");
     return true;
 }
 
 void Perception::report_error(const std::string& detail) const {
-    spdlog::error("Perception: {}", detail);
+    SPDLOG_ERROR("Perception: {}", detail);
     PerceptionError event;
     event.detail = detail;
     event_bus_.publish(events::kError, event);
