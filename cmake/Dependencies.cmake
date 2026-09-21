@@ -4,8 +4,13 @@ set(PLANE_3RDPARTY_DIR "${CMAKE_SOURCE_DIR}/../../../3rdparty/common"
     CACHE PATH "本地三方库根目录（相对工程根 onboard/）")
 set(PLANE_COMMON_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/../common/common_include"
     CACHE PATH "与外部交互的公共头文件目录（相对工程根 onboard/）")
-set(PLANE_PLATFORM_DIR "x64/ubuntu22.04"
-    CACHE STRING "三方库平台子目录；arm64 依赖补齐后再启用")
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+  set(PLANE_PLATFORM_ARCH "arm64")
+else()
+  set(PLANE_PLATFORM_ARCH "x64")
+endif()
+set(PLANE_PLATFORM_DIR "${PLANE_PLATFORM_ARCH}/ubuntu22.04"
+    CACHE STRING "三方库平台子目录（按 CPU 架构自动选择，可覆盖）")
 
 foreach(_dir "${PLANE_3RDPARTY_DIR}" "${PLANE_COMMON_INCLUDE_DIR}")
   if(NOT EXISTS "${_dir}")
