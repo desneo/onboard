@@ -29,6 +29,9 @@ struct AppConfig {
     int fc_heartbeat_timeout_ms = 2000;
     double fc_route_speed_m_s = 5.0;
 
+    /// 是否仿真飞机：udp 链路且 fc_udp_url 端口处于 14200-14299 时置为 true（仅机载内部使用）。
+    bool is_sim = false;
+
     int bt_tick_interval_ms = 50;
     int bt_node_timeout_ms = 30000;
     double bt_takeoff_tolerance_m = 1.0;

@@ -4,6 +4,7 @@
 
 #include <fstream>
 #include <sstream>
+#include <stdexcept>
 
 namespace plane::core {
 namespace {
@@ -17,12 +18,32 @@ std::string trim(const std::string& text) {
     return text.substr(begin, end - begin + 1);
 }
 
+/// 仿真飞机判定：udp 链路且 fc_udp_url 端口处于 14200-14299。
+bool detect_is_simulation(const AppConfig& config) {
+    if (config.fc_link_type != "udp") {
+        return false;
+    }
+    const std::size_t sep = config.fc_udp_url.find_last_of(':');
+    if (sep == std::string::npos) {
+        return false;
+    }
+    try {
+        const int port = std::stoi(config.fc_udp_url.substr(sep + 1));
+        return port >= 14200 && port <= 14299;
+    } catch (const std::invalid_argument&) {
+        return false;
+    } catch (const std::out_of_range&) {
+        return false;
+    }
+}
+
 }  // namespace
 
 bool load_config(const std::string& path, AppConfig& out) {
     std::ifstream file(path);
     if (!file.is_open()) {
         SPDLOG_WARN("配置文件不存在，使用默认配置: {}", path);
+        out.is_sim = detect_is_simulation(out);
         return false;
     }
 
@@ -129,6 +150,7 @@ bool load_config(const std::string& path, AppConfig& out) {
             SPDLOG_WARN("未知配置项: {}", key);
         }
     }
+    out.is_sim = detect_is_simulation(out);
     return true;
 }
 

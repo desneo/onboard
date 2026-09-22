@@ -63,8 +63,8 @@ int main(int argc, char** argv) {
     const plane::core::BuildInfo build_info = plane::core::current_build_info();
     SPDLOG_INFO("onboard 启动: version={} git={} build={}", build_info.version, build_info.git_hash,
                 build_info.build_type);
-    SPDLOG_INFO("配置: safe_height_m={} state_report_period_ms={}", config.system_param.safeHeight_m,
-                config.state_report_period_ms);
+    SPDLOG_INFO("配置: safe_height_m={} state_report_period_ms={} is_sim={}", config.system_param.safeHeight_m,
+                config.state_report_period_ms, config.is_sim);
 
     plane::core::EventBus event_bus;
     event_bus.subscribe<plane::communication::CommunicationError>(
