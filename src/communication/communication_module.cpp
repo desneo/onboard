@@ -226,7 +226,9 @@ bool CommunicationModule::send_message(const std::string& topic, const OutgoingM
         report_error("发送失败: " + error);
         return false;
     }
-    if (is_reliable(envelope.type)) {
+    // 发往地面站的消息一律尽力发送，不做可靠重试；其余链路按消息类型决定。
+    const bool reliable = topic != std::string(plane::model::topic_sendToStation) && is_reliable(envelope.type);
+    if (reliable) {
         PendingMessage pending;
         pending.wire = wire;
         pending.topic = topic;

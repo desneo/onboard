@@ -19,6 +19,9 @@ bool StateMonitor::init() { return true; }
 bool StateMonitor::start() {
     event_bus_.subscribe<plane::model::VehicleState>(
         events::kOwnStateChanged, [this](const plane::model::VehicleState& state) { on_own_state(state); });
+    if (config_.is_sim) {
+        SPDLOG_INFO("仿真飞机：低电压告警已禁用");
+    }
     return true;
 }
 
@@ -30,6 +33,9 @@ void StateMonitor::stop() {
 void StateMonitor::release() {}
 
 void StateMonitor::on_own_state(const plane::model::VehicleState& state) {
+    if (config_.is_sim) {
+        return;
+    }
     if (state.fcLinkState != "connected") {
         std::lock_guard<std::mutex> lock(mutex_);
         low_voltage_latched_ = false;
