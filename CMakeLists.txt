@@ -18,7 +18,7 @@ execute_process(
 
 include(cmake/Dependencies.cmake)
 
-add_executable(onboard
+add_executable(plane
   src/main.cpp
   src/camera/camera_control_module.cpp
   src/communication/serialization.cpp
@@ -56,20 +56,22 @@ add_executable(onboard
   src/video/rtsp_media_server.cpp
   src/video/video_streaming.cpp
 )
-target_include_directories(onboard PRIVATE src)
-target_compile_options(onboard PRIVATE -Wall -Wextra)
-target_compile_definitions(onboard PRIVATE
+target_include_directories(plane PRIVATE src)
+target_compile_options(plane PRIVATE -Wall -Wextra)
+target_compile_definitions(plane PRIVATE
   PLANE_VERSION="0.1.0"
   PLANE_GIT_HASH="${PLANE_GIT_HASH}"
   PLANE_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
 )
-target_link_libraries(onboard PRIVATE
+target_link_libraries(plane PRIVATE
   plane::common_include
   plane::deps
   opencv_videoio
   PkgConfig::FFMPEG
   opencv_imgproc
 )
+# 可执行文件直接输出到 build/plane/，该目录作为可整体拷贝的独立运行目录。
+set_target_properties(plane PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plane")
 
 add_executable(gcs_sim tools/gcs_sim/main.cpp)
 target_include_directories(gcs_sim PRIVATE src)
@@ -94,3 +96,12 @@ set_target_properties(tracking_stub PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE
 add_library(guidance_stub SHARED plugins/guidance_stub/guidance_stub.cpp)
 target_link_libraries(guidance_stub PRIVATE plane::pluma plane::common_include spdlog::spdlog)
 set_target_properties(guidance_stub PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
+
+# 默认构建即组装 build/plane 独立运行目录：复制插件与三方库、改写 rpath。
+# 依赖 plane 与三个插件目标，确保它们先完成编译。
+add_custom_target(package_plane ALL
+  COMMAND bash "${CMAKE_SOURCE_DIR}/tools/bundle_plane.sh" "${CMAKE_BINARY_DIR}" "${CMAKE_SOURCE_DIR}"
+  DEPENDS plane detection_stub tracking_stub guidance_stub
+  COMMENT "组装 build/plane 独立运行目录（插件 + 三方库 + rpath）"
+  VERBATIM
+)

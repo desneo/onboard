@@ -38,14 +38,9 @@ void handle_stop_signal(int) { g_stop_requested = 1; }
 }  // namespace
 
 int main(int argc, char** argv) {
-    std::string config_path = "config/onboard.conf";
     for (int i = 1; i < argc; ++i) {
-        const std::string arg = argv[i];
-        if (arg == "--deps-check") {
+        if (std::string(argv[i]) == "--deps-check") {
             return plane::core::run_deps_check();
-        }
-        if (arg == "--config" && i + 1 < argc) {
-            config_path = argv[++i];
         }
     }
 
@@ -53,7 +48,7 @@ int main(int argc, char** argv) {
     plane::core::LogOptions log_options;
     plane::core::init_logging(log_options);
 
-    plane::core::load_config(config_path, config);
+    plane::core::load_config("config/onboard.conf", config);
     if (!config.log_dir.empty() && config.log_dir != log_options.log_dir) {
         log_options.log_dir = config.log_dir;
         plane::core::shutdown_logging();
