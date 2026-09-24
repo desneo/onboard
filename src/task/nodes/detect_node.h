@@ -8,7 +8,7 @@
 
 namespace plane::task {
 
-/// 目标检测：启动检测、继续逼近并按规则选定跟踪目标（SPEC §6-4）。
+/// 目标检测：启动检测、继续逼近，检测到目标即阶段完成（SPEC §6-4）。
 class DetectNode final : public FlightActionNode {
    public:
     DetectNode(const std::string& name, const BT::NodeConfig& config,

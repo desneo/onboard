@@ -2,34 +2,68 @@
 
 #include <spdlog/spdlog.h>
 
-#include <algorithm>
-#include <cctype>
 #include <chrono>
-#include <opencv2/videoio.hpp>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "core/runtime.h"
 #include "perception/perception_events.h"
 
 namespace plane::perception {
 namespace {
 
-bool is_numeric(const std::string& text) {
-    return !text.empty() && std::all_of(text.begin(), text.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+std::int64_t now_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+plane::algorithm::ImageSourceType parse_source_type(const std::string& value) {
+    if (value == "Rtsp") {
+        return plane::algorithm::ImageSourceType::Rtsp;
+    }
+    return plane::algorithm::ImageSourceType::Mipi;
+}
+
+const char* source_type_name(plane::algorithm::ImageSourceType type) {
+    return type == plane::algorithm::ImageSourceType::Rtsp ? "Rtsp" : "Mipi";
+}
+
+const char* source_status_name(plane::algorithm::SourceStatus status) {
+    switch (status) {
+        case plane::algorithm::SourceStatus::Idle:
+            return "Idle";
+        case plane::algorithm::SourceStatus::Connecting:
+            return "Connecting";
+        case plane::algorithm::SourceStatus::Streaming:
+            return "Streaming";
+        case plane::algorithm::SourceStatus::Stopped:
+            return "Stopped";
+    }
+    return "Unknown";
+}
+
+const char* stream_state_name(plane::algorithm::StreamState state) {
+    switch (state) {
+        case plane::algorithm::StreamState::Idle:
+            return "Idle";
+        case plane::algorithm::StreamState::Ready:
+            return "Ready";
+        case plane::algorithm::StreamState::Streaming:
+            return "Streaming";
+        case plane::algorithm::StreamState::Stopped:
+            return "Stopped";
+    }
+    return "Unknown";
 }
 
 }  // namespace
 
 Perception::Perception(plane::core::EventBus& event_bus, const plane::core::AppConfig& config,
-                       PluginManagerApi& plugin_manager, plane::state::StateStoreApi& state_store,
-                       plane::flight_control::FlightControlApi& flight_control,
-                       plane::video::VideoStreamingApi& video_streaming)
+                       PluginManagerApi& plugin_manager, plane::video::VideoStreamingApi& video_streaming)
     : event_bus_(event_bus),
       config_(config),
       plugin_manager_(plugin_manager),
-      state_store_(state_store),
-      flight_control_(flight_control),
       video_streaming_(video_streaming) {}
 
 Perception::~Perception() { stop(); }
@@ -39,6 +73,16 @@ std::string Perception::name() const { return "Perception"; }
 bool Perception::init() { return true; }
 
 bool Perception::start() {
+    std::string error;
+    if (!ensure_image_input(error)) {
+        plane::core::request_fatal("image_input", error);
+        return false;
+    }
+    if (!ensure_detection(error)) {
+        plane::core::request_fatal("det_mot", error);
+        return false;
+    }
+    detection_enabled_ = true;
     running_ = true;
     capture_thread_ = std::thread([this]() { capture_loop(); });
     process_thread_ = std::thread([this]() { process_loop(); });
@@ -46,33 +90,27 @@ bool Perception::start() {
 }
 
 void Perception::stop() {
-    if (!running_.exchange(false)) {
-        return;
-    }
+    running_ = false;
     if (capture_thread_.joinable()) {
         capture_thread_.join();
     }
     if (process_thread_.joinable()) {
         process_thread_.join();
     }
-    if (capture_) {
-        capture_->release();
-        capture_.reset();
+    std::lock_guard<std::mutex> lock(plugin_mutex_);
+    if (image_input_) {
+        image_input_->stop();
+        image_input_.reset();
     }
-    {
-        std::lock_guard<std::mutex> lock(plugin_mutex_);
-        detection_.reset();
-        tracking_.reset();
-        guidance_.reset();
-    }
-    flight_control_.clear_ned_velocity();
+    detection_.reset();
 }
 
 void Perception::release() {}
 
 bool Perception::start_detection(std::string& error) {
-    if (!ensure_detection(error)) {
-        report_error("启动检测失败: " + error);
+    std::lock_guard<std::mutex> lock(plugin_mutex_);
+    if (!detection_) {
+        error = "检测插件未初始化";
         return false;
     }
     detection_enabled_ = true;
@@ -81,256 +119,44 @@ bool Perception::start_detection(std::string& error) {
 
 void Perception::stop_detection() { detection_enabled_ = false; }
 
-bool Perception::select_target(const plane::model::DetectTarget& target, std::string& error) {
-    cv::Mat frame;
-    if (!latest_frame_locked(frame)) {
-        error = "当前无图像帧";
-        return false;
-    }
-    if (!ensure_tracking(error)) {
-        report_error("启动跟踪失败: " + error);
-        return false;
-    }
-    if (!tracking_->start(frame, target, error)) {
-        report_error("建立跟踪失败: " + error);
-        return false;
-    }
-    {
-        std::lock_guard<std::mutex> lock(target_mutex_);
-        tracking_target_ = target;
-    }
-    tracking_enabled_ = true;
-    return true;
-}
-
-void Perception::stop_tracking() { tracking_enabled_ = false; }
-
-bool Perception::start_guidance(std::string& error) {
-    if (!ensure_guidance(error)) {
-        report_error("启动导引失败: " + error);
-        return false;
-    }
-    guidance_enabled_ = true;
-    return true;
-}
-
-void Perception::stop_guidance() {
-    guidance_enabled_ = false;
-    flight_control_.clear_ned_velocity();
-}
-
-bool Perception::latest_frame(cv::Mat& out) const { return latest_frame_locked(out); }
-
-bool Perception::latest_frame_locked(cv::Mat& out) const {
+bool Perception::latest_frame(cv::Mat& out) const {
     std::lock_guard<std::mutex> lock(frame_mutex_);
-    if (latest_frame_.empty()) {
+    if (!latest_frame_ || latest_frame_->empty()) {
         return false;
     }
-    out = latest_frame_;
+    out = *latest_frame_;
     return true;
 }
 
-bool Perception::open_source() {
-    capture_ = std::make_unique<cv::VideoCapture>();
-    const std::string& source = config_.image_source;
-    bool opened = false;
-    if (is_numeric(source)) {
-        opened = capture_->open(std::stoi(source));
-    } else {
-        opened = capture_->open(source, cv::CAP_ANY);
-    }
-    return opened && capture_->isOpened();
+std::shared_ptr<cv::Mat> Perception::latest_frame_shared() const {
+    std::lock_guard<std::mutex> lock(frame_mutex_);
+    return latest_frame_;
 }
 
-void Perception::capture_loop() {
-    while (running_) {
-        if (config_.image_source.empty()) {
-            SPDLOG_WARN("图像源未配置 (image_source 为空)");
-            std::this_thread::sleep_for(std::chrono::milliseconds(config_.image_reconnect_interval_ms));
-            continue;
-        }
-        if (!open_source()) {
-            report_error("图像源打开失败: " + config_.image_source);
-            std::this_thread::sleep_for(std::chrono::milliseconds(config_.image_reconnect_interval_ms));
-            continue;
-        }
-        SPDLOG_INFO("图像源已打开: {}", config_.image_source);
-        bool first_frame = true;
-        while (running_) {
-            cv::Mat frame;
-            if (!capture_->read(frame) || frame.empty()) {
-                SPDLOG_WARN("图像读取失败，尝试重连: {}", config_.image_source);
-                break;
-            }
-            if (first_frame) {
-                first_frame = false;
-                SPDLOG_INFO("首帧: {}x{}", frame.cols, frame.rows);
-            }
-            std::lock_guard<std::mutex> lock(frame_mutex_);
-            latest_frame_ = frame;
-        }
-        capture_->release();
+bool Perception::ensure_image_input(std::string& error) {
+    std::lock_guard<std::mutex> lock(plugin_mutex_);
+    if (image_input_) {
+        return true;
     }
-}
-
-void Perception::process_loop() {
-    while (running_) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(config_.perception_process_interval_ms));
-        cv::Mat frame;
-        const bool has_frame = latest_frame_locked(frame);
-        if (config_.perception_selftest_on_start && !selftest_done_) {
-            selftest_done_ = true;
-            const cv::Mat selftest_frame = has_frame ? frame : cv::Mat::zeros(480, 640, CV_8UC3);
-            run_selftest(selftest_frame);
-        }
-        if (!has_frame) {
-            continue;
-        }
-        plane::video::VideoOverlay overlay;
-        {
-            std::lock_guard<std::mutex> lock(target_mutex_);
-            overlay.targets = last_detection_targets_;
-            if (tracking_enabled_) {
-                overlay.has_tracked = true;
-                overlay.tracked = tracking_target_;
-            }
-        }
-        std::string video_error;
-        if (!video_streaming_.push_frame(frame, overlay, video_error)) {
-            SPDLOG_WARN("推流帧提交失败: {}", video_error);
-        }
-        if (detection_enabled_) {
-            std::string error;
-            if (ensure_detection(error)) {
-                std::vector<plane::model::DetectTarget> targets;
-                if (detection_->detect(frame, targets, error)) {
-                    DetectionResult result;
-                    result.targets = std::move(targets);
-                    {
-                        std::lock_guard<std::mutex> lock(target_mutex_);
-                        last_detection_targets_ = result.targets;
-                    }
-                    event_bus_.publish(events::kDetection, result);
-                } else {
-                    report_error("检测失败: " + error);
-                }
-            }
-        }
-        if (tracking_enabled_) {
-            std::string error;
-            if (ensure_tracking(error)) {
-                plane::model::DetectTarget target;
-                if (tracking_->track(frame, target, error)) {
-                    TrackingResult result;
-                    result.target = target;
-                    result.lost = false;
-                    {
-                        std::lock_guard<std::mutex> lock(target_mutex_);
-                        tracking_target_ = target;
-                    }
-                    event_bus_.publish(events::kTracking, result);
-                } else {
-                    TrackingResult result;
-                    {
-                        std::lock_guard<std::mutex> lock(target_mutex_);
-                        result.target = tracking_target_;
-                    }
-                    result.lost = true;
-                    event_bus_.publish(events::kTracking, result);
-                }
-            }
-        }
-        if (guidance_enabled_ && tracking_enabled_) {
-            std::string error;
-            if (ensure_guidance(error)) {
-                plane::model::DetectTarget target;
-                {
-                    std::lock_guard<std::mutex> lock(target_mutex_);
-                    target = tracking_target_;
-                }
-                plane::model::NedVelocity velocity;
-                if (guidance_->guide(target, state_store_.own_state(), velocity, error)) {
-                    GuidanceResult result;
-                    result.velocity = velocity;
-                    result.valid = true;
-                    std::string dispatch_error;
-                    if (!flight_control_.set_ned_velocity(velocity, dispatch_error)) {
-                        report_error("导引速度下发失败: " + dispatch_error);
-                    } else {
-                        result.applied = true;
-                    }
-                    event_bus_.publish(events::kGuidance, result);
-                } else {
-                    GuidanceResult result;
-                    result.valid = false;
-                    event_bus_.publish(events::kGuidance, result);
-                }
-            }
-        }
+    image_input_ = plugin_manager_.create_image_input();
+    if (!image_input_) {
+        error = "无可用取图插件 (ImageInputPlugin)";
+        return false;
     }
-}
-
-void Perception::run_selftest(const cv::Mat& frame) {
-    SPDLOG_INFO("感知自检开始 (frame {}x{})", frame.cols, frame.rows);
-    std::string error;
-    if (!ensure_detection(error)) {
-        report_error("自检检测插件不可用: " + error);
-        return;
+    plane::algorithm::ImageSourceConfig source;
+    source.type = parse_source_type(config_.image_source_type);
+    source.mipi_device = config_.image_mipi_device;
+    source.rtsp_url = config_.image_rtsp_url;
+    source.reconnect_interval_s = config_.image_reconnect_interval_s;
+    if (!image_input_->setConfig(source, error)) {
+        SPDLOG_ERROR("取图插件 setConfig 失败: {}", error);
+        image_input_.reset();
+        return false;
     }
-    std::vector<plane::model::DetectTarget> targets;
-    if (detection_->detect(frame, targets, error)) {
-        SPDLOG_INFO("自检 detect 成功: targets={}", targets.size());
-        DetectionResult result;
-        result.targets = targets;
-        event_bus_.publish(events::kDetection, result);
-    } else {
-        report_error("自检 detect 失败: " + error);
-        return;
-    }
-    if (!ensure_tracking(error)) {
-        report_error("自检跟踪插件不可用: " + error);
-        return;
-    }
-    plane::model::DetectTarget init;
-    if (targets.empty()) {
-        init.bbox.x = frame.cols / 2 - 50;
-        init.bbox.y = frame.rows / 2 - 50;
-        init.bbox.width = 100;
-        init.bbox.height = 100;
-        init.confidence = 0.9F;
-        init.type = "stub";
-    } else {
-        init = targets.front();
-    }
-    if (!tracking_->start(frame, init, error)) {
-        report_error("自检 track start 失败: " + error);
-        return;
-    }
-    plane::model::DetectTarget tracked;
-    if (tracking_->track(frame, tracked, error)) {
-        SPDLOG_INFO("自检 track 成功: type={}", tracked.type);
-        TrackingResult result;
-        result.target = tracked;
-        result.lost = false;
-        event_bus_.publish(events::kTracking, result);
-    } else {
-        report_error("自检 track 失败: " + error);
-        return;
-    }
-    if (!ensure_guidance(error)) {
-        report_error("自检导引插件不可用: " + error);
-        return;
-    }
-    plane::model::NedVelocity velocity;
-    if (guidance_->guide(tracked, state_store_.own_state(), velocity, error)) {
-        SPDLOG_INFO("自检 guide 成功: vn={} ve={} vd={}", velocity.north_m_s, velocity.east_m_s, velocity.down_m_s);
-        GuidanceResult result;
-        result.velocity = velocity;
-        result.valid = true;
-        event_bus_.publish(events::kGuidance, result);
-    } else {
-        report_error("自检 guide 失败: " + error);
-    }
+    SPDLOG_INFO("[plugin:image_input] type={} device={} rtsp={} reconnect_s={}", source_type_name(source.type),
+                source.mipi_device.empty() ? "auto" : source.mipi_device, source.rtsp_url,
+                source.reconnect_interval_s);
+    return true;
 }
 
 bool Perception::ensure_detection(std::string& error) {
@@ -338,59 +164,118 @@ bool Perception::ensure_detection(std::string& error) {
     if (detection_) {
         return true;
     }
-    detection_ = plugin_manager_.create_detection();
+    detection_ = plugin_manager_.create_det_mot();
     if (!detection_) {
-        error = "无可用检测插件";
+        error = "无可用检测插件 (DetMotPlugin)";
         return false;
     }
-    plane::algorithm::DetectConfig detect_config;
-    if (!detection_->init(detect_config)) {
+    plane::algorithm::DetMotConfig detect_config;
+    detect_config.model_path = config_.det_model_path;
+    detect_config.config_dir = config_.det_config_dir;
+    detect_config.confidence_threshold = config_.det_confidence_threshold;
+    detect_config.nms_threshold = config_.det_nms_threshold;
+    detect_config.track_thresh = config_.det_track_thresh;
+    detect_config.track_buffer = config_.det_track_buffer;
+    if (!detection_->setConfig(detect_config)) {
+        error = "检测插件 setConfig 失败 (model_path=" + detect_config.model_path +
+                ", config_dir=" + detect_config.config_dir + ")";
+        SPDLOG_ERROR("{}", error);
         detection_.reset();
-        error = "检测插件初始化失败";
         return false;
     }
-    SPDLOG_INFO("检测插件已实例化");
+    SPDLOG_INFO("[plugin:det_mot] model_path={} config_dir={} conf={} nms={} track_thresh={} track_buffer={}",
+                detect_config.model_path, detect_config.config_dir, detect_config.confidence_threshold,
+                detect_config.nms_threshold, detect_config.track_thresh, detect_config.track_buffer);
     return true;
 }
 
-bool Perception::ensure_tracking(std::string& error) {
-    std::lock_guard<std::mutex> lock(plugin_mutex_);
-    if (tracking_) {
-        return true;
+void Perception::capture_loop() {
+    while (running_) {
+        std::shared_ptr<plane::algorithm::ImageInputPlugin> input;
+        {
+            std::lock_guard<std::mutex> lock(plugin_mutex_);
+            input = image_input_;
+        }
+        if (!input) {
+            break;
+        }
+        plane::algorithm::FrameMeta meta;
+        std::shared_ptr<cv::Mat> frame = input->getFrame(&meta);
+        if (!frame || frame->empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            continue;
+        }
+        if (!first_frame_logged_) {
+            first_frame_logged_ = true;
+            SPDLOG_INFO("首帧 size={}x{}", frame->cols, frame->rows);
+        }
+        std::lock_guard<std::mutex> lock(frame_mutex_);
+        latest_frame_ = std::move(frame);
     }
-    tracking_ = plugin_manager_.create_tracking();
-    if (!tracking_) {
-        error = "无可用跟踪插件";
-        return false;
-    }
-    plane::algorithm::TrackConfig track_config;
-    if (!tracking_->init(track_config)) {
-        tracking_.reset();
-        error = "跟踪插件初始化失败";
-        return false;
-    }
-    SPDLOG_INFO("跟踪插件已实例化");
-    return true;
 }
 
-bool Perception::ensure_guidance(std::string& error) {
-    std::lock_guard<std::mutex> lock(plugin_mutex_);
-    if (guidance_) {
-        return true;
+void Perception::process_loop() {
+    while (running_) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(config_.perception_process_interval_ms));
+        std::shared_ptr<cv::Mat> frame = latest_frame_shared();
+        if (!frame || frame->empty()) {
+            continue;
+        }
+
+        std::shared_ptr<plane::algorithm::DetMotPlugin> detector;
+        bool detection_enabled = false;
+        {
+            std::lock_guard<std::mutex> lock(plugin_mutex_);
+            detector = detection_;
+            detection_enabled = detection_enabled_;
+        }
+
+        std::vector<plane::model::VisionTarget> targets;
+        if (detection_enabled) {
+            if (!detector) {
+                plane::core::request_fatal("det_mot", "检测插件未初始化");
+                return;
+            }
+            std::string error;
+            if (!detector->detMotExe(frame, targets, error)) {
+                plane::core::request_fatal("det_mot", error);
+                return;
+            }
+            {
+                std::lock_guard<std::mutex> lock(target_mutex_);
+                last_detection_targets_ = targets;
+            }
+            const std::int64_t now = now_ms();
+            if (now - last_detection_log_ms_ >= 1000) {
+                last_detection_log_ms_ = now;
+                SPDLOG_INFO("检测 targets={}", targets.size());
+            }
+            DetectionResult result;
+            result.targets = targets;
+            event_bus_.publish(events::kDetection, result);
+        }
+
+        std::string video_error;
+        if (!video_streaming_.push_frame(*frame, targets, video_error)) {
+            plane::core::request_fatal("videostream_output", video_error);
+            return;
+        }
+
+        const std::int64_t now = now_ms();
+        if (now - last_status_log_ms_ >= 2000) {
+            last_status_log_ms_ = now;
+            const plane::algorithm::StreamStatus status = video_streaming_.status();
+            plane::algorithm::SourceStatus source_status = plane::algorithm::SourceStatus::Idle;
+            {
+                std::lock_guard<std::mutex> lock(plugin_mutex_);
+                if (image_input_) {
+                    source_status = image_input_->status();
+                }
+            }
+            SPDLOG_INFO("推流状态 state={} fps={:.1f} viewers={} source={}", stream_state_name(status.state),
+                        status.current_fps, status.viewer_count, source_status_name(source_status));
+        }
     }
-    guidance_ = plugin_manager_.create_guidance();
-    if (!guidance_) {
-        error = "无可用导引插件";
-        return false;
-    }
-    plane::algorithm::GuidanceConfig guidance_config;
-    if (!guidance_->init(guidance_config)) {
-        guidance_.reset();
-        error = "导引插件初始化失败";
-        return false;
-    }
-    SPDLOG_INFO("导引插件已实例化");
-    return true;
 }
 
 void Perception::report_error(const std::string& detail) const {

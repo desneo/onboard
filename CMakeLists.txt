@@ -45,15 +45,11 @@ add_executable(plane
   src/task/nodes/approach_controller.cpp
   src/task/nodes/midcourse_node.cpp
   src/task/nodes/detect_node.cpp
-  src/task/nodes/track_node.cpp
-  src/task/nodes/guide_node.cpp
   src/task/task_execution_engine.cpp
   src/perception/plugin_management.cpp
   src/perception/plugin_providers.cpp
   src/perception/perception.cpp
   src/target/target_store.cpp
-  src/video/ffmpeg_h264_encoder.cpp
-  src/video/rtsp_media_server.cpp
   src/video/video_streaming.cpp
 )
 target_include_directories(plane PRIVATE src)
@@ -66,9 +62,6 @@ target_compile_definitions(plane PRIVATE
 target_link_libraries(plane PRIVATE
   plane::common_include
   plane::deps
-  opencv_videoio
-  PkgConfig::FFMPEG
-  opencv_imgproc
 )
 # 可执行文件直接输出到 build/plane/，该目录作为可整体拷贝的独立运行目录。
 set_target_properties(plane PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plane")
@@ -85,23 +78,29 @@ target_link_libraries(gcs_sim PRIVATE
   zenohcxx::zenohc
 )
 
-add_library(detection_stub SHARED plugins/detection_stub/detection_stub.cpp)
-target_link_libraries(detection_stub PRIVATE plane::pluma plane::common_include opencv_core spdlog::spdlog)
-set_target_properties(detection_stub PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
+# 正式插件暂存：将三个插件 .so 拷贝到 build/plugins（路径可用环境变量覆盖）。
+add_custom_target(stage_plugins
+  COMMAND bash "${CMAKE_SOURCE_DIR}/tools/stage_plugins.sh" "${CMAKE_BINARY_DIR}"
+  COMMENT "暂存正式插件到 build/plugins"
+  VERBATIM
+)
 
-add_library(tracking_stub SHARED plugins/tracking_stub/tracking_stub.cpp)
-target_link_libraries(tracking_stub PRIVATE plane::pluma plane::common_include opencv_core spdlog::spdlog)
-set_target_properties(tracking_stub PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
+# 插件加载契约测试（不进入正式运行目录）。
+add_executable(plugin_load_check tests/contract/plugin_load_check.cpp)
+target_include_directories(plugin_load_check PRIVATE src)
+target_compile_options(plugin_load_check PRIVATE -Wall -Wextra)
+target_link_libraries(plugin_load_check PRIVATE
+  plane::pluma
+  plane::common_include
+  opencv_core
+  fmt::fmt
+  spdlog::spdlog
+)
 
-add_library(guidance_stub SHARED plugins/guidance_stub/guidance_stub.cpp)
-target_link_libraries(guidance_stub PRIVATE plane::pluma plane::common_include spdlog::spdlog)
-set_target_properties(guidance_stub PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
-
-# 默认构建即组装 build/plane 独立运行目录：复制插件与三方库、改写 rpath。
-# 依赖 plane 与三个插件目标，确保它们先完成编译。
+# 默认构建即组装 build/plane 独立运行目录：暂存正式插件、复制三方库、改写 rpath。
 add_custom_target(package_plane ALL
   COMMAND bash "${CMAKE_SOURCE_DIR}/tools/bundle_plane.sh" "${CMAKE_BINARY_DIR}" "${CMAKE_SOURCE_DIR}"
-  DEPENDS plane detection_stub tracking_stub guidance_stub
-  COMMENT "组装 build/plane 独立运行目录（插件 + 三方库 + rpath）"
+  DEPENDS plane stage_plugins
+  COMMENT "组装 build/plane 独立运行目录（正式插件 + 三方库 + rpath）"
   VERBATIM
 )

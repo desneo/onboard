@@ -22,9 +22,9 @@ class PluginManagement final : public plane::core::IModule, public PluginManager
     void stop() override;
     void release() override;
 
-    std::shared_ptr<plane::algorithm::DetectionPlugin> create_detection() override;
-    std::shared_ptr<plane::algorithm::TrackingPlugin> create_tracking() override;
-    std::shared_ptr<plane::algorithm::GuidancePlugin> create_guidance() override;
+    std::shared_ptr<plane::algorithm::ImageInputPlugin> create_image_input() override;
+    std::shared_ptr<plane::algorithm::DetMotPlugin> create_det_mot() override;
+    std::shared_ptr<plane::algorithm::VideoStreamOutputPlugin> create_video_output() override;
 
    private:
     const plane::core::AppConfig& config_;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "core/module.h"
@@ -17,5 +18,11 @@ class Runtime {
    private:
     std::vector<std::unique_ptr<IModule>> modules_;
 };
+
+/// 请求致命退出：工作线程在插件加载/执行失败时调用，main 据此有序关闭并以非零退出。
+/// 日志固定输出 `[fatal] plugin=<plugin> reason=<reason>`，供验证脚本断言。
+void request_fatal(const std::string& plugin, const std::string& reason);
+bool fatal_requested();
+std::string fatal_reason();
 
 }  // namespace plane::core

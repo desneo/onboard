@@ -104,26 +104,52 @@ bool load_config(const std::string& path, AppConfig& out) {
             out.bt_takeoff_tolerance_m = std::stod(value);
         } else if (key == "plugins_dir") {
             out.plugins_dir = value;
-        } else if (key == "image_source") {
-            out.image_source = value;
-        } else if (key == "image_reconnect_interval_ms") {
-            out.image_reconnect_interval_ms = std::stoi(value);
         } else if (key == "perception_process_interval_ms") {
             out.perception_process_interval_ms = std::stoi(value);
-        } else if (key == "perception_selftest_on_start") {
-            out.perception_selftest_on_start = (value == "true" || value == "1");
-        } else if (key == "rtsp_port") {
-            out.rtsp_port = std::stoi(value);
-        } else if (key == "rtsp_app") {
-            out.rtsp_app = value;
-        } else if (key == "rtsp_stream") {
-            out.rtsp_stream = value;
-        } else if (key == "video_fps") {
-            out.video_fps = std::stoi(value);
-        } else if (key == "video_bitrate_kbps") {
-            out.video_bitrate_kbps = std::stoi(value);
-        } else if (key == "video_overlay_enabled") {
-            out.video_overlay_enabled = (value == "true" || value == "1");
+        } else if (key == "image_source_type") {
+            out.image_source_type = value;
+        } else if (key == "image_mipi_device") {
+            out.image_mipi_device = value;
+        } else if (key == "image_rtsp_url") {
+            out.image_rtsp_url = value;
+        } else if (key == "image_reconnect_interval_s") {
+            out.image_reconnect_interval_s = std::stoi(value);
+        } else if (key == "det_model_path") {
+            out.det_model_path = value;
+        } else if (key == "det_config_dir") {
+            out.det_config_dir = value;
+        } else if (key == "det_confidence_threshold") {
+            out.det_confidence_threshold = std::stof(value);
+        } else if (key == "det_nms_threshold") {
+            out.det_nms_threshold = std::stof(value);
+        } else if (key == "det_track_thresh") {
+            out.det_track_thresh = std::stof(value);
+        } else if (key == "det_track_buffer") {
+            out.det_track_buffer = std::stoi(value);
+        } else if (key == "stream_type") {
+            out.stream_type = value;
+        } else if (key == "stream_url") {
+            out.stream_url = value;
+        } else if (key == "stream_app") {
+            out.stream_app = value;
+        } else if (key == "stream_name") {
+            out.stream_name = value;
+        } else if (key == "stream_rtsp_port") {
+            out.stream_rtsp_port = std::stoi(value);
+        } else if (key == "stream_http_port") {
+            out.stream_http_port = std::stoi(value);
+        } else if (key == "stream_rtc_port") {
+            out.stream_rtc_port = std::stoi(value);
+        } else if (key == "stream_width") {
+            out.stream_width = std::stoi(value);
+        } else if (key == "stream_height") {
+            out.stream_height = std::stoi(value);
+        } else if (key == "stream_max_fps") {
+            out.stream_max_fps = std::stoi(value);
+        } else if (key == "stream_bitrate_kbps") {
+            out.stream_bitrate_kbps = std::stoi(value);
+        } else if (key == "stream_gop") {
+            out.stream_gop = std::stoi(value);
         } else if (key == "alert_voltage_threshold_v") {
             out.alert_voltage_threshold_v = std::stod(value);
         } else if (key == "suicide_detection_start_distance_m") {

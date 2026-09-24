@@ -3,9 +3,38 @@
 #include <spdlog/spdlog.h>
 
 #include <cstddef>
+#include <mutex>
 #include <utility>
 
 namespace plane::core {
+namespace {
+
+std::mutex g_fatal_mutex;
+bool g_fatal_requested = false;
+std::string g_fatal_reason;
+
+}  // namespace
+
+void request_fatal(const std::string& plugin, const std::string& reason) {
+    {
+        std::lock_guard<std::mutex> lock(g_fatal_mutex);
+        g_fatal_requested = true;
+        if (g_fatal_reason.empty()) {
+            g_fatal_reason = reason;
+        }
+    }
+    SPDLOG_ERROR("[fatal] plugin={} reason={}", plugin, reason);
+}
+
+bool fatal_requested() {
+    std::lock_guard<std::mutex> lock(g_fatal_mutex);
+    return g_fatal_requested;
+}
+
+std::string fatal_reason() {
+    std::lock_guard<std::mutex> lock(g_fatal_mutex);
+    return g_fatal_reason;
+}
 
 void Runtime::add_module(std::unique_ptr<IModule> module) { modules_.push_back(std::move(module)); }
 

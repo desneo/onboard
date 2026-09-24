@@ -8,19 +8,10 @@
 
 namespace plane::perception {
 
+using plane::model::VisionTarget;
+
 struct DetectionResult {
-    std::vector<plane::model::DetectTarget> targets;
-};
-
-struct TrackingResult {
-    plane::model::DetectTarget target;
-    bool lost = false;
-};
-
-struct GuidanceResult {
-    plane::model::NedVelocity velocity;
-    bool valid = false;
-    bool applied = false;  ///< 是否已成功下发飞控（M10 直连）
+    std::vector<VisionTarget> targets;
 };
 
 struct PerceptionError {
@@ -34,10 +25,6 @@ class PerceptionApi {
 
     virtual bool start_detection(std::string& error) = 0;
     virtual void stop_detection() = 0;
-    virtual bool select_target(const plane::model::DetectTarget& target, std::string& error) = 0;
-    virtual void stop_tracking() = 0;
-    virtual bool start_guidance(std::string& error) = 0;
-    virtual void stop_guidance() = 0;
     virtual bool latest_frame(cv::Mat& out) const = 0;
 };
 

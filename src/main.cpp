@@ -74,9 +74,9 @@ int main(int argc, char** argv) {
     auto system_param_store = std::make_unique<plane::core::SystemParamStore>(event_bus, config);
     auto plugin_management = std::make_unique<plane::perception::PluginManagement>(config);
     auto camera_control = std::make_unique<plane::camera::CameraControlModule>(event_bus);
-    auto video_streaming = std::make_unique<plane::video::VideoStreaming>(config);
+    auto video_streaming = std::make_unique<plane::video::VideoStreaming>(config, *plugin_management);
     auto perception = std::make_unique<plane::perception::Perception>(event_bus, config, *plugin_management,
-                                                                      *state_store, *flight_control, *video_streaming);
+                                                                      *video_streaming);
     auto target_store = std::make_unique<plane::target::TargetStore>(event_bus);
     auto task_engine = std::make_unique<plane::task::TaskExecutionEngine>(
         event_bus, config, *flight_control, *state_store, *system_param_store, *perception, *target_store);
@@ -114,13 +114,20 @@ int main(int argc, char** argv) {
     std::signal(SIGINT, handle_stop_signal);
     std::signal(SIGTERM, handle_stop_signal);
     SPDLOG_INFO("系统运行中，Ctrl+C 退出");
-    while (g_stop_requested == 0) {
+    while (g_stop_requested == 0 && !plane::core::fatal_requested()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-    SPDLOG_INFO("收到退出信号，开始关闭");
+
+    int exit_code = 0;
+    if (plane::core::fatal_requested()) {
+        SPDLOG_ERROR("检测到致命错误，开始关闭: {}", plane::core::fatal_reason());
+        exit_code = 1;
+    } else {
+        SPDLOG_INFO("收到退出信号，开始关闭");
+    }
 
     runtime.shutdown();
 
     plane::core::shutdown_logging();
-    return 0;
+    return exit_code;
 }

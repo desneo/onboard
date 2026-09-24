@@ -37,17 +37,36 @@ struct AppConfig {
     double bt_takeoff_tolerance_m = 1.0;
 
     std::string plugins_dir = "build/plugins";
-    std::string image_source;
-    int image_reconnect_interval_ms = 2000;
     int perception_process_interval_ms = 100;
-    bool perception_selftest_on_start = false;
 
-    int rtsp_port = 8554;
-    std::string rtsp_app = "live";
-    std::string rtsp_stream = "onboard";
-    int video_fps = 25;
-    int video_bitrate_kbps = 2000;
-    bool video_overlay_enabled = true;
+    // 取图插件（image_input）
+    std::string image_source_type = "Mipi";  ///< Mipi | Rtsp
+    std::string image_mipi_device;           ///< 空=自动发现
+    std::string image_rtsp_url = "rtsp://192.168.1.220:8554/drone";
+    int image_reconnect_interval_s = 10;
+
+    // 检测插件（det_mot）
+    std::string det_model_path = "/home/firefly/code/projects/anti-uav/algorithm/models/yolo11/yolo11n";
+    std::string det_config_dir = "/home/firefly/code/projects/anti-uav/algorithm/perception/configs";
+    float det_confidence_threshold = 0.4F;
+    float det_nms_threshold = 0.45F;
+    float det_track_thresh = 0.5F;
+    int det_track_buffer = 30;
+
+    // 推流插件（videostream_output）
+    std::string stream_type = "WebRtc";  ///< WebRtc | Rtsp
+    std::string stream_url;
+    std::string stream_app = "live";
+    std::string stream_name = "stream";
+    int stream_rtsp_port = 8554;
+    int stream_http_port = 80;
+    int stream_rtc_port = 8000;
+    int stream_width = 1280;
+    int stream_height = 720;
+    int stream_max_fps = 30;
+    int stream_bitrate_kbps = 4096;
+    int stream_gop = 30;
+
     double alert_voltage_threshold_v = 21.0;
 
     double suicide_detection_start_distance_m = 200.0;

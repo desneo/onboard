@@ -14,8 +14,6 @@
 #include <string>
 #include <zenoh/api.hxx>
 
-#include "mk_mediakit.h"
-
 namespace plane::core {
 namespace {
 
@@ -46,11 +44,6 @@ int run_deps_check() {
 
     const cv::Mat empty_frame;
     static_cast<void>(empty_frame);
-
-    char* exe_dir = mk_util_get_exe_dir("");
-    if (exe_dir != nullptr) {
-        mk_free(exe_dir);
-    }
 
     SPDLOG_INFO("deps-check: magic_enum={} nlohmann={} fmt={} spdlog={} bt={} geodesic={:.1f}m cv={}", state,
                 NLOHMANN_JSON_VERSION_MAJOR, FMT_VERSION, SPDLOG_VERSION, BT::LibraryVersionString(), distance_m,

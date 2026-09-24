@@ -3,3 +3,5 @@ logs/
 compile_commands.json
 .cache/
 dist/
+.specify/
+specs

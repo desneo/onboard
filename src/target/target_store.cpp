@@ -31,47 +31,21 @@ bool TargetStore::start() {
     event_bus_.subscribe<plane::perception::DetectionResult>(
         plane::perception::events::kDetection,
         [this](const plane::perception::DetectionResult& result) { on_detection(result); });
-    event_bus_.subscribe<plane::perception::TrackingResult>(
-        plane::perception::events::kTracking,
-        [this](const plane::perception::TrackingResult& result) { on_tracking(result); });
     return true;
 }
 
 void TargetStore::stop() {
     std::lock_guard<std::mutex> lock(mutex_);
     vision_targets_.clear();
-    tracked_target_.reset();
-    tracking_valid_ = false;
-    tracking_lost_ = false;
     gcs_latest_.clear();
     gcs_history_.clear();
 }
 
 void TargetStore::release() {}
 
-std::vector<plane::model::DetectTarget> TargetStore::vision_targets() const {
+std::vector<plane::model::VisionTarget> TargetStore::vision_targets() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return vision_targets_;
-}
-
-bool TargetStore::tracked_target(plane::model::DetectTarget& out) const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!tracked_target_.has_value()) {
-        return false;
-    }
-    out = *tracked_target_;
-    return true;
-}
-
-TrackingState TargetStore::tracking_state() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    TrackingState state;
-    if (tracked_target_.has_value()) {
-        state.target = *tracked_target_;
-        state.valid = tracking_valid_;
-        state.lost = tracking_lost_;
-    }
-    return state;
 }
 
 std::vector<plane::model::GcsTarget> TargetStore::gcs_targets() const {
@@ -124,16 +98,6 @@ void TargetStore::on_detection(const plane::perception::DetectionResult& result)
         vision_targets_ = result.targets;
     }
     SPDLOG_INFO("视觉目标更新: {} 个", result.targets.size());
-}
-
-void TargetStore::on_tracking(const plane::perception::TrackingResult& result) {
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        tracked_target_ = result.target;
-        tracking_valid_ = true;
-        tracking_lost_ = result.lost;
-    }
-    SPDLOG_INFO("跟踪目标更新: type={}, lost={}", result.target.type, result.lost ? 1 : 0);
 }
 
 }  // namespace plane::target

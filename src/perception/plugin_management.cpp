@@ -12,7 +12,7 @@ std::shared_ptr<PluginType> create_first(pluma::Pluma& pluma, const char* provid
     std::vector<ProviderType*> providers;
     pluma.getProviders(providers);
     if (providers.empty()) {
-        SPDLOG_WARN("未找到插件 provider: {}", provider_type);
+        SPDLOG_ERROR("未找到插件 provider: {}", provider_type);
         return nullptr;
     }
     return std::shared_ptr<PluginType>(providers.front()->create());
@@ -36,17 +36,17 @@ std::string PluginManagement::name() const { return "Plugin Management"; }
 bool PluginManagement::init() { return true; }
 
 bool PluginManagement::start() {
-    pluma_.acceptProviderType<plane::algorithm::DetectionPluginProvider>();
-    pluma_.acceptProviderType<plane::algorithm::TrackingPluginProvider>();
-    pluma_.acceptProviderType<plane::algorithm::GuidancePluginProvider>();
+    pluma_.acceptProviderType<plane::algorithm::ImageInputPluginProvider>();
+    pluma_.acceptProviderType<plane::algorithm::DetMotPluginProvider>();
+    pluma_.acceptProviderType<plane::algorithm::VideoStreamOutputPluginProvider>();
 
     const int loaded = pluma_.loadFromFolder(config_.plugins_dir);
     loaded_ = true;
-    SPDLOG_INFO("插件目录加载: {} (成功加载 {} 个库)", config_.plugins_dir, loaded);
-    SPDLOG_INFO("插件 provider: detection={}, tracking={}, guidance={}",
-                provider_count<plane::algorithm::DetectionPluginProvider>(pluma_),
-                provider_count<plane::algorithm::TrackingPluginProvider>(pluma_),
-                provider_count<plane::algorithm::GuidancePluginProvider>(pluma_));
+    SPDLOG_INFO("插件加载目录={} 成功={}", config_.plugins_dir, loaded);
+    SPDLOG_INFO("插件 provider: image_input={}, det_mot={}, video_output={}",
+                provider_count<plane::algorithm::ImageInputPluginProvider>(pluma_),
+                provider_count<plane::algorithm::DetMotPluginProvider>(pluma_),
+                provider_count<plane::algorithm::VideoStreamOutputPluginProvider>(pluma_));
     return true;
 }
 
@@ -60,19 +60,19 @@ void PluginManagement::stop() {
 
 void PluginManagement::release() {}
 
-std::shared_ptr<plane::algorithm::DetectionPlugin> PluginManagement::create_detection() {
-    return create_first<plane::algorithm::DetectionPlugin, plane::algorithm::DetectionPluginProvider>(
-        pluma_, "DetectionPlugin");
+std::shared_ptr<plane::algorithm::ImageInputPlugin> PluginManagement::create_image_input() {
+    return create_first<plane::algorithm::ImageInputPlugin, plane::algorithm::ImageInputPluginProvider>(
+        pluma_, "ImageInputPlugin");
 }
 
-std::shared_ptr<plane::algorithm::TrackingPlugin> PluginManagement::create_tracking() {
-    return create_first<plane::algorithm::TrackingPlugin, plane::algorithm::TrackingPluginProvider>(pluma_,
-                                                                                                    "TrackingPlugin");
+std::shared_ptr<plane::algorithm::DetMotPlugin> PluginManagement::create_det_mot() {
+    return create_first<plane::algorithm::DetMotPlugin, plane::algorithm::DetMotPluginProvider>(pluma_,
+                                                                                                "DetMotPlugin");
 }
 
-std::shared_ptr<plane::algorithm::GuidancePlugin> PluginManagement::create_guidance() {
-    return create_first<plane::algorithm::GuidancePlugin, plane::algorithm::GuidancePluginProvider>(pluma_,
-                                                                                                    "GuidancePlugin");
+std::shared_ptr<plane::algorithm::VideoStreamOutputPlugin> PluginManagement::create_video_output() {
+    return create_first<plane::algorithm::VideoStreamOutputPlugin, plane::algorithm::VideoStreamOutputPluginProvider>(
+        pluma_, "VideoStreamOutputPlugin");
 }
 
 }  // namespace plane::perception

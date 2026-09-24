@@ -8,10 +8,8 @@
 
 #include "task/nodes/arm_node.h"
 #include "task/nodes/detect_node.h"
-#include "task/nodes/guide_node.h"
 #include "task/nodes/midcourse_node.h"
 #include "task/nodes/takeoff_node.h"
-#include "task/nodes/track_node.h"
 #include "task/task_events.h"
 
 namespace plane::task {
@@ -50,10 +48,6 @@ BT::Tree TaskExecutionEngine::build_anti_uav() {
                                             &suicide_context_);
     factory.registerNodeType<DetectNode>("Detect", &flight_control_, &state_store_, &perception_, &target_store_,
                                          &config_, &suicide_context_);
-    factory.registerNodeType<TrackNode>("Track", &flight_control_, &state_store_, &perception_, &target_store_,
-                                        &config_, &suicide_context_);
-    factory.registerNodeType<GuideNode>("Guide", &flight_control_, &state_store_, &perception_, &target_store_,
-                                        &config_);
 
     auto subtree = std::make_shared<BT::Tree::Subtree>();
     subtree->blackboard = BT::Blackboard::create();
@@ -68,24 +62,18 @@ BT::Tree TaskExecutionEngine::build_anti_uav() {
     auto takeoff = factory.instantiateTreeNode("Takeoff", "Takeoff", node_config);
     auto midcourse = factory.instantiateTreeNode("Midcourse", "Midcourse", node_config);
     auto detect = factory.instantiateTreeNode("Detect", "Detect", node_config);
-    auto track = factory.instantiateTreeNode("Track", "Track", node_config);
-    auto guide = factory.instantiateTreeNode("Guide", "Guide", node_config);
 
     auto* control = dynamic_cast<BT::ControlNode*>(root.get());
     control->addChild(arm.get());
     control->addChild(takeoff.get());
     control->addChild(midcourse.get());
     control->addChild(detect.get());
-    control->addChild(track.get());
-    control->addChild(guide.get());
 
     subtree->nodes.push_back(std::move(root));
     subtree->nodes.push_back(std::move(arm));
     subtree->nodes.push_back(std::move(takeoff));
     subtree->nodes.push_back(std::move(midcourse));
     subtree->nodes.push_back(std::move(detect));
-    subtree->nodes.push_back(std::move(track));
-    subtree->nodes.push_back(std::move(guide));
 
     BT::Tree tree;
     tree.subtrees.push_back(subtree);
@@ -205,8 +193,6 @@ void TaskExecutionEngine::finish(plane::model::TaskStatus status, const std::str
 void TaskExecutionEngine::cleanup_control() {
     flight_control_.clear_ned_velocity();
     perception_.stop_detection();
-    perception_.stop_tracking();
-    perception_.stop_guidance();
 }
 
 }  // namespace plane::task

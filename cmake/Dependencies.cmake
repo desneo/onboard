@@ -48,12 +48,6 @@ target_include_directories(plane_pluma INTERFACE
 target_link_libraries(plane_pluma INTERFACE
   "${PLANE_3RDPARTY_DIR}/pluma/${PLANE_PLATFORM_DIR}/lib/libpluma.so")
 
-add_library(plane_zlmediakit INTERFACE)
-target_include_directories(plane_zlmediakit INTERFACE
-  "${PLANE_3RDPARTY_DIR}/zlmediakit/4b07053/${PLANE_PLATFORM_DIR}/include")
-target_link_libraries(plane_zlmediakit INTERFACE
-  "${PLANE_3RDPARTY_DIR}/zlmediakit/4b07053/${PLANE_PLATFORM_DIR}/lib/libmk_api.so")
-
 add_library(plane_eventpp INTERFACE)
 target_include_directories(plane_eventpp INTERFACE
   "${PLANE_3RDPARTY_DIR}/eventcpp/v0.1.3/include")
@@ -81,7 +75,6 @@ target_link_libraries(plane_deps INTERFACE
   zenohcxx::zenohc
   plane_behaviortree
   plane_pluma
-  plane_zlmediakit
   plane_eventpp
   plane_magic_enum
   plane_nlohmann_json
@@ -91,7 +84,6 @@ add_library(plane::deps ALIAS plane_deps)
 add_library(plane::common_include ALIAS plane_common_include)
 add_library(plane::behaviortree ALIAS plane_behaviortree)
 add_library(plane::pluma ALIAS plane_pluma)
-add_library(plane::zlmediakit ALIAS plane_zlmediakit)
 add_library(plane::eventpp ALIAS plane_eventpp)
 add_library(plane::magic_enum ALIAS plane_magic_enum)
 add_library(plane::nlohmann_json ALIAS plane_nlohmann_json)
@@ -102,6 +94,3 @@ foreach(_target fmt::fmt spdlog::spdlog GeographicLib::GeographicLib MAVSDK::mav
     message(FATAL_ERROR "缺少 CMake target: ${_target}")
   endif()
 endforeach()
-
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavcodec libavutil libswscale)

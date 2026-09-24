@@ -2,24 +2,29 @@
 
 #include <spdlog/spdlog.h>
 
-#include <algorithm>
-#include <chrono>
-#include <opencv2/imgproc.hpp>
+#include <string>
 
-#include "video/ffmpeg_h264_encoder.h"
+#include "core/runtime.h"
 
 namespace plane::video {
 namespace {
 
-std::int64_t now_ms() {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
-        .count();
+plane::algorithm::StreamType parse_stream_type(const std::string& value) {
+    if (value == "Rtsp") {
+        return plane::algorithm::StreamType::Rtsp;
+    }
+    return plane::algorithm::StreamType::WebRtc;
+}
+
+const char* stream_type_name(plane::algorithm::StreamType type) {
+    return type == plane::algorithm::StreamType::Rtsp ? "Rtsp" : "WebRtc";
 }
 
 }  // namespace
 
-VideoStreaming::VideoStreaming(const plane::core::AppConfig& config)
-    : config_(config), encoder_(std::make_unique<FfmpegH264Encoder>()) {}
+VideoStreaming::VideoStreaming(const plane::core::AppConfig& config,
+                               plane::perception::PluginManagerApi& plugin_manager)
+    : config_(config), plugin_manager_(plugin_manager) {}
 
 VideoStreaming::~VideoStreaming() { stop(); }
 
@@ -40,121 +45,77 @@ void VideoStreaming::stop() { stop_stream(); }
 
 void VideoStreaming::release() {}
 
+plane::algorithm::StreamConfig VideoStreaming::make_stream_config() const {
+    plane::algorithm::StreamConfig stream;
+    stream.type = parse_stream_type(config_.stream_type);
+    stream.url = config_.stream_url;
+    stream.app = config_.stream_app;
+    stream.stream = config_.stream_name;
+    stream.rtsp_port = config_.stream_rtsp_port;
+    stream.http_port = config_.stream_http_port;
+    stream.rtc_port = config_.stream_rtc_port;
+    stream.width = config_.stream_width;
+    stream.height = config_.stream_height;
+    stream.max_fps = config_.stream_max_fps;
+    stream.bitrate_kbps = config_.stream_bitrate_kbps;
+    stream.gop = config_.stream_gop;
+    return stream;
+}
+
 bool VideoStreaming::start_stream(std::string& error) {
-    if (stream_running_) {
+    if (output_) {
         return true;
     }
-    if (!server_.init(config_.rtsp_port, error)) {
+    output_ = plugin_manager_.create_video_output();
+    if (!output_) {
+        error = "无可用推流插件 (VideoStreamOutputPlugin)";
+        plane::core::request_fatal("videostream_output", error);
         return false;
     }
-    {
-        std::lock_guard<std::mutex> lock(slot_mutex_);
-        stream_running_ = true;
+    const plane::algorithm::StreamConfig stream = make_stream_config();
+    if (!output_->setConfig(stream, error)) {
+        plane::core::request_fatal("videostream_output", error);
+        output_.reset();
+        return false;
     }
-    worker_ = std::thread([this]() { worker_loop(); });
-    SPDLOG_INFO("推流已启动: rtsp://<ip>:{} /{}/{}", config_.rtsp_port, config_.rtsp_app, config_.rtsp_stream);
+    SPDLOG_INFO(
+        "[plugin:videostream_output] type={} app={} stream={} rtsp_port={} http_port={} rtc_port={} size={}x{} "
+        "max_fps={} bitrate_kbps={} gop={}",
+        stream_type_name(stream.type), stream.app, stream.stream, stream.rtsp_port, stream.http_port, stream.rtc_port,
+        stream.width, stream.height, stream.max_fps, stream.bitrate_kbps, stream.gop);
+    SPDLOG_INFO("推流地址={}", output_->streamUrl());
     return true;
 }
 
 void VideoStreaming::stop_stream() {
-    {
-        std::lock_guard<std::mutex> lock(slot_mutex_);
-        if (!stream_running_) {
-            return;
-        }
-        stream_running_ = false;
+    if (!output_) {
+        return;
     }
-    slot_cv_.notify_all();
-    if (worker_.joinable()) {
-        worker_.join();
-    }
-    server_.close();
+    output_->stop();
+    output_.reset();
     SPDLOG_INFO("推流已停止");
 }
 
-bool VideoStreaming::push_frame(const cv::Mat& frame, const VideoOverlay& overlay, std::string&) {
-    {
-        std::lock_guard<std::mutex> lock(slot_mutex_);
-        latest_frame_ = frame;
-        latest_overlay_ = overlay;
-        has_frame_ = true;
+bool VideoStreaming::push_frame(const cv::Mat& frame, const std::vector<VisionTarget>& targets, std::string& error) {
+    if (!output_) {
+        error = "推流未启动";
+        return false;
     }
-    slot_cv_.notify_one();
-    return true;
+    return output_->putImage(frame, targets, plane::algorithm::OverlayKind::Detection, error);
 }
 
-void VideoStreaming::worker_loop() {
-    while (true) {
-        cv::Mat frame;
-        VideoOverlay overlay;
-        {
-            std::unique_lock<std::mutex> lock(slot_mutex_);
-            slot_cv_.wait_for(lock, std::chrono::milliseconds(100),
-                              [this]() { return has_frame_ || !stream_running_; });
-            if (!stream_running_) {
-                break;
-            }
-            if (!has_frame_) {
-                continue;
-            }
-            frame = latest_frame_;
-            overlay = latest_overlay_;
-            has_frame_ = false;
-        }
-        const std::int64_t interval_ms = 1000 / std::max(1, config_.video_fps);
-        const std::int64_t elapsed_ms = now_ms() - last_encode_ms_;
-        if (elapsed_ms < interval_ms) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms - elapsed_ms));
-        }
-        last_encode_ms_ = now_ms();
-        std::string error;
-        if (!encode_and_send(frame, overlay, error)) {
-            SPDLOG_WARN("推流编码/发送失败: {}", error);
-        }
+plane::algorithm::StreamStatus VideoStreaming::status() const {
+    if (!output_) {
+        return {};
     }
+    return output_->status();
 }
 
-bool VideoStreaming::encode_and_send(const cv::Mat& frame, const VideoOverlay& overlay, std::string& error) {
-    if (frame.empty()) {
-        error = "空帧";
-        return false;
+std::string VideoStreaming::stream_url() const {
+    if (!output_) {
+        return {};
     }
-    if (!encoder_->init(frame.cols, frame.rows, config_.video_fps, config_.video_bitrate_kbps, error)) {
-        return false;
-    }
-    cv::Mat canvas = frame.clone();
-    if (config_.video_overlay_enabled) {
-        for (const auto& target : overlay.targets) {
-            const auto& bbox = target.bbox;
-            if (bbox.width > 0 && bbox.height > 0) {
-                cv::rectangle(canvas, cv::Rect(bbox.x, bbox.y, bbox.width, bbox.height), cv::Scalar(0, 255, 0), 2);
-            }
-        }
-        if (overlay.has_tracked && overlay.tracked.bbox.width > 0 && overlay.tracked.bbox.height > 0) {
-            const auto& bbox = overlay.tracked.bbox;
-            cv::rectangle(canvas, cv::Rect(bbox.x, bbox.y, bbox.width, bbox.height), cv::Scalar(0, 0, 255), 2);
-        }
-    }
-    std::vector<std::uint8_t> encoded;
-    bool keyframe = false;
-    if (!encoder_->encode(canvas, encoded, keyframe, error)) {
-        return false;
-    }
-    if (!server_.ensure_media(config_.rtsp_app, config_.rtsp_stream, canvas.cols, canvas.rows, config_.video_fps,
-                              config_.video_bitrate_kbps, error)) {
-        return false;
-    }
-    const std::int64_t dts_ms = frame_index_ * 1000 / std::max(1, config_.video_fps);
-    if (!server_.input_h264(encoded.data(), encoded.size(), static_cast<std::uint64_t>(dts_ms))) {
-        error = "喂流失败";
-        return false;
-    }
-    if (!first_frame_logged_) {
-        first_frame_logged_ = true;
-        SPDLOG_INFO("推流首帧: {}x{}", canvas.cols, canvas.rows);
-    }
-    ++frame_index_;
-    return true;
+    return output_->streamUrl();
 }
 
 }  // namespace plane::video
