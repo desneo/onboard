@@ -17,6 +17,18 @@
 
 namespace {
 
+/// 一次待发送的控制内容：基础指令或任务，按命令行出现顺序执行。
+enum class ActionKind {
+    Command,
+    Task,
+};
+
+struct Action {
+    ActionKind kind = ActionKind::Command;
+    std::string type;         ///< CommandType 或 TaskCode
+    std::string task_action;  ///< TaskAction，仅 Task 使用
+};
+
 struct Options {
     std::string plane_id = "uav1";
     std::string sender_id = "gcs";
@@ -24,13 +36,10 @@ struct Options {
     bool no_ack = false;
     int listen_seconds = 3;
     int ack_timeout_ms = 2000;
-    bool send_task = true;
-    bool send_command = true;
-    std::string task_action = "Start";
-    std::string task_code = "anti-uav";
+    bool help = false;
+    std::vector<Action> actions;
     std::string target_track_id;
-    std::string command_type = "Arm";
-    float takeoff_height_m = 0.0F;
+    float takeoff_height_m = 10.0F;
     std::string gcs_target_id;
     int gcs_target_repeat = 1;
     std::vector<std::pair<std::string, std::string>> send_params;
@@ -42,6 +51,52 @@ struct Envelope {
     std::string type;
     std::string payload;
 };
+
+void print_usage() {
+    const std::string usage =
+        "用法: gcs_sim [选项]\n"
+        "\n"
+        "联调工具：模拟地面站(GCS)向指定飞机发送控制指令/任务，并监听其上报。\n"
+        "\n"
+        "目标与标识:\n"
+        "  --plane-id <id>          目标飞机 id (默认: uav1)\n"
+        "  --sender-id <id>         本机(GCS)标识，需与飞机 station_id 一致 (默认: gcs)\n"
+        "  -h, --help               显示本帮助并退出\n"
+        "\n"
+        "控制指令 (按出现顺序发往 sendToPlane/<plane-id>):\n"
+        "  --arm                    解锁 (Arm)\n"
+        "  --disarm                 上锁 (Disarm)\n"
+        "  --takeoff                起飞 (Takeoff)，高度取 --takeoff-height\n"
+        "  --land                   降落 (Land)\n"
+        "  --rtl                    返航 (RTL)\n"
+        "  --hover                  悬停 (Hover)\n"
+        "  --stop-motor             停桨 (StopMotor)\n"
+        "  --takeoff-height <m>     起飞高度(米)，默认 10；填 0 表示使用安全高度\n"
+        "  --command-type <type>    直接指定指令类型 (Arm/Disarm/Takeoff/Land/RTL/...)\n"
+        "\n"
+        "任务 (按出现顺序发往 sendToPlane/<plane-id>):\n"
+        "  --anti-uav               下发自杀式反无任务 (TaskAction=Start)\n"
+        "  --stop-task              终止当前任务 (TaskAction=Stop)\n"
+        "  --target-track-id <id>   任务关联的目标跟踪 id (可空)\n"
+        "  --task-code <code>       任务类型，兼容项 (默认: anti-uav)\n"
+        "  --task-action <action>   任务动作 Start/Stop，兼容项\n"
+        "\n"
+        "其他:\n"
+        "  --listen-seconds <s>     发送后监听时长 (默认: 3)\n"
+        "  --ack-timeout-ms <ms>    等待 Ack 超时 (默认: 2000)\n"
+        "  --no-ack                 不回复收到的告警/Ack\n"
+        "  --send-gcs-target <id>   下发地面站目标轨迹\n"
+        "  --gcs-target-repeat <n>  地面站目标重复发送次数 (默认: 1)\n"
+        "  --send-param <k=v>       下发系统参数，可多次 (如 safe_height_m=30)\n"
+        "  --send-peer-state <id>   模拟友机状态上报\n"
+        "\n"
+        "示例:\n"
+        "  gcs_sim --plane-id uav1 --arm\n"
+        "  gcs_sim --plane-id uav1 --takeoff --takeoff-height 20\n"
+        "  gcs_sim --plane-id uav1 --anti-uav --target-track-id t-1\n"
+        "  gcs_sim --plane-id uav1 --arm --takeoff --takeoff-height 20 --anti-uav\n";
+    spdlog::info("{}", usage);
+}
 
 bool parse_envelope(const std::string& wire, Envelope& out) {
     const nlohmann::json envelope = nlohmann::json::parse(wire, nullptr, false);
@@ -57,8 +112,14 @@ bool parse_envelope(const std::string& wire, Envelope& out) {
 
 Options parse_options(int argc, char** argv) {
     Options options;
+    std::string pending_task_code = "anti-uav";
+
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
+        if (arg == "-h" || arg == "--help") {
+            options.help = true;
+            return options;
+        }
         if (arg == "--plane-id" && i + 1 < argc) {
             options.plane_id = argv[++i];
         } else if (arg == "--sender-id" && i + 1 < argc) {
@@ -71,20 +132,34 @@ Options parse_options(int argc, char** argv) {
             options.listen_seconds = std::stoi(argv[++i]);
         } else if (arg == "--ack-timeout-ms" && i + 1 < argc) {
             options.ack_timeout_ms = std::stoi(argv[++i]);
-        } else if (arg == "--no-command") {
-            options.send_command = false;
-        } else if (arg == "--no-task") {
-            options.send_task = false;
-        } else if (arg == "--task-action" && i + 1 < argc) {
-            options.task_action = argv[++i];
-        } else if (arg == "--task-code" && i + 1 < argc) {
-            options.task_code = argv[++i];
-        } else if (arg == "--target-track-id" && i + 1 < argc) {
-            options.target_track_id = argv[++i];
-        } else if (arg == "--command-type" && i + 1 < argc) {
-            options.command_type = argv[++i];
         } else if (arg == "--takeoff-height" && i + 1 < argc) {
             options.takeoff_height_m = std::stof(argv[++i]);
+        } else if (arg == "--arm") {
+            options.actions.push_back({ActionKind::Command, "Arm", {}});
+        } else if (arg == "--disarm") {
+            options.actions.push_back({ActionKind::Command, "Disarm", {}});
+        } else if (arg == "--takeoff") {
+            options.actions.push_back({ActionKind::Command, "Takeoff", {}});
+        } else if (arg == "--land") {
+            options.actions.push_back({ActionKind::Command, "Land", {}});
+        } else if (arg == "--rtl") {
+            options.actions.push_back({ActionKind::Command, "RTL", {}});
+        } else if (arg == "--hover") {
+            options.actions.push_back({ActionKind::Command, "Hover", {}});
+        } else if (arg == "--stop-motor") {
+            options.actions.push_back({ActionKind::Command, "StopMotor", {}});
+        } else if (arg == "--command-type" && i + 1 < argc) {
+            options.actions.push_back({ActionKind::Command, argv[++i], {}});
+        } else if (arg == "--anti-uav") {
+            options.actions.push_back({ActionKind::Task, pending_task_code, "Start"});
+        } else if (arg == "--stop-task") {
+            options.actions.push_back({ActionKind::Task, pending_task_code, "Stop"});
+        } else if (arg == "--task-code" && i + 1 < argc) {
+            pending_task_code = argv[++i];
+        } else if (arg == "--task-action" && i + 1 < argc) {
+            options.actions.push_back({ActionKind::Task, pending_task_code, argv[++i]});
+        } else if (arg == "--target-track-id" && i + 1 < argc) {
+            options.target_track_id = argv[++i];
         } else if (arg == "--send-gcs-target" && i + 1 < argc) {
             options.gcs_target_id = argv[++i];
         } else if (arg == "--gcs-target-repeat" && i + 1 < argc) {
@@ -95,6 +170,8 @@ Options parse_options(int argc, char** argv) {
             if (pos != std::string::npos) {
                 options.send_params.emplace_back(pair.substr(0, pos), pair.substr(pos + 1));
             }
+        } else {
+            SPDLOG_WARN("忽略未知参数: {}", arg);
         }
     }
     return options;
@@ -120,6 +197,10 @@ std::string send_typed(const zenoh::Session& session, const Options& options, co
 
 int main(int argc, char** argv) {
     const Options options = parse_options(argc, argv);
+    if (options.help) {
+        print_usage();
+        return 0;
+    }
 
     std::mutex mutex;
     std::condition_variable cv;
@@ -186,33 +267,37 @@ int main(int argc, char** argv) {
     zenoh::Subscriber<void> all_subscriber =
         session.declare_subscriber(zenoh::KeyExpr(std::string(plane::model::topic_sendToAll)), on_sample, []() {});
 
-    bool task_acked = true;
-    if (options.send_task) {
-        const std::string task_payload = nlohmann::json{
-            {"taskId", "task-1"},
-            {"taskCode", options.task_code},
-            {"targetTrackId", options.target_track_id},
-            {"taskAction",
-             options.task_action}}.dump();
-        const std::string task_id = send_typed(session, options, "TaskInfo", task_payload, ++sequence);
+    bool all_acked = true;
+    std::size_t command_index = 0;
+    std::size_t task_index = 0;
+    for (const auto& action : options.actions) {
+        std::string type;
+        std::string payload;
+        if (action.kind == ActionKind::Command) {
+            type = "Command";
+            payload = nlohmann::json{{"commandId", "cmd-" + std::to_string(++command_index)},
+                                     {"type", action.type},
+                                     {"takeoffHeight_m", options.takeoff_height_m},
+                                     {"waypoints", nlohmann::json::array()}}
+                          .dump();
+        } else {
+            type = "TaskInfo";
+            payload = nlohmann::json{{"taskId", "task-" + std::to_string(++task_index)},
+                                     {"taskCode", action.type},
+                                     {"targetTrackId", options.target_track_id},
+                                     {"taskAction", action.task_action}}
+                          .dump();
+        }
+        const std::string message_id = send_typed(session, options, type, payload, ++sequence);
         std::unique_lock<std::mutex> lock(mutex);
-        task_acked = cv.wait_for(lock, std::chrono::milliseconds(options.ack_timeout_ms),
-                                 [&]() { return acked_ids.count(task_id) > 0; });
+        const bool acked = cv.wait_for(lock, std::chrono::milliseconds(options.ack_timeout_ms),
+                                       [&]() { return acked_ids.count(message_id) > 0; });
+        SPDLOG_INFO("{} {} Ack: {}", type, action.type, acked);
+        all_acked = all_acked && acked;
     }
-    bool command_acked = true;
-    if (options.send_command) {
-        const std::string command_payload = nlohmann::json{
-            {"commandId", "cmd-1"},
-            {"type", options.command_type},
-            {"takeoffHeight_m", options.takeoff_height_m},
-            {"waypoints",
-             nlohmann::json::array()}}.dump();
-        const std::string command_id = send_typed(session, options, "Command", command_payload, ++sequence);
-        std::unique_lock<std::mutex> lock(mutex);
-        command_acked = cv.wait_for(lock, std::chrono::milliseconds(options.ack_timeout_ms),
-                                    [&]() { return acked_ids.count(command_id) > 0; });
+    if (options.actions.empty()) {
+        SPDLOG_INFO("未指定控制指令或任务，仅监听上报");
     }
-    SPDLOG_INFO("Ack 结果: TaskInfo={}, Command={}", task_acked, command_acked);
 
     if (!options.gcs_target_id.empty()) {
         for (int i = 0; i < options.gcs_target_repeat; ++i) {
@@ -264,5 +349,5 @@ int main(int argc, char** argv) {
 
     std::this_thread::sleep_for(std::chrono::seconds(options.listen_seconds));
     SPDLOG_INFO("状态统计: VehicleState={}, TaskState={}", vehicle_state_count.load(), task_state_count.load());
-    return task_acked && command_acked ? 0 : 1;
+    return all_acked ? 0 : 1;
 }

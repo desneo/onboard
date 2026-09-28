@@ -44,10 +44,7 @@ bool rga_resize_bgr(const cv::Mat& src, cv::Mat& dst, int width, int height) {
 
 Perception::Perception(plane::core::EventBus& event_bus, const plane::core::AppConfig& config,
                        PluginManagerApi& plugin_manager, plane::video::VideoStreamingApi& video_streaming)
-    : event_bus_(event_bus),
-      config_(config),
-      plugin_manager_(plugin_manager),
-      video_streaming_(video_streaming) {}
+    : event_bus_(event_bus), config_(config), plugin_manager_(plugin_manager), video_streaming_(video_streaming) {}
 
 Perception::~Perception() { stop(); }
 
@@ -269,7 +266,7 @@ void Perception::process_loop() {
                 std::lock_guard<std::mutex> lock(target_mutex_);
                 last_detection_targets_ = targets;
             }
-            if(config_.debug_target_log){
+            if (config_.debug_target_log) {
                 SPDLOG_INFO("检测 targets={}", targets.size());
             }
             DetectionResult result;
@@ -294,8 +291,8 @@ void Perception::process_loop() {
                     source_status = image_input_->status();
                 }
             }
-            SPDLOG_INFO("推流状态 state={} fps={:.1f} viewers={} source={}", magic_enum::enum_name(status.state),
-                        status.current_fps, status.viewer_count, magic_enum::enum_name(source_status));
+            SPDLOG_DEBUG("推流状态 state={} fps={:.1f} viewers={} source={}", magic_enum::enum_name(status.state),
+                         status.current_fps, status.viewer_count, magic_enum::enum_name(source_status));
         }
     }
 }

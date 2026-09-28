@@ -65,10 +65,6 @@ int main(int argc, char** argv) {
     event_bus.subscribe<plane::communication::CommunicationError>(
         plane::communication::events::kError,
         [](const plane::communication::CommunicationError& error) { SPDLOG_ERROR("通信错误事件: {}", error.detail); });
-    event_bus.subscribe<plane::flight_control::FlightControlError>(
-        plane::flight_control::events::kError,
-        [](const plane::flight_control::FlightControlError& error) { SPDLOG_ERROR("飞控错误事件: {}", error.detail); });
-
     auto state_store = std::make_unique<plane::state::StateStore>(event_bus, config);
     auto flight_control = std::make_unique<plane::flight_control::FlightControlModule>(event_bus, config, *state_store);
     auto system_param_store = std::make_unique<plane::core::SystemParamStore>(event_bus, config);
