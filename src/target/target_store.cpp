@@ -16,7 +16,8 @@ constexpr std::size_t kGcsTargetHistoryDepth = 20;
 
 }  // namespace
 
-TargetStore::TargetStore(plane::core::EventBus& event_bus) : event_bus_(event_bus) {}
+TargetStore::TargetStore(plane::core::EventBus& event_bus, const plane::core::AppConfig& config)
+    : event_bus_(event_bus), config_(config) {}
 
 TargetStore::~TargetStore() { stop(); }
 
@@ -97,7 +98,9 @@ void TargetStore::on_detection(const plane::perception::DetectionResult& result)
         std::lock_guard<std::mutex> lock(mutex_);
         vision_targets_ = result.targets;
     }
-    SPDLOG_INFO("视觉目标更新: {} 个", result.targets.size());
+    if (config_.debug_target_log) {
+        SPDLOG_INFO("视觉目标更新: {} 个", result.targets.size());
+    }
 }
 
 }  // namespace plane::target

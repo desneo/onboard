@@ -18,10 +18,19 @@ mkdir -p "${PLANE_DIR}/config" "${PLANE_DIR}/plugins" "${PLANE_DIR}/lib"
 rm -f "${PLANE_DIR}"/plugins/*.so
 install -m 0755 "${BUILD_DIR}"/plugins/*.so "${PLANE_DIR}/plugins/" 2>/dev/null || true
 
-# 配置文件：不存在时从工程生成，plugins_dir 指向目录内 plugins。
-if [ ! -f "${PLANE_DIR}/config/onboard.conf" ]; then
-  sed 's|^plugins_dir = .*|plugins_dir = plugins|' "${ROOT}/config/onboard.conf" > "${PLANE_DIR}/config/onboard.conf"
+# 模型目录：复制到独立运行目录（config 中 det_model_path 使用相对路径 models/...）。
+# 来源默认 ../algorithm/models，可用 PLANE_MODELS_DIR 覆盖。
+MODELS_SRC="${PLANE_MODELS_DIR:-${ROOT}/../algorithm/models}"
+if [ -d "${MODELS_SRC}" ]; then
+  rm -rf "${PLANE_DIR}/models"
+  cp -a "${MODELS_SRC}" "${PLANE_DIR}/models"
+  echo "已复制模型目录: ${MODELS_SRC} -> ${PLANE_DIR}/models"
+else
+  echo "警告: 未找到模型目录 ${MODELS_SRC}，跳过" >&2
 fi
+
+# 配置文件：每次从工程生成，plugins_dir 指向目录内 plugins。
+sed 's|^plugins_dir = .*|plugins_dir = plugins|' "${ROOT}/config/onboard.conf" > "${PLANE_DIR}/config/onboard.conf"
 
 # 收集三方库：对可执行文件与插件做 ldd，取非系统路径的依赖。
 collect_libs() {

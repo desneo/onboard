@@ -18,6 +18,10 @@ std::string trim(const std::string& text) {
     return text.substr(begin, end - begin + 1);
 }
 
+bool parse_bool(const std::string& value) {
+    return value == "1" || value == "true" || value == "True" || value == "on";
+}
+
 /// 仿真飞机判定：udp 链路且 fc_udp_url 端口处于 14200-14299。
 bool detect_is_simulation(const AppConfig& config) {
     if (config.fc_link_type != "udp") {
@@ -104,8 +108,6 @@ bool load_config(const std::string& path, AppConfig& out) {
             out.bt_takeoff_tolerance_m = std::stod(value);
         } else if (key == "plugins_dir") {
             out.plugins_dir = value;
-        } else if (key == "perception_process_interval_ms") {
-            out.perception_process_interval_ms = std::stoi(value);
         } else if (key == "image_source_type") {
             out.image_source_type = value;
         } else if (key == "image_mipi_device") {
@@ -150,6 +152,8 @@ bool load_config(const std::string& path, AppConfig& out) {
             out.stream_bitrate_kbps = std::stoi(value);
         } else if (key == "stream_gop") {
             out.stream_gop = std::stoi(value);
+        } else if (key == "debug_target_log") {
+            out.debug_target_log = parse_bool(value);
         } else if (key == "alert_voltage_threshold_v") {
             out.alert_voltage_threshold_v = std::stod(value);
         } else if (key == "suicide_detection_start_distance_m") {

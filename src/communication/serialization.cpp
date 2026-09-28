@@ -8,6 +8,20 @@
 #include <type_traits>
 #include <utility>
 
+namespace magic_enum::customize {
+
+/// 协议 key 为小写连字符（anti-uav），与枚举名 AntiUav 大小写/分隔不同，需自定义名称。
+template <>
+constexpr customize_t enum_name<plane::model::TaskCode>(plane::model::TaskCode value) noexcept {
+    switch (value) {
+        case plane::model::TaskCode::AntiUav:
+            return "anti-uav";
+    }
+    return default_tag;
+}
+
+}  // namespace magic_enum::customize
+
 namespace plane::communication {
 namespace {
 
@@ -35,22 +49,6 @@ bool enum_from_string(const std::string& name, Enum& out) {
     }
     out = *value;
     return true;
-}
-
-std::string task_code_to_string(plane::model::TaskCode code) {
-    switch (code) {
-        case plane::model::TaskCode::AntiUav:
-            return "anti-uav";
-    }
-    return {};
-}
-
-bool task_code_from_string(const std::string& name, plane::model::TaskCode& out) {
-    if (name == "anti-uav") {
-        out = plane::model::TaskCode::AntiUav;
-        return true;
-    }
-    return false;
 }
 
 template <typename T>
@@ -81,7 +79,7 @@ struct MessageTypeOf<plane::model::TaskState> {
 bool to_payload(const plane::model::TaskInfo& value, std::string& out, std::string& error) {
     try {
         out = json{{"taskId", value.taskId},
-                   {"taskCode", task_code_to_string(value.taskCode)},
+                   {"taskCode", std::string(magic_enum::enum_name(value.taskCode))},
                    {"targetTrackId", value.targetTrackId},
                    {"taskAction", std::string(magic_enum::enum_name(value.taskAction))}}
                   .dump();
@@ -97,7 +95,7 @@ bool from_payload(const std::string& payload, plane::model::TaskInfo& out, std::
         const json in = json::parse(payload);
         out.taskId = in.at("taskId").get<std::string>();
         const std::string task_code = in.at("taskCode").get<std::string>();
-        if (!task_code_from_string(task_code, out.taskCode)) {
+        if (!enum_from_string(task_code, out.taskCode)) {
             error = "未知 TaskCode: " + task_code;
             return false;
         }

@@ -216,7 +216,7 @@ void Perception::capture_loop() {
 
 void Perception::process_loop() {
     while (running_) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(config_.perception_process_interval_ms));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
         std::shared_ptr<cv::Mat> frame = latest_frame_shared();
         if (!frame || frame->empty()) {
             continue;
@@ -245,9 +245,7 @@ void Perception::process_loop() {
                 std::lock_guard<std::mutex> lock(target_mutex_);
                 last_detection_targets_ = targets;
             }
-            const std::int64_t now = now_ms();
-            if (now - last_detection_log_ms_ >= 1000) {
-                last_detection_log_ms_ = now;
+            if(config_.debug_target_log){
                 SPDLOG_INFO("检测 targets={}", targets.size());
             }
             DetectionResult result;

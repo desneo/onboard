@@ -3,7 +3,7 @@
 - `docs/requirement.md` 原始项目背景信息和输入
 - `docs/SPEC.md` 产品规格文档
 - `docs/ARCHITECTURE.md` 架构设计文档
-- `docs/测试信息文档.txt` 测试时参考的文档
+- `docs/testcase_info.txt` 测试时参考的文档
 
 ## 禁止修改 requirement.md，除非得到我明确允许
 

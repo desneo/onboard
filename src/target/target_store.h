@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "core/config.h"
 #include "core/event_bus.h"
 #include "core/module.h"
 #include "perception/perception_api.h"
@@ -16,7 +17,7 @@ namespace plane::target {
 /// 目标管理：机载感知目标（最新）与 GCS 目标（最新 + 历史）（ARCHITECTURE §16）。
 class TargetStore final : public plane::core::IModule, public TargetStoreApi {
    public:
-    explicit TargetStore(plane::core::EventBus& event_bus);
+    TargetStore(plane::core::EventBus& event_bus, const plane::core::AppConfig& config);
     ~TargetStore() override;
 
     std::string name() const override;
@@ -35,6 +36,7 @@ class TargetStore final : public plane::core::IModule, public TargetStoreApi {
     void on_detection(const plane::perception::DetectionResult& result);
 
     plane::core::EventBus& event_bus_;
+    const plane::core::AppConfig& config_;
     mutable std::mutex mutex_;
     std::vector<plane::model::VisionTarget> vision_targets_;
     std::unordered_map<std::string, plane::model::GcsTarget> gcs_latest_;

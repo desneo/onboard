@@ -37,7 +37,9 @@ struct AppConfig {
     double bt_takeoff_tolerance_m = 1.0;
 
     std::string plugins_dir = "build/plugins";
-    int perception_process_interval_ms = 100;
+
+    /// 目标调试日志：按需打开逐帧高频日志（默认关闭）。
+    bool debug_target_log = false;
 
     // 取图插件（image_input）
     std::string image_source_type = "Mipi";  ///< Mipi | Rtsp
@@ -46,7 +48,7 @@ struct AppConfig {
     int image_reconnect_interval_s = 10;
 
     // 检测插件（det_mot）
-    std::string det_model_path = "/home/firefly/code/projects/anti-uav/algorithm/models/yolo11/yolo11n";
+    std::string det_model_path = "models/yolo11/yolo11n";
     std::string det_config_dir = "/home/firefly/code/projects/anti-uav/algorithm/perception/configs";
     float det_confidence_threshold = 0.4F;
     float det_nms_threshold = 0.45F;
