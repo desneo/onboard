@@ -5,9 +5,13 @@
 #include <chrono>
 #include <magic_enum/magic_enum.hpp>
 
+#include "core/time_utils.h"
 #include "flight_control/flight_control_events.h"
 
 namespace plane::flight_control {
+
+using plane::core::now_ms;
+
 namespace {
 
 constexpr int kMonitorIntervalMs = 200;
@@ -452,11 +456,6 @@ void FlightControlModule::report_error(const std::string& detail) const {
     FlightControlError event;
     event.detail = detail;
     event_bus_.publish(events::kError, event);
-}
-
-std::int64_t FlightControlModule::now_ms() const {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
-        .count();
 }
 
 }  // namespace plane::flight_control

@@ -85,7 +85,6 @@ class FlightControlModule final : public plane::core::IModule, public FlightCont
     bool ensure_connected(std::string& error) const;
     bool upload_and_start_mission(const std::vector<plane::model::GeoPoint>& points, std::string& error);
     void report_error(const std::string& detail) const;
-    std::int64_t now_ms() const;
 
     plane::core::EventBus& event_bus_;
     const plane::core::AppConfig& config_;

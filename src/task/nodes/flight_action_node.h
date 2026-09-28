@@ -3,11 +3,11 @@
 #include <behaviortree_cpp/action_node.h>
 #include <spdlog/spdlog.h>
 
-#include <chrono>
 #include <cstdint>
 #include <string>
 
 #include "core/config.h"
+#include "core/time_utils.h"
 #include "flight_control/flight_control_api.h"
 #include "state/state_store_api.h"
 
@@ -26,7 +26,7 @@ class FlightActionNode : public BT::StatefulActionNode {
 
    protected:
     BT::NodeStatus onStart() override {
-        start_ms_ = now_ms();
+        start_ms_ = plane::core::now_ms();
         if (config().blackboard) {
             config().blackboard->set("current_node", std::string(name()));
         }
@@ -39,7 +39,7 @@ class FlightActionNode : public BT::StatefulActionNode {
     }
 
     BT::NodeStatus onRunning() override {
-        if (now_ms() - start_ms_ > node_timeout_ms()) {
+        if (plane::core::now_ms() - start_ms_ > node_timeout_ms()) {
             SPDLOG_ERROR("节点 {} 超时 ({} ms)", name(), node_timeout_ms());
             return BT::NodeStatus::FAILURE;
         }
@@ -59,11 +59,6 @@ class FlightActionNode : public BT::StatefulActionNode {
     const plane::core::AppConfig* app_config_;
 
    private:
-    std::int64_t now_ms() const {
-        return std::chrono::duration_cast<std::chrono::milliseconds>(
-                   std::chrono::steady_clock::now().time_since_epoch())
-            .count();
-    }
     std::int64_t start_ms_ = 0;
 };
 

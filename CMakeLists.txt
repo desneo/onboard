@@ -31,6 +31,7 @@ add_executable(plane
   src/core/placeholder_modules.cpp
   src/core/runtime.cpp
   src/core/system_param_store.cpp
+  src/core/time_utils.cpp
   src/state/state_store.cpp
   src/state/state_monitor.cpp
   src/flight_control/flight_control_module.cpp

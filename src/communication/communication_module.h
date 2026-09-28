@@ -54,7 +54,6 @@ class CommunicationModule final : public plane::core::IModule, public Communicat
     bool send_message(const std::string& topic, const OutgoingMessage& message);
     bool send_ack(const plane::model::Message& envelope);
     void report_error(const std::string& detail) const;
-    std::int64_t now_ms() const;
 
     plane::core::EventBus& event_bus_;
     const plane::core::AppConfig& config_;

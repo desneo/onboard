@@ -2,25 +2,12 @@
 
 #include <spdlog/spdlog.h>
 
+#include <magic_enum/magic_enum.hpp>
 #include <string>
 
 #include "core/runtime.h"
 
 namespace plane::video {
-namespace {
-
-plane::algorithm::StreamType parse_stream_type(const std::string& value) {
-    if (value == "Rtsp") {
-        return plane::algorithm::StreamType::Rtsp;
-    }
-    return plane::algorithm::StreamType::WebRtc;
-}
-
-const char* stream_type_name(plane::algorithm::StreamType type) {
-    return type == plane::algorithm::StreamType::Rtsp ? "Rtsp" : "WebRtc";
-}
-
-}  // namespace
 
 VideoStreaming::VideoStreaming(const plane::core::AppConfig& config,
                                plane::perception::PluginManagerApi& plugin_manager)
@@ -47,7 +34,8 @@ void VideoStreaming::release() {}
 
 plane::algorithm::StreamConfig VideoStreaming::make_stream_config() const {
     plane::algorithm::StreamConfig stream;
-    stream.type = parse_stream_type(config_.stream_type);
+    stream.type = magic_enum::enum_cast<plane::algorithm::StreamType>(config_.stream_type)
+                      .value_or(plane::algorithm::StreamType::WebRtc);
     stream.url = config_.stream_url;
     stream.app = config_.stream_app;
     stream.stream = config_.stream_name;
@@ -81,7 +69,8 @@ bool VideoStreaming::start_stream(std::string& error) {
     SPDLOG_INFO(
         "[plugin:videostream_output] type={} app={} stream={} rtsp_port={} http_port={} rtc_port={} size={}x{} "
         "max_fps={} bitrate_kbps={} gop={}",
-        stream_type_name(stream.type), stream.app, stream.stream, stream.rtsp_port, stream.http_port, stream.rtc_port,
+        magic_enum::enum_name(stream.type), stream.app, stream.stream, stream.rtsp_port, stream.http_port,
+        stream.rtc_port,
         stream.width, stream.height, stream.max_fps, stream.bitrate_kbps, stream.gop);
     SPDLOG_INFO("推流地址={}", output_->streamUrl());
     return true;

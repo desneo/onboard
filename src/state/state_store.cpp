@@ -5,9 +5,13 @@
 #include <chrono>
 #include <utility>
 
+#include "core/time_utils.h"
 #include "state/state_events.h"
 
 namespace plane::state {
+
+using plane::core::now_ms;
+
 namespace {
 
 constexpr int kTickIntervalMs = 200;
@@ -133,11 +137,6 @@ void StateStore::tick_loop() {
             event_bus_.publish(events::kGcsLinkChanged, link);
         }
     }
-}
-
-std::int64_t StateStore::now_ms() const {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
-        .count();
 }
 
 }  // namespace plane::state

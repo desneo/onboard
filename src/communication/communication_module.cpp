@@ -9,8 +9,12 @@
 
 #include "communication/communication_events.h"
 #include "communication/serialization.h"
+#include "core/time_utils.h"
 
 namespace plane::communication {
+
+using plane::core::now_ms;
+
 namespace {
 
 constexpr int kWorkerTickMs = 50;
@@ -297,11 +301,6 @@ void CommunicationModule::report_error(const std::string& detail) const {
     CommunicationError event;
     event.detail = detail;
     event_bus_.publish(events::kError, event);
-}
-
-std::int64_t CommunicationModule::now_ms() const {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
-        .count();
 }
 
 }  // namespace plane::communication

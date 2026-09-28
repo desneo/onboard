@@ -3,6 +3,7 @@
 #include <spdlog/spdlog.h>
 
 #include <chrono>
+#include <magic_enum/magic_enum.hpp>
 #include <opencv2/imgproc.hpp>
 #include <string>
 #include <utility>
@@ -14,9 +15,13 @@
 #endif
 
 #include "core/runtime.h"
+#include "core/time_utils.h"
 #include "perception/perception_events.h"
 
 namespace plane::perception {
+
+using plane::core::now_ms;
+
 namespace {
 
 #if defined(__aarch64__)
@@ -34,50 +39,6 @@ bool rga_resize_bgr(const cv::Mat& src, cv::Mat& dst, int width, int height) {
     return imresize(src_buf, dst_buf) == IM_STATUS_SUCCESS;
 }
 #endif
-
-std::int64_t now_ms() {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
-        .count();
-}
-
-plane::algorithm::ImageSourceType parse_source_type(const std::string& value) {
-    if (value == "Rtsp") {
-        return plane::algorithm::ImageSourceType::Rtsp;
-    }
-    return plane::algorithm::ImageSourceType::Mipi;
-}
-
-const char* source_type_name(plane::algorithm::ImageSourceType type) {
-    return type == plane::algorithm::ImageSourceType::Rtsp ? "Rtsp" : "Mipi";
-}
-
-const char* source_status_name(plane::algorithm::SourceStatus status) {
-    switch (status) {
-        case plane::algorithm::SourceStatus::Idle:
-            return "Idle";
-        case plane::algorithm::SourceStatus::Connecting:
-            return "Connecting";
-        case plane::algorithm::SourceStatus::Streaming:
-            return "Streaming";
-        case plane::algorithm::SourceStatus::Stopped:
-            return "Stopped";
-    }
-    return "Unknown";
-}
-
-const char* stream_state_name(plane::algorithm::StreamState state) {
-    switch (state) {
-        case plane::algorithm::StreamState::Idle:
-            return "Idle";
-        case plane::algorithm::StreamState::Ready:
-            return "Ready";
-        case plane::algorithm::StreamState::Streaming:
-            return "Streaming";
-        case plane::algorithm::StreamState::Stopped:
-            return "Stopped";
-    }
-    return "Unknown";
-}
 
 }  // namespace
 
@@ -166,7 +127,8 @@ bool Perception::ensure_image_input(std::string& error) {
         return false;
     }
     plane::algorithm::ImageSourceConfig source;
-    source.type = parse_source_type(config_.image_source_type);
+    source.type = magic_enum::enum_cast<plane::algorithm::ImageSourceType>(config_.image_source_type)
+                      .value_or(plane::algorithm::ImageSourceType::Mipi);
     source.mipi_device = config_.image_mipi_device;
     source.rtsp_url = config_.image_rtsp_url;
     source.reconnect_interval_s = config_.image_reconnect_interval_s;
@@ -177,9 +139,9 @@ bool Perception::ensure_image_input(std::string& error) {
         image_input_.reset();
         return false;
     }
-    SPDLOG_INFO("[plugin:image_input] type={} device={} rtsp={} reconnect_s={} size={}x{}", source_type_name(source.type),
-                source.mipi_device.empty() ? "auto" : source.mipi_device, source.rtsp_url, source.reconnect_interval_s,
-                source.width, source.height);
+    SPDLOG_INFO("[plugin:image_input] type={} device={} rtsp={} reconnect_s={} size={}x{}",
+                magic_enum::enum_name(source.type), source.mipi_device.empty() ? "auto" : source.mipi_device,
+                source.rtsp_url, source.reconnect_interval_s, source.width, source.height);
     return true;
 }
 
@@ -332,8 +294,8 @@ void Perception::process_loop() {
                     source_status = image_input_->status();
                 }
             }
-            SPDLOG_INFO("推流状态 state={} fps={:.1f} viewers={} source={}", stream_state_name(status.state),
-                        status.current_fps, status.viewer_count, source_status_name(source_status));
+            SPDLOG_INFO("推流状态 state={} fps={:.1f} viewers={} source={}", magic_enum::enum_name(status.state),
+                        status.current_fps, status.viewer_count, magic_enum::enum_name(source_status));
         }
     }
 }
