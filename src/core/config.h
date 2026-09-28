@@ -17,6 +17,7 @@ struct AppConfig {
     std::string zenoh_config_file;
     std::string zenoh_connect;
     std::string zenoh_listen;
+    bool debug_zenoh_log = false;  ///< Zenoh 调试日志：打印每条消息发送的目标端点。
     int comm_ack_timeout_ms = 500;
     int comm_ack_max_retries = 3;
     int comm_rx_queue_max = 1024;
@@ -46,6 +47,8 @@ struct AppConfig {
     std::string image_mipi_device;           ///< 空=自动发现
     std::string image_rtsp_url = "rtsp://192.168.1.220:8554/drone";
     int image_reconnect_interval_s = 10;
+    int image_width = 640;   ///< 读流尺寸（MIPI 采集宽），传给取图插件
+    int image_height = 640;  ///< 读流尺寸（MIPI 采集高），传给取图插件
 
     // 检测插件（det_mot）
     std::string det_model_path = "models/yolo11/yolo11n";
@@ -54,6 +57,8 @@ struct AppConfig {
     float det_nms_threshold = 0.45F;
     float det_track_thresh = 0.5F;
     int det_track_buffer = 30;
+    int det_input_width = 640;   ///< 检测模型输入宽：读流后统一 resize 到该尺寸
+    int det_input_height = 640;  ///< 检测模型输入高：读流后统一 resize 到该尺寸
 
     // 推流插件（videostream_output）
     std::string stream_type = "WebRtc";  ///< WebRtc | Rtsp

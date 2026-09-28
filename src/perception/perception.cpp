@@ -3,15 +3,37 @@
 #include <spdlog/spdlog.h>
 
 #include <chrono>
+#include <opencv2/imgproc.hpp>
 #include <string>
 #include <utility>
 #include <vector>
+
+#if defined(__aarch64__)
+#include <rga/im2d.h>
+#include <rga/rga.h>
+#endif
 
 #include "core/runtime.h"
 #include "perception/perception_events.h"
 
 namespace plane::perception {
 namespace {
+
+#if defined(__aarch64__)
+/// 用 RK3588 RGA 硬件把 BGR 帧缩放到目标分辨率；成功返回 true（失败时由调用方回退 CPU）。
+bool rga_resize_bgr(const cv::Mat& src, cv::Mat& dst, int width, int height) {
+    if (!src.isContinuous()) {
+        return false;
+    }
+    dst.create(height, width, src.type());
+    if (!dst.isContinuous()) {
+        return false;
+    }
+    rga_buffer_t src_buf = wrapbuffer_virtualaddr(static_cast<void*>(src.data), src.cols, src.rows, RK_FORMAT_BGR_888);
+    rga_buffer_t dst_buf = wrapbuffer_virtualaddr(static_cast<void*>(dst.data), width, height, RK_FORMAT_BGR_888);
+    return imresize(src_buf, dst_buf) == IM_STATUS_SUCCESS;
+}
+#endif
 
 std::int64_t now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
@@ -148,14 +170,16 @@ bool Perception::ensure_image_input(std::string& error) {
     source.mipi_device = config_.image_mipi_device;
     source.rtsp_url = config_.image_rtsp_url;
     source.reconnect_interval_s = config_.image_reconnect_interval_s;
+    source.width = config_.image_width;
+    source.height = config_.image_height;
     if (!image_input_->setConfig(source, error)) {
         SPDLOG_ERROR("取图插件 setConfig 失败: {}", error);
         image_input_.reset();
         return false;
     }
-    SPDLOG_INFO("[plugin:image_input] type={} device={} rtsp={} reconnect_s={}", source_type_name(source.type),
-                source.mipi_device.empty() ? "auto" : source.mipi_device, source.rtsp_url,
-                source.reconnect_interval_s);
+    SPDLOG_INFO("[plugin:image_input] type={} device={} rtsp={} reconnect_s={} size={}x{}", source_type_name(source.type),
+                source.mipi_device.empty() ? "auto" : source.mipi_device, source.rtsp_url, source.reconnect_interval_s,
+                source.width, source.height);
     return true;
 }
 
@@ -207,7 +231,45 @@ void Perception::capture_loop() {
         }
         if (!first_frame_logged_) {
             first_frame_logged_ = true;
-            SPDLOG_INFO("首帧 size={}x{}", frame->cols, frame->rows);
+            SPDLOG_INFO("首帧 size={}x{}, 检测输入={}x{}", frame->cols, frame->rows, config_.det_input_width,
+                        config_.det_input_height);
+        }
+        // 读流后先统一到检测模型输入分辨率（优先 RGA 硬件），检测与推流均使用该帧。
+        const int target_w = config_.det_input_width;
+        const int target_h = config_.det_input_height;
+        if (target_w > 0 && target_h > 0 && (frame->cols != target_w || frame->rows != target_h)) {
+            resize_src_w_ = frame->cols;
+            resize_src_h_ = frame->rows;
+            auto resized = std::make_shared<cv::Mat>();
+            bool resized_by_rga = false;
+            const auto resize_begin = std::chrono::steady_clock::now();
+#if defined(__aarch64__)
+            resized_by_rga = rga_resize_bgr(*frame, *resized, target_w, target_h);
+#endif
+            if (!resized_by_rga) {
+                cv::resize(*frame, *resized, cv::Size(target_w, target_h));
+            }
+            const auto resize_end = std::chrono::steady_clock::now();
+            if (!resize_backend_logged_) {
+                resize_backend_logged_ = true;
+                SPDLOG_INFO("分辨率转换后端: {}", resized_by_rga ? "RGA(硬件)" : "OpenCV(CPU)");
+            }
+            resize_total_us_ +=
+                std::chrono::duration_cast<std::chrono::microseconds>(resize_end - resize_begin).count();
+            ++resize_count_;
+            const std::int64_t now = now_ms();
+            if (last_resize_log_ms_ == 0) {
+                last_resize_log_ms_ = now;
+            }
+            if (resize_count_ >= 120 || now - last_resize_log_ms_ >= 2000) {
+                SPDLOG_INFO("分辨率转换耗时: {}x{} -> {}x{}, avg={:.0f}us (n={})", resize_src_w_, resize_src_h_,
+                            target_w, target_h,
+                            static_cast<double>(resize_total_us_) / static_cast<double>(resize_count_), resize_count_);
+                resize_total_us_ = 0;
+                resize_count_ = 0;
+                last_resize_log_ms_ = now;
+            }
+            frame = std::move(resized);
         }
         std::lock_guard<std::mutex> lock(frame_mutex_);
         latest_frame_ = std::move(frame);

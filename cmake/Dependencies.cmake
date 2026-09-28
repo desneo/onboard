@@ -30,7 +30,7 @@ list(PREPEND CMAKE_PREFIX_PATH
 find_package(fmt REQUIRED CONFIG)
 find_package(spdlog REQUIRED CONFIG)
 find_package(GeographicLib REQUIRED CONFIG)
-find_package(OpenCV REQUIRED COMPONENTS core)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc)
 find_package(MAVSDK REQUIRED CONFIG)
 find_package(zenohc REQUIRED CONFIG)
 find_package(zenohcxx REQUIRED CONFIG)
@@ -70,6 +70,7 @@ target_link_libraries(plane_deps INTERFACE
   spdlog::spdlog
   GeographicLib::GeographicLib
   opencv_core
+  opencv_imgproc
   MAVSDK::mavsdk
   zenohc::lib
   zenohcxx::zenohc
@@ -80,6 +81,15 @@ target_link_libraries(plane_deps INTERFACE
   plane_nlohmann_json
 )
 
+# RK3588 分辨率转换使用 RGA 硬件（仅 arm64 平台存在 librga）。
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+  find_library(PLANE_RGA_LIBRARY NAMES rga)
+  if(NOT PLANE_RGA_LIBRARY)
+    message(FATAL_ERROR "缺少 librga（RK3588 RGA 分辨率转换依赖）")
+  endif()
+  target_link_libraries(plane_deps INTERFACE "${PLANE_RGA_LIBRARY}")
+endif()
+
 add_library(plane::deps ALIAS plane_deps)
 add_library(plane::common_include ALIAS plane_common_include)
 add_library(plane::behaviortree ALIAS plane_behaviortree)
@@ -89,7 +99,7 @@ add_library(plane::magic_enum ALIAS plane_magic_enum)
 add_library(plane::nlohmann_json ALIAS plane_nlohmann_json)
 
 foreach(_target fmt::fmt spdlog::spdlog GeographicLib::GeographicLib MAVSDK::mavsdk
-                zenohc::lib zenohcxx::zenohc opencv_core)
+                zenohc::lib zenohcxx::zenohc opencv_core opencv_imgproc)
   if(NOT TARGET ${_target})
     message(FATAL_ERROR "缺少 CMake target: ${_target}")
   endif()

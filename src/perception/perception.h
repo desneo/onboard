@@ -67,6 +67,12 @@ class Perception final : public plane::core::IModule, public PerceptionApi {
     std::int64_t last_detection_log_ms_ = 0;
     std::int64_t last_status_log_ms_ = 0;
     bool first_frame_logged_ = false;
+    bool resize_backend_logged_ = false;
+    std::int64_t last_resize_log_ms_ = 0;
+    std::int64_t resize_total_us_ = 0;
+    std::uint64_t resize_count_ = 0;
+    int resize_src_w_ = 0;
+    int resize_src_h_ = 0;
 };
 
 }  // namespace plane::perception

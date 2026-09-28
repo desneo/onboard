@@ -37,6 +37,7 @@ bool CommunicationModule::start() {
     endpoints.config_file = config_.zenoh_config_file;
     endpoints.connect = config_.zenoh_connect;
     endpoints.listen = config_.zenoh_listen;
+    endpoints.debug_log = config_.debug_zenoh_log;
 
     std::string error;
     if (!transport_.open(endpoints, error)) {

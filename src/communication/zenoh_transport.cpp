@@ -1,5 +1,7 @@
 #include "communication/zenoh_transport.h"
 
+#include <spdlog/spdlog.h>
+
 #include <optional>
 #include <string>
 #include <utility>
@@ -42,11 +44,28 @@ std::string canon_key_expr(const std::string& key_expr) {
     return first == std::string::npos ? std::string{} : key_expr.substr(first);
 }
 
+std::string join_ids(const std::vector<zenoh::Id>& ids) {
+    std::string result;
+    for (const auto& id : ids) {
+        if (!result.empty()) {
+            result += ",";
+        }
+        result += id.to_string();
+    }
+    return result;
+}
+
+std::string endpoints_or_default(const std::string& endpoints) {
+    return endpoints.empty() ? std::string("(未配置, 默认/组播发现)") : endpoints;
+}
+
 }  // namespace
 
 struct ZenohTransport::Impl {
     std::optional<zenoh::Session> session;
     std::vector<zenoh::Subscriber<void>> subscribers;
+    bool debug_log = false;
+    std::string remote_endpoints;
 };
 
 ZenohTransport::ZenohTransport() = default;
@@ -56,6 +75,8 @@ bool ZenohTransport::open(const ZenohEndpoints& endpoints, std::string& error) {
     if (!impl_) {
         impl_ = std::make_unique<Impl>();
     }
+    impl_->debug_log = endpoints.debug_log;
+    impl_->remote_endpoints = endpoints.connect;
     try {
         zenoh::Config config = endpoints.config_file.empty() ? zenoh::Config::create_default()
                                                              : zenoh::Config::from_file(endpoints.config_file);
@@ -73,6 +94,18 @@ bool ZenohTransport::open(const ZenohEndpoints& endpoints, std::string& error) {
             return false;
         }
         impl_->session.emplace(std::move(session));
+
+        std::string routers;
+        std::string peers;
+        try {
+            routers = join_ids(impl_->session->get_routers_z_id());
+            peers = join_ids(impl_->session->get_peers_z_id());
+        } catch (const zenoh::ZException& e) {
+            SPDLOG_WARN("Zenoh 已上线但获取对端信息失败: {}", e.what());
+        }
+        SPDLOG_INFO("Zenoh 已上线: 远端端点(connect)=[{}], 本地监听(listen)=[{}], 本机 zid={}, routers=[{}], peers=[{}]",
+                    endpoints_or_default(endpoints.connect), endpoints_or_default(endpoints.listen),
+                    impl_->session->get_zid().to_string(), routers, peers);
         return true;
     } catch (const zenoh::ZException& e) {
         error = e.what();
@@ -115,6 +148,10 @@ bool ZenohTransport::put(const std::string& key_expr, const std::string& payload
     if (!impl_ || !impl_->session.has_value()) {
         error = "Session 未打开";
         return false;
+    }
+    if (impl_->debug_log) {
+        SPDLOG_INFO("[zenoh:debug] put topic={} -> 远端端点=[{}], payload={}", key_expr,
+                    endpoints_or_default(impl_->remote_endpoints), payload);
     }
     try {
         zenoh::ZResult result = Z_OK;

@@ -80,6 +80,8 @@ bool load_config(const std::string& path, AppConfig& out) {
             out.zenoh_connect = value;
         } else if (key == "zenoh_listen") {
             out.zenoh_listen = value;
+        } else if (key == "debug_zenoh_log") {
+            out.debug_zenoh_log = parse_bool(value);
         } else if (key == "comm_ack_timeout_ms") {
             out.comm_ack_timeout_ms = std::stoi(value);
         } else if (key == "comm_ack_max_retries") {
@@ -116,6 +118,10 @@ bool load_config(const std::string& path, AppConfig& out) {
             out.image_rtsp_url = value;
         } else if (key == "image_reconnect_interval_s") {
             out.image_reconnect_interval_s = std::stoi(value);
+        } else if (key == "image_width") {
+            out.image_width = std::stoi(value);
+        } else if (key == "image_height") {
+            out.image_height = std::stoi(value);
         } else if (key == "det_model_path") {
             out.det_model_path = value;
         } else if (key == "det_config_dir") {
@@ -128,6 +134,10 @@ bool load_config(const std::string& path, AppConfig& out) {
             out.det_track_thresh = std::stof(value);
         } else if (key == "det_track_buffer") {
             out.det_track_buffer = std::stoi(value);
+        } else if (key == "det_input_width") {
+            out.det_input_width = std::stoi(value);
+        } else if (key == "det_input_height") {
+            out.det_input_height = std::stoi(value);
         } else if (key == "stream_type") {
             out.stream_type = value;
         } else if (key == "stream_url") {

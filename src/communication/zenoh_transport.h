@@ -11,6 +11,7 @@ struct ZenohEndpoints {
     std::string config_file;
     std::string connect;
     std::string listen;
+    bool debug_log = false;
 };
 
 /// Zenoh 最小封装：Session 生命周期、订阅与发送。
