@@ -16,7 +16,7 @@ bool MidcourseNode::dispatch(std::string& error) {
     return true;
 }
 
-BT::NodeStatus MidcourseNode::check() {
+BT::NodeStatus MidcourseNode::checkFinish() {
     plane::model::GcsTarget target;
     if (!controller_.resolve_target(context_->targetTrackId, target)) {
         SPDLOG_ERROR("中段制导目标不可用");

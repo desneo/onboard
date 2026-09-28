@@ -15,7 +15,7 @@ bool DetectNode::dispatch(std::string& error) {
     return true;
 }
 
-BT::NodeStatus DetectNode::check() {
+BT::NodeStatus DetectNode::checkFinish() {
     plane::model::GcsTarget gcs_target;
     if (controller_.resolve_target(context_->targetTrackId, gcs_target)) {
         std::string approach_error;

@@ -11,7 +11,7 @@ class RtlNode final : public FlightActionNode {
 
    protected:
     bool dispatch(std::string& error) override;
-    BT::NodeStatus check() override;
+    BT::NodeStatus checkFinish() override;
 };
 
 }  // namespace plane::task

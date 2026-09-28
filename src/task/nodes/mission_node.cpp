@@ -13,7 +13,7 @@ bool MissionNode::dispatch(std::string& error) {
     return flight_control_->goto_waypoint(command_context_->waypoints.front(), error);
 }
 
-BT::NodeStatus MissionNode::check() {
+BT::NodeStatus MissionNode::checkFinish() {
     const plane::flight_control::FlightStatus status = flight_control_->flight_status();
     if (status.mission_total <= 0) {
         return BT::NodeStatus::RUNNING;  // 任务尚未开始（上传/启动中）

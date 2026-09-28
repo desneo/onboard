@@ -4,6 +4,6 @@ namespace plane::task {
 
 bool HoverNode::dispatch(std::string& error) { return flight_control_->hold(error); }
 
-BT::NodeStatus HoverNode::check() { return BT::NodeStatus::SUCCESS; }
+BT::NodeStatus HoverNode::checkFinish() { return BT::NodeStatus::SUCCESS; }
 
 }  // namespace plane::task

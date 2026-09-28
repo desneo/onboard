@@ -20,7 +20,7 @@ class TakeoffNode final : public FlightActionNode {
 
    protected:
     bool dispatch(std::string& error) override;
-    BT::NodeStatus check() override;
+    BT::NodeStatus checkFinish() override;
 
    private:
     const plane::core::SystemParamApi* system_param_;

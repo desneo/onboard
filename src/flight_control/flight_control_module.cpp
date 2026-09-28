@@ -3,7 +3,9 @@
 #include <spdlog/spdlog.h>
 
 #include <chrono>
+#include <future>
 #include <magic_enum/magic_enum.hpp>
+#include <utility>
 
 #include "core/time_utils.h"
 #include "flight_control/flight_control_events.h"
@@ -22,6 +24,16 @@ constexpr int kWaitLogIntervalMs = 5000;
 template <typename Result>
 std::string result_text(Result result) {
     return std::string(magic_enum::enum_name(result));
+}
+
+/// 以 promise/future 包裹 MAVSDK 异步接口，阻塞直到回调返回真实结果
+/// （与 MAVSDK 自身阻塞版实现一致，见官方 action_impl.cpp）。
+template <typename Result, typename Register>
+Result await_async(Register&& register_callback) {
+    std::promise<Result> promise;
+    std::future<Result> future = promise.get_future();
+    register_callback([&promise](Result result) { promise.set_value(result); });
+    return future.get();
 }
 
 }  // namespace
@@ -169,6 +181,7 @@ void FlightControlModule::attach_system(const std::shared_ptr<mavsdk::System>& s
     });
     telemetry_->subscribe_armed([this](bool value) {
         std::lock_guard<std::mutex> lock(cache_mutex_);
+        SPDLOG_INFO("解锁状态变化: {}", value ? "解锁" : "上锁");
         cache_.armed = value;
     });
     telemetry_->subscribe_in_air([this](bool value) {
@@ -259,16 +272,27 @@ bool FlightControlModule::ensure_connected(std::string& error) const {
     return true;
 }
 
+namespace {
+
+/// 执行一次 Action 异步调用并返回真实结果。
+template <typename Register>
+mavsdk::Action::Result await_action(Register&& register_callback) {
+    return await_async<mavsdk::Action::Result>(std::forward<Register>(register_callback));
+}
+
+}  // namespace
+
 bool FlightControlModule::arm(std::string& error) {
     if (!ensure_connected(error)) {
         return false;
     }
-    SPDLOG_INFO("下发飞控指令: Arm");
-    action_->arm_async([this](mavsdk::Action::Result result) {
-        if (result != mavsdk::Action::Result::Success) {
-            report_error("Arm 失败: " + result_text(result));
-        }
-    });
+    const auto result = await_action([this](mavsdk::Action::ResultCallback cb) { action_->arm_async(std::move(cb)); });
+    if (result != mavsdk::Action::Result::Success) {
+        error = "下发飞控Arm 失败: " + result_text(result);
+        report_error(error);
+        return false;
+    }
+    SPDLOG_INFO("下发飞控指令成功: Arm");
     return true;
 }
 
@@ -276,12 +300,14 @@ bool FlightControlModule::disarm(std::string& error) {
     if (!ensure_connected(error)) {
         return false;
     }
-    SPDLOG_INFO("下发飞控指令: Disarm");
-    action_->disarm_async([this](mavsdk::Action::Result result) {
-        if (result != mavsdk::Action::Result::Success) {
-            report_error("Disarm 失败: " + result_text(result));
-        }
-    });
+    const auto result =
+        await_action([this](mavsdk::Action::ResultCallback cb) { action_->disarm_async(std::move(cb)); });
+    if (result != mavsdk::Action::Result::Success) {
+        error = "下发飞控Disarm 失败: " + result_text(result);
+        report_error(error);
+        return false;
+    }
+    SPDLOG_INFO("下发飞控指令成功: Disarm");
     return true;
 }
 
@@ -289,21 +315,26 @@ bool FlightControlModule::takeoff(float height_m, std::string& error) {
     if (!ensure_connected(error)) {
         return false;
     }
-    SPDLOG_INFO("下发飞控指令: Takeoff height={:.1f}m", height_m);
-    action_->set_takeoff_altitude_async(height_m, [this, height_m](mavsdk::Action::Result result) {
-        if (result != mavsdk::Action::Result::Success) {
-            report_error("设置起飞高度失败: " + result_text(result));
-            return;
-        }
-        action_->takeoff_async([this, height_m](mavsdk::Action::Result takeoff_result) {
-            if (takeoff_result != mavsdk::Action::Result::Success) {
-                report_error("Takeoff 失败: " + result_text(takeoff_result));
-                return;
-            }
-            std::lock_guard<std::mutex> lock(cache_mutex_);
-            cache_.takeoff_altitude_m = height_m;
-        });
+    const auto set_result = await_action([this, height_m](mavsdk::Action::ResultCallback cb) {
+        action_->set_takeoff_altitude_async(height_m, std::move(cb));
     });
+    if (set_result != mavsdk::Action::Result::Success) {
+        error = "下发飞控SetTakeoffAltitude 失败: " + result_text(set_result);
+        report_error(error);
+        return false;
+    }
+    const auto takeoff_result =
+        await_action([this](mavsdk::Action::ResultCallback cb) { action_->takeoff_async(std::move(cb)); });
+    if (takeoff_result != mavsdk::Action::Result::Success) {
+        error = "下发飞控Takeoff 失败: " + result_text(takeoff_result);
+        report_error(error);
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        cache_.takeoff_altitude_m = height_m;
+    }
+    SPDLOG_INFO("下发飞控指令成功: Takeoff height={:.1f}m", height_m);
     return true;
 }
 
@@ -311,12 +342,13 @@ bool FlightControlModule::land(std::string& error) {
     if (!ensure_connected(error)) {
         return false;
     }
-    SPDLOG_INFO("下发飞控指令: Land");
-    action_->land_async([this](mavsdk::Action::Result result) {
-        if (result != mavsdk::Action::Result::Success) {
-            report_error("Land 失败: " + result_text(result));
-        }
-    });
+    const auto result = await_action([this](mavsdk::Action::ResultCallback cb) { action_->land_async(std::move(cb)); });
+    if (result != mavsdk::Action::Result::Success) {
+        error = "下发飞控Land 失败: " + result_text(result);
+        report_error(error);
+        return false;
+    }
+    SPDLOG_INFO("下发飞控指令成功: Land");
     return true;
 }
 
@@ -324,12 +356,14 @@ bool FlightControlModule::return_to_launch(std::string& error) {
     if (!ensure_connected(error)) {
         return false;
     }
-    SPDLOG_INFO("下发飞控指令: ReturnToLaunch");
-    action_->return_to_launch_async([this](mavsdk::Action::Result result) {
-        if (result != mavsdk::Action::Result::Success) {
-            report_error("RTL 失败: " + result_text(result));
-        }
-    });
+    const auto result = await_action(
+        [this](mavsdk::Action::ResultCallback cb) { action_->return_to_launch_async(std::move(cb)); });
+    if (result != mavsdk::Action::Result::Success) {
+        error = "下发飞控ReturnToLaunch 失败: " + result_text(result);
+        report_error(error);
+        return false;
+    }
+    SPDLOG_INFO("下发飞控指令成功: ReturnToLaunch");
     return true;
 }
 
@@ -337,12 +371,13 @@ bool FlightControlModule::hold(std::string& error) {
     if (!ensure_connected(error)) {
         return false;
     }
-    SPDLOG_INFO("下发飞控指令: Hold");
-    action_->hold_async([this](mavsdk::Action::Result result) {
-        if (result != mavsdk::Action::Result::Success) {
-            report_error("Hold 失败: " + result_text(result));
-        }
-    });
+    const auto result = await_action([this](mavsdk::Action::ResultCallback cb) { action_->hold_async(std::move(cb)); });
+    if (result != mavsdk::Action::Result::Success) {
+        error = "下发飞控Hold 失败: " + result_text(result);
+        report_error(error);
+        return false;
+    }
+    SPDLOG_INFO("下发飞控指令成功: Hold");
     return true;
 }
 
@@ -350,12 +385,13 @@ bool FlightControlModule::stop_motor(std::string& error) {
     if (!ensure_connected(error)) {
         return false;
     }
-    SPDLOG_INFO("下发飞控指令: StopMotor (kill)");
-    action_->kill_async([this](mavsdk::Action::Result result) {
-        if (result != mavsdk::Action::Result::Success) {
-            report_error("StopMotor 失败: " + result_text(result));
-        }
-    });
+    const auto result = await_action([this](mavsdk::Action::ResultCallback cb) { action_->kill_async(std::move(cb)); });
+    if (result != mavsdk::Action::Result::Success) {
+        error = "下发飞控StopMotor 失败: " + result_text(result);
+        report_error(error);
+        return false;
+    }
+    SPDLOG_INFO("下发飞控指令成功: StopMotor");
     return true;
 }
 
@@ -386,20 +422,25 @@ bool FlightControlModule::upload_and_start_mission(const std::vector<plane::mode
         item.is_fly_through = true;
         plan.mission_items.push_back(item);
     }
-    SPDLOG_INFO("下发飞控指令: UploadMission waypoints={} speed={:.1f}m/s", points.size(),
-                config_.fc_route_speed_m_s);
-    mission_->upload_mission_async(std::move(plan), [this](mavsdk::Mission::Result result) {
-        if (result != mavsdk::Mission::Result::Success) {
-            report_error("上传航线失败: " + result_text(result));
-            return;
-        }
-        SPDLOG_INFO("下发飞控指令: StartMission");
-        mission_->start_mission_async([this](mavsdk::Mission::Result start_result) {
-            if (start_result != mavsdk::Mission::Result::Success) {
-                report_error("启动航线失败: " + result_text(start_result));
-            }
+    const auto upload_result = await_async<mavsdk::Mission::Result>(
+        [this, plan](mavsdk::Mission::ResultCallback cb) mutable {
+            mission_->upload_mission_async(std::move(plan), std::move(cb));
         });
-    });
+    if (upload_result != mavsdk::Mission::Result::Success) {
+        error = "下发飞控UploadMission 失败: " + result_text(upload_result);
+        report_error(error);
+        return false;
+    }
+    SPDLOG_INFO("下发飞控指令成功: UploadMission waypoints={} speed={:.1f}m/s", points.size(),
+                config_.fc_route_speed_m_s);
+    const auto start_result = await_async<mavsdk::Mission::Result>(
+        [this](mavsdk::Mission::ResultCallback cb) { mission_->start_mission_async(std::move(cb)); });
+    if (start_result != mavsdk::Mission::Result::Success) {
+        error = "下发飞控StartMission 失败: " + result_text(start_result);
+        report_error(error);
+        return false;
+    }
+    SPDLOG_INFO("下发飞控指令成功: StartMission");
     return true;
 }
 
@@ -424,15 +465,16 @@ bool FlightControlModule::set_ned_velocity(const plane::model::NedVelocity& velo
         report_error(error);
         return false;
     }
-    SPDLOG_INFO("下发飞控指令: Offboard start (vn={:.2f} ve={:.2f} vd={:.2f} yaw={:.1f})", setpoint_.north_m_s,
-                setpoint_.east_m_s, setpoint_.down_m_s, setpoint_.yaw_deg);
-    offboard_->start_async([this](mavsdk::Offboard::Result start_result) {
-        if (start_result != mavsdk::Offboard::Result::Success) {
-            report_error("Offboard 启动失败: " + result_text(start_result));
-        }
-    });
+    const auto start_result = await_async<mavsdk::Offboard::Result>(
+        [this](mavsdk::Offboard::ResultCallback cb) { offboard_->start_async(std::move(cb)); });
+    if (start_result != mavsdk::Offboard::Result::Success) {
+        error = "下发飞控OffboardStart 失败: " + result_text(start_result);
+        report_error(error);
+        return false;
+    }
     offboard_active_ = true;
-    SPDLOG_INFO("Offboard 已启动");
+    SPDLOG_INFO("下发飞控指令成功: Offboard start (vn={:.2f} ve={:.2f} vd={:.2f} yaw={:.1f})", setpoint_.north_m_s,
+                setpoint_.east_m_s, setpoint_.down_m_s, setpoint_.yaw_deg);
     return true;
 }
 
@@ -443,13 +485,13 @@ void FlightControlModule::clear_ned_velocity() {
     }
     offboard_active_ = false;
     if (offboard_) {
-        SPDLOG_INFO("下发飞控指令: Offboard stop");
-        offboard_->stop_async([this](mavsdk::Offboard::Result result) {
-            if (result != mavsdk::Offboard::Result::Success) {
-                report_error("Offboard 停止失败: " + result_text(result));
-            }
-        });
-        SPDLOG_INFO("Offboard 已停止");
+        const auto stop_result = await_async<mavsdk::Offboard::Result>(
+            [this](mavsdk::Offboard::ResultCallback cb) { offboard_->stop_async(std::move(cb)); });
+        if (stop_result != mavsdk::Offboard::Result::Success) {
+            report_error("下发飞控OffboardStop 失败: " + result_text(stop_result));
+        } else {
+            SPDLOG_INFO("下发飞控指令成功: Offboard stop");
+        }
     }
 }
 

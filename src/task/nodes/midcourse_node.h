@@ -22,7 +22,7 @@ class MidcourseNode final : public FlightActionNode {
 
    protected:
     bool dispatch(std::string& error) override;
-    BT::NodeStatus check() override;
+    BT::NodeStatus checkFinish() override;
     void onHalted() override;
     std::int64_t node_timeout_ms() const override;
 

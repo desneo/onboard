@@ -4,7 +4,7 @@ namespace plane::task {
 
 bool DisarmNode::dispatch(std::string& error) { return flight_control_->disarm(error); }
 
-BT::NodeStatus DisarmNode::check() {
+BT::NodeStatus DisarmNode::checkFinish() {
     return flight_control_->flight_status().armed ? BT::NodeStatus::RUNNING : BT::NodeStatus::SUCCESS;
 }
 

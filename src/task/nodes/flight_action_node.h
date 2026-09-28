@@ -35,7 +35,7 @@ class FlightActionNode : public BT::StatefulActionNode {
             SPDLOG_ERROR("节点 {} 分发失败: {}", name(), error);
             return BT::NodeStatus::FAILURE;
         }
-        return check();
+        return checkFinish();
     }
 
     BT::NodeStatus onRunning() override {
@@ -43,7 +43,7 @@ class FlightActionNode : public BT::StatefulActionNode {
             SPDLOG_ERROR("节点 {} 超时 ({} ms)", name(), node_timeout_ms());
             return BT::NodeStatus::FAILURE;
         }
-        return check();
+        return checkFinish();
     }
 
     void onHalted() override { SPDLOG_INFO("节点 {} 已中止", name()); }
@@ -52,7 +52,7 @@ class FlightActionNode : public BT::StatefulActionNode {
     virtual std::int64_t node_timeout_ms() const { return app_config_->bt_node_timeout_ms; }
 
     virtual bool dispatch(std::string& error) = 0;
-    virtual BT::NodeStatus check() = 0;
+    virtual BT::NodeStatus checkFinish() = 0;
 
     plane::flight_control::FlightControlApi* flight_control_;
     plane::state::StateStoreApi* state_store_;

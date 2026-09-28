@@ -10,7 +10,7 @@ bool TakeoffNode::dispatch(std::string& error) {
     return flight_control_->takeoff(height, error);
 }
 
-BT::NodeStatus TakeoffNode::check() {
+BT::NodeStatus TakeoffNode::checkFinish() {
     const auto status = flight_control_->flight_status();
     if (!status.in_air) {
         return BT::NodeStatus::RUNNING;
