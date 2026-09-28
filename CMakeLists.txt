@@ -38,6 +38,8 @@ add_executable(plane
   src/geo/geo_tool.cpp
   src/task/task_scheduler.cpp
   src/task/nodes/arm_node.cpp
+  src/task/nodes/disarm_node.cpp
+  src/task/nodes/mission_node.cpp
   src/task/nodes/takeoff_node.cpp
   src/task/nodes/land_node.cpp
   src/task/nodes/rtl_node.cpp

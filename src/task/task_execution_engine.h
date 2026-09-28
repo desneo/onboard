@@ -16,6 +16,7 @@
 #include "perception/perception_api.h"
 #include "state/state_store_api.h"
 #include "target/target_store_api.h"
+#include "task/command_context.h"
 #include "task/suicide_task_context.h"
 #include "task/task_execution_engine_api.h"
 
@@ -37,10 +38,14 @@ class TaskExecutionEngine final : public plane::core::IModule, public TaskExecut
     void release() override;
 
     bool start(const plane::model::TaskInfo& task, std::string& error) override;
+    bool start_command(const plane::model::Command& command, std::string& error) override;
     void abort() override;
 
    private:
     BT::Tree build_anti_uav();
+    BT::Tree build_command_tree();
+    /// 在持锁状态下装载并启动一棵树（供任务/指令共用）。
+    void launch_tree(BT::Tree tree, const std::string& tree_name);
     void tick_loop();
     void publish_progress(const std::string& node);
     void finish(plane::model::TaskStatus status, const std::string& detail);
@@ -58,9 +63,11 @@ class TaskExecutionEngine final : public plane::core::IModule, public TaskExecut
     std::mutex mutex_;
     BT::Tree tree_;
     bool tree_ready_ = false;
+    bool is_task_tree_ = false;  ///< 当前树是否为任务树（任务才发布进度）
     std::string current_node_;
     std::string current_tree_name_;
     SuicideTaskContext suicide_context_;
+    CommandContext command_context_;
     std::thread tick_thread_;
     std::atomic<bool> ticking_{false};
 };

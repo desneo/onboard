@@ -76,8 +76,7 @@ int main(int argc, char** argv) {
     auto target_store = std::make_unique<plane::target::TargetStore>(event_bus, config);
     auto task_engine = std::make_unique<plane::task::TaskExecutionEngine>(
         event_bus, config, *flight_control, *state_store, *system_param_store, *perception, *target_store);
-    auto task_scheduler = std::make_unique<plane::task::TaskScheduler>(event_bus, config, *flight_control,
-                                                                       *system_param_store, task_engine.get());
+    auto task_scheduler = std::make_unique<plane::task::TaskScheduler>(event_bus, config, task_engine.get());
     auto communication =
         std::make_unique<plane::communication::CommunicationModule>(event_bus, config, *state_store, *task_scheduler);
     task_scheduler->set_communication(*communication);

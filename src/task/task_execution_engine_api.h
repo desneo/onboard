@@ -12,6 +12,10 @@ class TaskExecutionEngineApi {
     virtual ~TaskExecutionEngineApi() = default;
 
     virtual bool start(const plane::model::TaskInfo& task, std::string& error) = 0;
+
+    /// 启动基础指令行为树；成功表示指令已被接受并开始执行。
+    virtual bool start_command(const plane::model::Command& command, std::string& error) = 0;
+
     virtual void abort() = 0;
 };
 

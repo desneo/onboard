@@ -3,7 +3,10 @@
 namespace plane::task {
 
 bool TakeoffNode::dispatch(std::string& error) {
-    const auto height = static_cast<float>(system_param_->current().safeHeight_m);
+    float height = static_cast<float>(system_param_->current().safeHeight_m);
+    if (command_context_ != nullptr && command_context_->takeoffHeight_m > 0.0F) {
+        height = command_context_->takeoffHeight_m;
+    }
     return flight_control_->takeoff(height, error);
 }
 

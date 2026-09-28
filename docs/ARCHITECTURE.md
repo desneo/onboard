@@ -155,10 +155,10 @@ Task Scheduler 负责：
 
 Task Execution Engine 负责：
 
-- 根据 Task 类型确定执行策略；
-- 创建/运行 BehaviorTree；
+- 根据 Task 类型或独立 Command 类型确定执行策略；
+- 创建/运行 BehaviorTree（任务树与独立 Command 小树）；
 - 管理 Node；
-- 执行实际任务；
+- 执行实际任务/指令；
 - 返回执行结果。
 
 Scheduler 不负责具体 BehaviorTree。
@@ -302,7 +302,7 @@ Core Runtime 是系统级运行框架，不承担具体业务逻辑。
 - 系统运行状态管理；
 - 模块启动顺序管理。
 
-不单独设立场景管理模块。安全高度作为系统参数维护：Task Execution Engine 在执行任务起飞步骤时读取该参数；Task Scheduler 在派发未另行指定高度的独立 Takeoff 指令时补入该参数。
+不单独设立场景管理模块。安全高度作为系统参数维护：Task Execution Engine 在执行任务起飞步骤、以及执行未另行指定高度的独立 Takeoff 指令时读取并补入该参数。
 
 Core Runtime 不应成为业务逻辑集中处理的“上帝模块”。
 
@@ -325,8 +325,7 @@ Task Scheduler 是系统唯一的控制仲裁者，统一管理 Task 与独立 C
 - 启动 Task Execution Engine；
 - 中止当前 Task 或当前 Command；
 - 处理新控制内容对当前控制内容的替换；
-- 将通过仲裁的独立 Command 派发给 Flight Control；
-- 对未另行指定高度的 Takeoff（指令或任务）补入默认安全高度；
+- 将通过仲裁的独立 Command 交由 Task Execution Engine 以 BehaviorTree 执行；
 - 接收 Task Execution Engine 返回的执行结果；
 - 对外提供当前 Task 状态（含任务状态、当前执行的行为树、当前执行节点），无任务时提供「无任务」。
 
@@ -340,7 +339,7 @@ Task Scheduler 不负责：
 
 Task Scheduler 与 Task Execution Engine 之间通过异步事件传递执行结果。
 
-Task Execution Engine 为当前 Task 内部步骤产生的 Command 属于该 Task 的执行过程，直达 Flight Control，不触发控制内容替换。
+Task Execution Engine 为当前 Task 内部步骤产生的 Command 属于该 Task 的执行过程，直达 Flight Control，不触发控制内容替换；由 GCS 下发的独立 Command 则由 Task Execution Engine 以独立行为树执行，受控制内容替换约束。
 
 ---
 
@@ -350,8 +349,8 @@ Task Execution Engine 是 Task 的实际执行层。
 
 主要职责：
 
-1. 根据 Task 类型选择执行策略；
-2. 创建或获取对应 BehaviorTree；
+1. 根据 Task 类型或独立 Command 类型选择执行策略；
+2. 创建或获取对应 BehaviorTree（任务树 / 独立 Command 小树）；
 3. 执行 BehaviorTree；
 4. 管理 Node；
 5. 调用其他能力模块；
@@ -409,19 +408,22 @@ Task 类型到具体执行策略的映射属于机载系统内部实现。
 
 # 10. Command
 
-Command 是直接作用于 Flight Control 的低层控制输入。航点飞行、航线飞行等长动作也属于 Command，只是执行时间较长。
+Command 是作用于 Flight Control 的低层控制输入。航点飞行、航线飞行等长动作也属于 Command，只是执行时间较长。
 
 Command 不属于 Task 数据结构。
 
-Command 不需要独立的生命周期管理，也不需要持续向 GCS 报告 Command 执行状态；系统不跟踪 Command 的完成状态。
+Command 不需要独立的生命周期管理，也不需要持续向 GCS 报告 Command 执行状态。系统内部可跟踪独立 Command 的执行进度用于替换与超时判定，但不向 GCS 报告其完成状态。
 
-由 GCS 下发的独立 Command 必须经 Task Scheduler 仲裁后派发：
+由 GCS 下发的独立 Command 必须经 Task Scheduler 仲裁，再由 Task Execution Engine 以 BehaviorTree 执行（每类指令一棵小树，节点数远少于任务树）：
 
 ```text
 GCS Command
         │
         ▼
-  Task Scheduler（仲裁 / 替换 / 补默认高度）
+  Task Scheduler（仲裁 / 替换 / 启动执行）
+        │
+        ▼
+  Task Execution Engine（BehaviorTree）
         │
         ▼
     Flight Control
@@ -452,7 +454,7 @@ Command Dispatch Success
 Actual Flight Action Completed
 ```
 
-如果 Command 由 BehaviorTree Node 使用，则 Node 负责继续观察 UAV 实际状态，并根据实际状态决定：
+独立 Command 由 BehaviorTree Node 执行，Node 负责继续观察 UAV 实际状态，并根据实际状态决定：
 
 ```text
 RUNNING
@@ -1025,7 +1027,7 @@ Business A
 
 形成循环依赖。
 
-Task Scheduler 可以向 Flight Control 派发独立 Command。
+Task Scheduler 将独立 Command 交由 Task Execution Engine 以 BehaviorTree 执行；Task Execution Engine 可调用 Flight Control。
 
 Perception 仅在下发导引速度时直连 Flight Control（ADR-018）。
 
@@ -1849,6 +1851,8 @@ SPEC 要求系统任意时刻最多执行一个指令或一个任务，二者不
 - Task Scheduler 可调用 Flight Control；
 - 不跟踪独立 Command 的完成状态。
 
+> 注：ADR-019 进一步调整——独立 Command 改由 Task Execution Engine 以行为树执行，Task Scheduler 不再直接调用 Flight Control，默认安全高度也改由引擎补入。
+
 ---
 
 ## ADR-015：GCS Target 保留 20 条历史记录
@@ -1985,6 +1989,41 @@ Target Management 为每个 GCS Target 保留最近 20 条历史记录。
 - Perception 依赖 `FlightControlApi`（稳定能力接口），不是实现依赖；不产生循环依赖；
 - 依赖方向图中新增 Perception → Flight Control（仅导引速度）；
 - 后续任何模块下发飞控指令，均需同步直连并获得结果，不再新增事件式下发通路。
+
+---
+
+## ADR-019：独立 Command 由 Task Execution Engine 以 BehaviorTree 执行
+
+### Context
+
+原实现中，独立 Command 经 Task Scheduler 仲裁后直接同步调用 `FlightControlApi` 下发。指令是「一次性调用」，不校验前置状态、不按实际结果判定完成。由此暴露出问题：`Takeoff` 指令在未解锁时被飞控拒绝，但指令仍被判为成功，飞机并未起飞。
+
+### Decision
+
+- 由 GCS 下发的独立 Command 交由 Task Execution Engine 以 BehaviorTree 执行，与自杀式反无任务使用同一执行机制，只是每类指令一棵小树（通常 1 个动作节点；`Takeoff` 为 `Arm → Takeoff`）；
+- Task Scheduler 仍为唯一控制仲裁者，负责接收、替换、启动与中止，并接收执行结果；不再直接调用 `FlightControlApi`；
+- `Takeoff` 树内先 `Arm` 再 `Takeoff`，未解锁时自动补解锁；
+- 指令「被接受并成功下发」即视为指令层完成，不向 GCS 上报执行状态；执行中失败（如无法解锁）通过既有告警通道上报原因；
+- 默认安全高度由 Task Execution Engine 在构建/执行指令树时补入。
+
+### Alternatives
+
+- 保持 Command 直达 Flight Control（不解决前置条件缺失问题）；
+- 为指令另建独立执行引擎（出现两套 tick/halt 逻辑，违背复用原则）；
+- 在 Task Scheduler 内联 BehaviorTree（Scheduler 职责膨胀）。
+
+### Rationale
+
+- 指令与任务统一执行模型，消除「直接下发」导致的前置条件缺失；
+- 复用现有 BehaviorTree 工厂、Node 与 tick/halt 语义，符合「复用既有机制」；
+- 对外报文、Ack、告警与任务状态不变，GCS 无感知。
+
+### Consequences
+
+- Task Execution Engine 的职责扩展为「执行任务树与独立 Command 小树」；
+- Task Scheduler 不再依赖 `FlightControlApi` / `SystemParamApi`（由引擎负责下发与默认高度）；
+- 指令执行期间不写入任务状态、不发布任务进度；失败经 `report_error` + `send_alert` 上报原因；
+- 依赖方向不变：Task Execution Engine → Flight Control。
 
 ---
 

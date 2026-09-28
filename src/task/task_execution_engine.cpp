@@ -5,10 +5,19 @@
 #include <chrono>
 #include <exception>
 #include <magic_enum/magic_enum.hpp>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "task/nodes/arm_node.h"
 #include "task/nodes/detect_node.h"
+#include "task/nodes/disarm_node.h"
+#include "task/nodes/hover_node.h"
+#include "task/nodes/land_node.h"
 #include "task/nodes/midcourse_node.h"
+#include "task/nodes/mission_node.h"
+#include "task/nodes/rtl_node.h"
+#include "task/nodes/stop_motor_node.h"
 #include "task/nodes/takeoff_node.h"
 #include "task/task_events.h"
 
@@ -81,24 +90,123 @@ BT::Tree TaskExecutionEngine::build_anti_uav() {
     return tree;
 }
 
-bool TaskExecutionEngine::start(const plane::model::TaskInfo& task, std::string& error) {
-    abort();
-    std::lock_guard<std::mutex> lock(mutex_);
-    try {
-        suicide_context_.targetTrackId = task.targetTrackId;
-        tree_ = build_anti_uav();
-    } catch (const std::exception& e) {
-        error = std::string("行为树创建失败: ") + e.what();
-        return false;
-    }
-    current_tree_name_ = "anti-uav";
+void TaskExecutionEngine::launch_tree(BT::Tree tree, const std::string& tree_name) {
+    tree_ = std::move(tree);
+    current_tree_name_ = tree_name;
     tree_ready_ = true;
     current_node_.clear();
     ticking_ = true;
     tick_thread_ = std::thread([this]() { tick_loop(); });
+}
+
+bool TaskExecutionEngine::start(const plane::model::TaskInfo& task, std::string& error) {
+    abort();
+    std::lock_guard<std::mutex> lock(mutex_);
+    suicide_context_.targetTrackId = task.targetTrackId;
+    BT::Tree tree;
+    try {
+        tree = build_anti_uav();
+    } catch (const std::exception& e) {
+        error = std::string("行为树创建失败: ") + e.what();
+        return false;
+    }
+    is_task_tree_ = true;
+    launch_tree(std::move(tree), "anti-uav");
     SPDLOG_INFO("行为树已创建: {}, taskId={}, taskCode={}", current_tree_name_, task.taskId,
                 std::string(magic_enum::enum_name(task.taskCode)));
     return true;
+}
+
+bool TaskExecutionEngine::start_command(const plane::model::Command& command, std::string& error) {
+    abort();
+    std::lock_guard<std::mutex> lock(mutex_);
+    command_context_.commandId = command.commandId;
+    command_context_.type = command.type;
+    command_context_.waypoints = command.waypoints;
+    float height = command.takeoffHeight_m;
+    if (height <= 0.0F) {
+        height = static_cast<float>(system_param_.current().safeHeight_m);
+        SPDLOG_INFO("Takeoff 未指定高度，使用安全高度: {} m", height);
+    }
+    command_context_.takeoffHeight_m = height;
+
+    BT::Tree tree;
+    try {
+        tree = build_command_tree();
+    } catch (const std::exception& e) {
+        error = std::string("指令行为树创建失败: ") + e.what();
+        return false;
+    }
+    is_task_tree_ = false;
+    launch_tree(std::move(tree), std::string("cmd-") + std::string(magic_enum::enum_name(command.type)));
+    SPDLOG_INFO("指令行为树已创建: {}, commandId={}", current_tree_name_, command.commandId);
+    return true;
+}
+
+BT::Tree TaskExecutionEngine::build_command_tree() {
+    BT::BehaviorTreeFactory factory;
+    factory.registerNodeType<ArmNode>("Arm", &flight_control_, &state_store_, &config_);
+    factory.registerNodeType<DisarmNode>("Disarm", &flight_control_, &state_store_, &config_);
+    factory.registerNodeType<TakeoffNode>("Takeoff", &flight_control_, &state_store_, &config_, &system_param_,
+                                          &command_context_);
+    factory.registerNodeType<LandNode>("Land", &flight_control_, &state_store_, &config_);
+    factory.registerNodeType<RtlNode>("RTL", &flight_control_, &state_store_, &config_);
+    factory.registerNodeType<HoverNode>("Hover", &flight_control_, &state_store_, &config_);
+    factory.registerNodeType<StopMotorNode>("StopMotor", &flight_control_, &state_store_, &config_);
+    factory.registerNodeType<MissionNode>("Mission", &flight_control_, &state_store_, &config_, &command_context_);
+
+    auto subtree = std::make_shared<BT::Tree::Subtree>();
+    subtree->blackboard = BT::Blackboard::create();
+    subtree->tree_ID = "command";
+    subtree->instance_name = "command";
+
+    BT::NodeConfig node_config;
+    node_config.blackboard = subtree->blackboard;
+
+    // 统一以 Sequence 为根，保证根为控制节点；单指令仅含 1 个动作节点。
+    auto make_sequence = [&](const std::vector<std::string>& node_names) {
+        auto root = factory.instantiateTreeNode("Sequence", "Sequence", node_config);
+        auto* control = dynamic_cast<BT::ControlNode*>(root.get());
+        subtree->nodes.push_back(std::move(root));
+        for (const std::string& node_name : node_names) {
+            auto node = factory.instantiateTreeNode(node_name, node_name, node_config);
+            control->addChild(node.get());
+            subtree->nodes.push_back(std::move(node));
+        }
+    };
+
+    switch (command_context_.type) {
+        case plane::model::CommandType::Takeoff:
+            make_sequence({"Arm", "Takeoff"});
+            break;
+        case plane::model::CommandType::Arm:
+            make_sequence({"Arm"});
+            break;
+        case plane::model::CommandType::Disarm:
+            make_sequence({"Disarm"});
+            break;
+        case plane::model::CommandType::Land:
+            make_sequence({"Land"});
+            break;
+        case plane::model::CommandType::RTL:
+            make_sequence({"RTL"});
+            break;
+        case plane::model::CommandType::Hover:
+            make_sequence({"Hover"});
+            break;
+        case plane::model::CommandType::StopMotor:
+            make_sequence({"StopMotor"});
+            break;
+        case plane::model::CommandType::Waypoint:
+        case plane::model::CommandType::Route:
+            make_sequence({"Mission"});
+            break;
+    }
+
+    BT::Tree tree;
+    tree.subtrees.push_back(subtree);
+    tree.initialize();
+    return tree;
 }
 
 void TaskExecutionEngine::abort() {
@@ -156,7 +264,7 @@ void TaskExecutionEngine::tick_loop() {
             finish(plane::model::TaskStatus::Failed, "行为树异常: " + exception_text);
             return;
         }
-        if (changed) {
+        if (changed && is_task_tree_) {
             publish_progress(node);
         }
         if (status == BT::NodeStatus::SUCCESS) {

@@ -9,13 +9,8 @@
 namespace plane::task {
 
 TaskScheduler::TaskScheduler(plane::core::EventBus& event_bus, const plane::core::AppConfig& config,
-                             plane::flight_control::FlightControlApi& flight_control,
-                             plane::core::SystemParamApi& system_param, TaskExecutionEngineApi* engine)
-    : event_bus_(event_bus),
-      config_(config),
-      flight_control_(flight_control),
-      system_param_(system_param),
-      engine_(engine) {}
+                             TaskExecutionEngineApi* engine)
+    : event_bus_(event_bus), config_(config), engine_(engine) {}
 
 TaskScheduler::~TaskScheduler() { stop(); }
 
@@ -105,32 +100,74 @@ void TaskScheduler::on_task_info(const plane::model::TaskInfo& task) {
 }
 
 void TaskScheduler::on_command(const plane::model::Command& command) {
-    bool replaced_task = false;
+    bool had_control = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        replaced_task = control_ == ControlKind::Task;
-        if (replaced_task) {
+        had_control = control_ != ControlKind::None;
+        if (control_ == ControlKind::Task) {
             SPDLOG_INFO("任务被独立指令替换: taskId={}", task_state_.taskId);
         }
         control_ = ControlKind::Command;
         task_state_ = plane::model::TaskState{};
     }
-    if (replaced_task && engine_ != nullptr) {
+    if (had_control && engine_ != nullptr) {
         engine_->abort();
     }
-    dispatch_command(command);
+    if (engine_ == nullptr) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            control_ = ControlKind::None;
+        }
+        const std::string detail = "指令派发失败: " + command.commandId + " (执行引擎未接入)";
+        report_error(detail);
+        send_alert(detail);
+        return;
+    }
+    std::string error;
+    if (engine_->start_command(command, error)) {
+        SPDLOG_INFO("指令已派发: {}", command.commandId);
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        control_ = ControlKind::None;
+    }
+    const std::string detail = "指令派发失败: " + command.commandId + " (" + error + ")";
+    report_error(detail);
+    send_alert(detail);
 }
 
 void TaskScheduler::on_engine_result(const TaskEngineResult& result) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (control_ != ControlKind::Task) {
-        SPDLOG_WARN("忽略非当前任务的引擎结果");
-        return;
+    bool command_failed = false;
+    std::string failure_detail;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (control_ == ControlKind::Task) {
+            SPDLOG_INFO("任务结束: taskId={}, status={}, detail={}", task_state_.taskId,
+                        std::string(magic_enum::enum_name(result.status)), result.detail);
+            control_ = ControlKind::None;
+            task_state_ = plane::model::TaskState{};
+            return;
+        }
+        if (control_ == ControlKind::Command) {
+            control_ = ControlKind::None;
+            if (result.status == plane::model::TaskStatus::Failed) {
+                command_failed = true;
+                failure_detail = result.detail;
+            } else {
+                SPDLOG_INFO("指令执行结束: status={}, detail={}",
+                            std::string(magic_enum::enum_name(result.status)), result.detail);
+            }
+        } else {
+            SPDLOG_WARN("忽略非当前执行的引擎结果");
+            return;
+        }
     }
-    SPDLOG_INFO("任务结束: taskId={}, status={}, detail={}", task_state_.taskId,
-                std::string(magic_enum::enum_name(result.status)), result.detail);
-    control_ = ControlKind::None;
-    task_state_ = plane::model::TaskState{};
+    if (command_failed) {
+        const std::string detail = "指令执行失败: " + failure_detail;
+        report_error(detail);
+        send_alert(detail);
+    }
 }
 
 void TaskScheduler::on_execution_progress(const TaskProgress& progress) {
@@ -140,62 +177,6 @@ void TaskScheduler::on_execution_progress(const TaskProgress& progress) {
     }
     task_state_.currentBehaviorTree = progress.currentBehaviorTree;
     task_state_.currentNode = progress.currentNode;
-}
-
-bool TaskScheduler::dispatch_command(const plane::model::Command& command) {
-    std::string error;
-    bool ok = false;
-    switch (command.type) {
-        case plane::model::CommandType::Arm:
-            ok = flight_control_.arm(error);
-            break;
-        case plane::model::CommandType::Disarm:
-            ok = flight_control_.disarm(error);
-            break;
-        case plane::model::CommandType::Takeoff: {
-            float height = command.takeoffHeight_m;
-            if (height <= 0.0F) {
-                height = static_cast<float>(system_param_.current().safeHeight_m);
-                SPDLOG_INFO("Takeoff 未指定高度，使用安全高度: {} m", height);
-            }
-            ok = flight_control_.takeoff(height, error);
-            break;
-        }
-        case plane::model::CommandType::Land:
-            ok = flight_control_.land(error);
-            break;
-        case plane::model::CommandType::RTL:
-            ok = flight_control_.return_to_launch(error);
-            break;
-        case plane::model::CommandType::Hover:
-            ok = flight_control_.hold(error);
-            break;
-        case plane::model::CommandType::Waypoint:
-            if (command.waypoints.empty()) {
-                error = "航点为空";
-                break;
-            }
-            ok = flight_control_.goto_waypoint(command.waypoints.front(), error);
-            break;
-        case plane::model::CommandType::Route:
-            if (command.waypoints.empty()) {
-                error = "航点为空";
-                break;
-            }
-            ok = flight_control_.execute_route(command.waypoints, error);
-            break;
-        case plane::model::CommandType::StopMotor:
-            ok = flight_control_.stop_motor(error);
-            break;
-    }
-    if (ok) {
-        SPDLOG_INFO("指令已派发: {}", command.commandId);
-        return true;
-    }
-    const std::string detail = "指令派发失败: " + command.commandId + " (" + error + ")";
-    report_error(detail);
-    send_alert(detail);
-    return false;
 }
 
 void TaskScheduler::send_alert(const std::string& detail) {
