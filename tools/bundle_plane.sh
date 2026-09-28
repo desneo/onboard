@@ -14,13 +14,18 @@ fi
 
 mkdir -p "${PLANE_DIR}/config" "${PLANE_DIR}/plugins" "${PLANE_DIR}/lib"
 
+# 启动脚本：随独立运行目录分发，现场可直接 ./runplane.sh 启动。
+if [ -f "${ROOT}/runplane.sh" ]; then
+  install -m 0755 "${ROOT}/runplane.sh" "${PLANE_DIR}/runplane.sh"
+fi
+
 # 正式插件已由 stage_plugins 暂存到 build/plugins，这里同步到独立运行目录（先清理旧产物）。
 rm -f "${PLANE_DIR}"/plugins/*.so
 install -m 0755 "${BUILD_DIR}"/plugins/*.so "${PLANE_DIR}/plugins/" 2>/dev/null || true
 
 # 模型目录：复制到独立运行目录（config 中 det_model_path 使用相对路径 models/...）。
 # 来源默认 ../algorithm/models，可用 PLANE_MODELS_DIR 覆盖。
-MODELS_SRC="${PLANE_MODELS_DIR:-${ROOT}/../algorithm/models}"
+MODELS_SRC="${PLANE_MODELS_DIR:-${ROOT}/../algorithm/perception/models}"
 if [ -d "${MODELS_SRC}" ]; then
   rm -rf "${PLANE_DIR}/models"
   cp -a "${MODELS_SRC}" "${PLANE_DIR}/models"
