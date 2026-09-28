@@ -284,7 +284,7 @@ void Perception::process_loop() {
         }
 
         const std::int64_t now = now_ms();
-        if (now - last_status_log_ms_ >= 2000) {
+        if (now - last_status_log_ms_ >= 20000) {
             last_status_log_ms_ = now;
             const plane::algorithm::StreamStatus status = video_streaming_.status();
             plane::algorithm::SourceStatus source_status = plane::algorithm::SourceStatus::Idle;
