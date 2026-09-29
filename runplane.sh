@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
 # 启动机载程序 runplane.sh
-# 1. 用 rknn-inspect 读取检测模型输入宽高，写回配置 image_*/det_input_*/stream_*；
-# 2. 启动 ./plane。
+# 1. 若已有 plane 在运行，则提示并退出，不重启；
+# 2. 用 rknn-inspect 读取检测模型输入宽高，写回配置 image_*/det_input_*/stream_*；
+# 3. 后台启动 ./plane。
 #
 # 用法: runplane.sh [plane_dir]
 #   plane_dir 缺省自动探测：脚本所在目录含 plane 则用该目录，否则用 <脚本目录>/build/plane。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+# 已在运行则不重启。
+RUNNING_PIDS="$(pgrep -x plane 2>/dev/null || true)"
+if [ -n "${RUNNING_PIDS}" ]; then
+    echo "plane 已在运行 (pid: $(printf '%s ' ${RUNNING_PIDS}))，不重启。"
+    exit 0
+fi
 
 if [ "${1:-}" != "" ]; then
     PLANE_DIR="$1"
@@ -73,4 +81,8 @@ else
 fi
 
 cd "${PLANE_DIR}"
-exec ./plane
+mkdir -p logs
+nohup ./plane >>logs/plane.stdout.log 2>&1 &
+PID=$!
+disown 2>/dev/null || true
+echo "plane 已在后台启动 (pid=${PID})，运行日志: ${PLANE_DIR}/logs/onboard.log"

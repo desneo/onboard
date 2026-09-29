@@ -14,10 +14,12 @@ fi
 
 mkdir -p "${PLANE_DIR}/config" "${PLANE_DIR}/plugins" "${PLANE_DIR}/lib"
 
-# 启动脚本：随独立运行目录分发，现场可直接 ./runplane.sh 启动。
-if [ -f "${ROOT}/runplane.sh" ]; then
-  install -m 0755 "${ROOT}/runplane.sh" "${PLANE_DIR}/runplane.sh"
-fi
+# 启停脚本：随独立运行目录分发，现场可直接 ./runplane.sh / ./stopplane.sh 使用。
+for script in runplane.sh stopplane.sh; do
+  if [ -f "${ROOT}/${script}" ]; then
+    install -m 0755 "${ROOT}/${script}" "${PLANE_DIR}/${script}"
+  fi
+done
 
 # 正式插件已由 stage_plugins 暂存到 build/plugins，这里同步到独立运行目录（先清理旧产物）。
 rm -f "${PLANE_DIR}"/plugins/*.so
