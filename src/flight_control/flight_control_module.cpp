@@ -181,7 +181,7 @@ void FlightControlModule::attach_system(const std::shared_ptr<mavsdk::System>& s
     });
     telemetry_->subscribe_armed([this](bool value) {
         std::lock_guard<std::mutex> lock(cache_mutex_);
-        SPDLOG_INFO("解锁状态变化: {}", value ? "解锁" : "上锁");
+        // SPDLOG_INFO("解锁状态变化: {}", value ? "解锁" : "上锁");
         cache_.armed = value;
     });
     telemetry_->subscribe_in_air([this](bool value) {

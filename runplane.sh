@@ -82,7 +82,4 @@ fi
 
 cd "${PLANE_DIR}"
 mkdir -p logs
-nohup ./plane >>logs/plane.stdout.log 2>&1 &
-PID=$!
-disown 2>/dev/null || true
-echo "plane 已在后台启动 (pid=${PID})，运行日志: ${PLANE_DIR}/logs/onboard.log"
+./plane
