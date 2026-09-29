@@ -12,6 +12,10 @@ class ArmNode final : public FlightActionNode {
    protected:
     bool dispatch(std::string& error) override;
     BT::NodeStatus checkFinish() override;
+
+   private:
+    static constexpr std::int64_t kArmSpinUpMs = 1000;
+    std::int64_t armed_at_ms_ = 0;
 };
 
 }  // namespace plane::task
