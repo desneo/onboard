@@ -114,7 +114,7 @@ Communication 对外提供 `sendToStation`、`sendToPlane` 和 `sendToAll` 三�
 
 ## 4. 工程目录
 
-工程根目录为 `onboard/`。
+工程根目录指本仓库根目录，以下称为 plane 工程根。
 
 | 路径 | 职责 |
 | --- | --- |
@@ -134,6 +134,7 @@ Communication 对外提供 `sendToStation`、`sendToPlane` 和 `sendToAll` 三�
 | `tests/integration` | 进程、配置和媒体链路集成测试 |
 | `tests/fixtures` | 测试配置 |
 | `tests/harness` | 测试公共脚本 |
+| `scripts` | 源码树中的程序启停脚本；打包后复制到运行目录根部 |
 | `tools` | 插件暂存、打包和辅助工具 |
 | `cmake` | CMake 依赖和平台配置 |
 | `docs` | 产品、架构和测试文档 |

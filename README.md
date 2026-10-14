@@ -1,4 +1,4 @@
-# onboard
+# plane
 
 > 本文面向项目使用者，说明项目背景、当前实现、构建运行方法和配置。目标需求见
 > [`docs/SPEC.md`](docs/SPEC.md)，实现约束见
@@ -7,7 +7,7 @@
 
 ## 项目背景
 
-`onboard` 是运行在无人机机载计算平台上的 C++17 应用，面向基于 PX4 的反无人机任务。程序连接飞控、地面站、其他无人机和视觉插件，在单进程内完成状态管理、任务仲裁、行为树执行、感知和视频推流。
+`plane` 是运行在无人机机载计算平台上的 C++17 应用，面向基于 PX4 的反无人机任务。程序连接飞控、地面站、其他无人机和视觉插件，在单进程内完成状态管理、任务仲裁、行为树执行、感知和视频推流。
 
 支持 Ubuntu 22.04 的 x86_64 与 ARM64，首要硬件平台为 RK3588。
 
@@ -64,8 +64,9 @@
 
 ```text
 src/                  机载程序源码
-config/onboard.conf   默认运行配置
+config/plane.conf     默认运行配置
 tests/                契约测试、集成测试及测试配置
+scripts/              源码树中的程序启停脚本
 tools/                插件暂存、打包和辅助程序
 cmake/                CMake 依赖配置
 docs/                 需求、架构和测试说明
@@ -110,16 +111,16 @@ export PLANE_MODELS_DIR=/path/to/models
 
 ## 运行与停止
 
-从工程根启动：
+从源码树启动：
 
 ```bash
-./runplane.sh
+./scripts/runplane.sh
 ```
 
 或指定独立运行目录：
 
 ```bash
-./runplane.sh /path/to/plane_dir
+./scripts/runplane.sh /path/to/plane_dir
 ```
 
 启动脚本要求存在 `rknn-inspect`，会读取 RKNN 模型输入尺寸并同步更新取图、检测和推流分辨率，然后运行 `plane`。
@@ -127,8 +128,10 @@ export PLANE_MODELS_DIR=/path/to/models
 停止程序：
 
 ```bash
-./stopplane.sh
+./scripts/stopplane.sh
 ```
+
+打包后两个脚本仍位于独立运行目录根部，可在 `build/plane/` 中使用 `./runplane.sh` 和 `./stopplane.sh`。
 
 直接运行及依赖检查：
 
@@ -138,11 +141,11 @@ cd build/plane
 ./plane --deps-check
 ```
 
-程序从当前工作目录读取 `config/onboard.conf`，因此直接运行时应位于独立运行目录。
+程序从当前工作目录读取 `config/plane.conf`，因此直接运行时应位于独立运行目录。
 
 ## 配置说明
 
-默认配置为 [`config/onboard.conf`](config/onboard.conf)，格式为 `key = value`。
+默认配置为 [`config/plane.conf`](config/plane.conf)，格式为 `key = value`。
 
 ### 系统与通信
 

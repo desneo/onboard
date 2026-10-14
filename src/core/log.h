@@ -7,7 +7,7 @@ namespace plane::core {
 
 /// 日志配置；默认单文件 50 MB、保留 5 个历史文件（ARCHITECTURE §28.3）。
 struct LogOptions {
-    std::string app_name = "onboard";
+    std::string app_name = "plane";
     std::string log_dir = "logs";
     std::size_t max_file_size_bytes = 50 * 1024 * 1024;
     std::size_t max_files = 5;

@@ -16,9 +16,7 @@ mkdir -p "${PLANE_DIR}/config" "${PLANE_DIR}/plugins" "${PLANE_DIR}/lib"
 
 # 启停脚本：随独立运行目录分发，现场可直接 ./runplane.sh / ./stopplane.sh 使用。
 for script in runplane.sh stopplane.sh; do
-  if [ -f "${ROOT}/${script}" ]; then
-    install -m 0755 "${ROOT}/${script}" "${PLANE_DIR}/${script}"
-  fi
+  install -m 0755 "${ROOT}/scripts/${script}" "${PLANE_DIR}/${script}"
 done
 
 # 正式插件已由 stage_plugins 暂存到 build/plugins，这里同步到独立运行目录（先清理旧产物）。
@@ -37,7 +35,7 @@ else
 fi
 
 # 配置文件：每次从工程生成，plugins_dir 指向目录内 plugins。
-sed 's|^plugins_dir = .*|plugins_dir = plugins|' "${ROOT}/config/onboard.conf" > "${PLANE_DIR}/config/onboard.conf"
+sed 's|^plugins_dir = .*|plugins_dir = plugins|' "${ROOT}/config/plane.conf" > "${PLANE_DIR}/config/plane.conf"
 
 # 收集三方库：对可执行文件与插件做 ldd，取非系统路径的依赖。
 collect_libs() {

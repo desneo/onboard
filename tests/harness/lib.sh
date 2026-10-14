@@ -14,13 +14,13 @@ fail() {
   exit 1
 }
 
-# 构造运行目录：临时目录内含 config/onboard.conf 与 plugins 软链。
+# 构造运行目录：临时目录内含 config/plane.conf 与 plugins 软链。
 make_run_dir() {
   local fixture="$1"
   local dir
   dir="$(mktemp -d "${TMPDIR:-/tmp}/plane-test.XXXXXX")"
   mkdir -p "${dir}/config"
-  cp "${fixture}" "${dir}/config/onboard.conf"
+  cp "${fixture}" "${dir}/config/plane.conf"
   ln -sfn "${PLANE_PLUGINS_DIR}" "${dir}/plugins"
   echo "${dir}"
 }

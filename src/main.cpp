@@ -48,7 +48,7 @@ int main(int argc, char** argv) {
     plane::core::LogOptions log_options;
     plane::core::init_logging(log_options);
 
-    plane::core::load_config("config/onboard.conf", config);
+    plane::core::load_config("config/plane.conf", config);
     if (!config.log_dir.empty() && config.log_dir != log_options.log_dir) {
         log_options.log_dir = config.log_dir;
         plane::core::shutdown_logging();
@@ -56,7 +56,7 @@ int main(int argc, char** argv) {
     }
 
     const plane::core::BuildInfo build_info = plane::core::current_build_info();
-    SPDLOG_INFO("onboard 启动: version={} git={} build={}", build_info.version, build_info.git_hash,
+    SPDLOG_INFO("plane 启动: version={} git={} build={}", build_info.version, build_info.git_hash,
                 build_info.build_type);
     SPDLOG_INFO("配置: safe_height_m={} state_report_period_ms={} is_sim={}", config.system_param.safeHeight_m,
                 config.state_report_period_ms, config.is_sim);

@@ -1,9 +1,9 @@
 include_guard(GLOBAL)
 
 set(PLANE_3RDPARTY_DIR "${CMAKE_SOURCE_DIR}/../../../3rdparty/common"
-    CACHE PATH "本地三方库根目录（相对工程根 onboard/）")
+    CACHE PATH "本地三方库根目录（相对 plane 工程根）")
 set(PLANE_COMMON_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/../common/common_include"
-    CACHE PATH "与外部交互的公共头文件目录（相对工程根 onboard/）")
+    CACHE PATH "与外部交互的公共头文件目录（相对 plane 工程根）")
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
   set(PLANE_PLATFORM_ARCH "arm64")
 else()

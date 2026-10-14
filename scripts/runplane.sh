@@ -2,13 +2,14 @@
 # 启动机载程序 runplane.sh
 # 1. 若已有 plane 在运行，则提示并退出，不重启；
 # 2. 用 rknn-inspect 读取检测模型输入宽高，写回配置 image_*/det_input_*/stream_*；
-# 3. 后台启动 ./plane。
+# 3. 运行 ./plane。
 #
 # 用法: runplane.sh [plane_dir]
-#   plane_dir 缺省自动探测：脚本所在目录含 plane 则用该目录，否则用 <脚本目录>/build/plane。
+#   plane_dir 缺省自动探测：脚本所在目录含 plane 则使用该目录，否则使用工程的 build/plane。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
 # 已在运行则不重启。
 RUNNING_PIDS="$(pgrep -x plane 2>/dev/null || true)"
@@ -19,16 +20,16 @@ fi
 
 if [ "${1:-}" != "" ]; then
     PLANE_DIR="$1"
-elif [ -x "${SCRIPT_DIR}/plane" ] && [ -f "${SCRIPT_DIR}/config/onboard.conf" ]; then
+elif [ -x "${SCRIPT_DIR}/plane" ] && [ -f "${SCRIPT_DIR}/config/plane.conf" ]; then
     PLANE_DIR="${SCRIPT_DIR}"
-elif [ -x "${SCRIPT_DIR}/build/plane/plane" ]; then
-    PLANE_DIR="${SCRIPT_DIR}/build/plane"
+elif [ -x "${SOURCE_ROOT}/build/plane/plane" ]; then
+    PLANE_DIR="${SOURCE_ROOT}/build/plane"
 else
     echo "错误: 未找到 plane 运行目录（可用参数指定）" >&2
     exit 1
 fi
 
-CONFIG="${PLANE_DIR}/config/onboard.conf"
+CONFIG="${PLANE_DIR}/config/plane.conf"
 [ -f "${CONFIG}" ] || { echo "错误: 配置文件不存在: ${CONFIG}" >&2; exit 1; }
 [ -x "${PLANE_DIR}/plane" ] || { echo "错误: 可执行文件不存在: ${PLANE_DIR}/plane" >&2; exit 1; }
 
