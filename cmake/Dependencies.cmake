@@ -14,7 +14,7 @@ set(PLANE_PLATFORM_DIR "${PLANE_PLATFORM_ARCH}/ubuntu22.04"
 
 foreach(_dir "${PLANE_3RDPARTY_DIR}" "${PLANE_COMMON_INCLUDE_DIR}")
   if(NOT EXISTS "${_dir}")
-    message(FATAL_ERROR "依赖目录不存在: ${_dir}；请按 requirement.md 约定补充后重试")
+    message(FATAL_ERROR "依赖目录不存在: ${_dir}；请按 README.md 的依赖说明补充后重试")
   endif()
 endforeach()
 
