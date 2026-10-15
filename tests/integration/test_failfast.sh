@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# US3 fail-fast 验证：插件目录缺失 / 模型不可用时，打印 [fatal] 并以非零状态退出。
+# 插件降级验证：插件目录缺失 / 模型不可用时，只记录错误且主程序保持运行。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -8,29 +8,37 @@ source "${SCRIPT_DIR}/../harness/lib.sh"
 
 [ -x "${PLANE_BIN}" ] || fail "未找到可执行文件 ${PLANE_BIN}"
 
-expect_fail() {
-  local fixture="$1" what="$2"
-  local run_dir log code
+expect_degraded() {
+  local fixture="$1" what="$2" error_pattern="$3"
+  local run_dir log
   run_dir="$(make_run_dir "${fixture}")"
   log="${run_dir}/plane.log"
   start_plane "${run_dir}" "${log}"
-  wait_plane_exit 30
-  code="${PLANE_EXIT_CODE}"
-  if [ "${code}" = "0" ]; then
+  if ! wait_for_log "${log}" '系统就绪' 30; then
     tail -n 60 "${log}" >&2
+    stop_plane
     cleanup_run_dir "${run_dir}"
-    fail "${what}: 期望非零退出，实际为 0"
+    fail "${what}: 未进入系统就绪状态"
   fi
-  if ! grep -Eq '\[fatal\] plugin=.* reason=' "${log}"; then
+  if ! grep -Eq "${error_pattern}" "${log}"; then
     tail -n 60 "${log}" >&2
+    stop_plane
     cleanup_run_dir "${run_dir}"
-    fail "${what}: 缺少 [fatal] plugin= reason= 日志"
+    fail "${what}: 缺少插件降级日志"
   fi
-  echo "${what}: 退出码=${code}，已打印 fatal 日志"
+  if grep -Eq '\[fatal\] plugin=.* reason=' "${log}"; then
+    tail -n 60 "${log}" >&2
+    stop_plane
+    cleanup_run_dir "${run_dir}"
+    fail "${what}: 不应产生 fatal 日志"
+  fi
+  kill -0 "${PLANE_PID}" 2>/dev/null || fail "${what}: 主程序未保持运行"
+  echo "${what}: 已记录错误且主程序保持运行"
+  stop_plane
   cleanup_run_dir "${run_dir}"
 }
 
-expect_fail "${PLANE_FIXTURES_DIR}/bad_plugin_dir.conf" "插件目录缺失"
-expect_fail "${PLANE_FIXTURES_DIR}/bad_model.conf" "检测模型不可用"
+expect_degraded "${PLANE_FIXTURES_DIR}/bad_plugin_dir.conf" "插件目录缺失" '无可用推流插件|无可用取图插件'
+expect_degraded "${PLANE_FIXTURES_DIR}/bad_model.conf" "检测模型不可用" '检测插件 setConfig 失败'
 
-echo "fail-fast 验证通过"
+echo "插件降级验证通过"

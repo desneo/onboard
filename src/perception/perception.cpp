@@ -55,14 +55,17 @@ bool Perception::init() { return true; }
 bool Perception::start() {
     std::string error;
     if (!ensure_image_input(error)) {
-        plane::core::request_fatal("image_input", error);
-        return false;
+        SPDLOG_ERROR("[plugin:image_input] {}，感知模块停用，系统继续运行", error);
+        report_error(error);
+        return true;
     }
     if (!ensure_detection(error)) {
-        plane::core::request_fatal("det_mot", error);
-        return false;
+        SPDLOG_ERROR("[plugin:det_mot] {}，检测功能停用，系统继续运行", error);
+        report_error(error);
+        detection_enabled_ = false;
+    } else {
+        detection_enabled_ = true;
     }
-    detection_enabled_ = true;
     running_ = true;
     capture_thread_ = std::thread([this]() { capture_loop(); });
     process_thread_ = std::thread([this]() { process_loop(); });
@@ -276,8 +279,13 @@ void Perception::process_loop() {
 
         std::string video_error;
         if (!video_streaming_.push_frame(*frame, targets, video_error)) {
-            plane::core::request_fatal("videostream_output", video_error);
-            return;
+            if (!video_error_logged_) {
+                SPDLOG_ERROR("[plugin:videostream_output] {}，跳过推流，系统继续运行", video_error);
+                report_error(video_error);
+                video_error_logged_ = true;
+            }
+        } else {
+            video_error_logged_ = false;
         }
 
         const std::int64_t now = now_ms();

@@ -77,7 +77,7 @@ bash tests/contract/test_plugin_load.sh build
 
 验证 `build/plugins` 中的 ImageInput、DetMot 和 VideoStreamOutput Provider 均可被宿主发现和实例化。
 
-### 4.2 异常快速退出
+### 4.2 插件异常降级
 
 ```bash
 bash tests/integration/test_failfast.sh
@@ -85,9 +85,9 @@ bash tests/integration/test_failfast.sh
 
 验证插件目录缺失、检测模型不可用时：
 
-- 输出 `[fatal] plugin=<name> reason=<reason>`；
-- 程序在限定时间内退出；
-- 退出码非 0。
+- 输出包含插件名称和失败原因的错误日志；
+- 不输出插件 `[fatal]` 日志；
+- 核心程序进入就绪状态并保持运行。
 
 ### 4.3 配置切换
 
@@ -201,6 +201,7 @@ Arm → Takeoff → Midcourse → Detection → Tracking → Guidance/Impact
 | 实机低电压 | 飞控连接正常且首次低于阈值时发送一次告警 |
 | 电压恢复 | 电压恢复后解除锁存，再次低电压可重新告警 |
 | 仿真低电压 | 仿真飞机不发送低电压告警 |
+| 插件初始化/配置失败 | 记录插件和原因，禁用对应能力，核心程序保持运行 |
 | 插件运行失败 | 记录插件和原因，有序关闭并返回非 0 |
 
 ## 10. 测试报告

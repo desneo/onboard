@@ -5,8 +5,6 @@
 #include <magic_enum/magic_enum.hpp>
 #include <string>
 
-#include "core/runtime.h"
-
 namespace plane::video {
 
 VideoStreaming::VideoStreaming(const plane::core::AppConfig& config,
@@ -22,8 +20,7 @@ bool VideoStreaming::init() { return true; }
 bool VideoStreaming::start() {
     std::string error;
     if (!start_stream(error)) {
-        SPDLOG_ERROR("推流启动失败: {}", error);
-        return false;
+        SPDLOG_ERROR("[plugin:videostream_output] 推流启动失败: {}，推流功能停用，系统继续运行", error);
     }
     return true;
 }
@@ -57,12 +54,10 @@ bool VideoStreaming::start_stream(std::string& error) {
     output_ = plugin_manager_.create_video_output();
     if (!output_) {
         error = "无可用推流插件 (VideoStreamOutputPlugin)";
-        plane::core::request_fatal("videostream_output", error);
         return false;
     }
     const plane::algorithm::StreamConfig stream = make_stream_config();
     if (!output_->setConfig(stream, error)) {
-        plane::core::request_fatal("videostream_output", error);
         output_.reset();
         return false;
     }

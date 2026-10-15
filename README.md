@@ -111,6 +111,47 @@ export PLANE_MODELS_DIR=/path/to/models
 
 ## 运行与停止
 
+### 部署独立运行目录
+
+`build/plane/` 是可整体交付的运行目录，其中包含本说明、主程序、配置、启停脚本、插件、模型和随包动态库。部署端应保持其内部目录结构不变。将整个目录复制到目标机后，在目录根部执行：
+
+```bash
+cd /path/to/plane
+
+# 确认目标机架构正确、关键文件齐全，并检查随包动态库解析。
+uname -m
+test -x plane && test -f config/plane.conf && test -d plugins && test -d models
+! ldd ./plane | grep 'not found'
+./plane --deps-check
+```
+
+部署前按现场环境修改 `config/plane.conf`，至少确认飞控连接（`fc_link_type` 及对应的 UDP 或串口参数）、图像源、Zenoh 端点和推流参数。`plugins_dir` 与模型路径默认是相对于运行目录的路径，不要改成源码树路径。
+
+`runplane.sh` 还要求目标机的 `PATH` 中存在 `rknn-inspect`；启动时它会读取 RKNN 模型尺寸并更新配置。交互式启动：
+
+```bash
+./runplane.sh
+```
+
+无人值守后台启动及状态检查：
+
+```bash
+mkdir -p logs
+nohup ./runplane.sh >logs/plane.stdout.log 2>&1 &
+pgrep -a -x plane
+tail -f logs/plane.log
+```
+
+停止程序（默认等待 10 秒优雅退出）：
+
+```bash
+./stopplane.sh
+```
+
+若启动失败，先查看 `logs/plane.stdout.log` 和 `logs/plane.log`，并再次运行 `ldd ./plane` 以及 `ldd plugins/*.so` 检查目标机缺少的系统库。OpenCV、FFmpeg、GStreamer、RKNN/RGA 等硬件或系统运行库仍需由目标机提供。
+
+### 从源码树运行
+
 从源码树启动：
 
 ```bash
