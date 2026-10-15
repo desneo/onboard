@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 启动机载程序 runplane.sh
 # 1. 若已有 plane 在运行，则提示并退出，不重启；
-# 2. 用 rknn-inspect 读取检测模型输入宽高，写回配置 image_*/det_input_*/stream_*；
+# 2. 用 rknn-inspect 读取检测模型输入宽高，写回 image_input、detection、video_output section；
 # 3. 运行 ./plane。
 #
 # 用法: runplane.sh [plane_dir]
@@ -33,8 +33,30 @@ CONFIG="${PLANE_DIR}/config/plane.conf"
 [ -f "${CONFIG}" ] || { echo "错误: 配置文件不存在: ${CONFIG}" >&2; exit 1; }
 [ -x "${PLANE_DIR}/plane" ] || { echo "错误: 可执行文件不存在: ${PLANE_DIR}/plane" >&2; exit 1; }
 
-# 模型路径：优先取配置 det_model_path，缺省 models/yolo11/yolo11n。
-DET_MODEL_PATH="$(grep -E '^[[:space:]]*det_model_path[[:space:]]*=' "${CONFIG}" | tail -1 | cut -d= -f2- | tr -d '[:space:]' || true)"
+# 读取指定 INI section 中的键值。
+get_config() { # section key
+    awk -v wanted_section="$1" -v wanted_key="$2" '
+        function trim(value) {
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+            return value
+        }
+        /^[[:space:]]*\[[^]]+\][[:space:]]*$/ {
+            section = $0
+            gsub(/^[[:space:]]*\[|\][[:space:]]*$/, "", section)
+            next
+        }
+        section == wanted_section {
+            pos = index($0, "=")
+            if (pos == 0) next
+            key = trim(substr($0, 1, pos - 1))
+            if (key == wanted_key) result = trim(substr($0, pos + 1))
+        }
+        END { print result }
+    ' "${CONFIG}"
+}
+
+# 模型路径：优先取 [detection] model_path，缺省 models/yolo11/yolo11n。
+DET_MODEL_PATH="$(get_config detection model_path)"
 [ -n "${DET_MODEL_PATH}" ] || DET_MODEL_PATH="models/yolo11/yolo11n"
 case "${DET_MODEL_PATH}" in
     *.rknn) MODEL="${PLANE_DIR}/${DET_MODEL_PATH}" ;;
@@ -62,19 +84,55 @@ else
         MDL_W="${NUMS[3]:-}"
     fi
     if [ -n "${MDL_W}" ] && [ -n "${MDL_H}" ]; then
-        set_config() { # key value
-            if grep -qE "^[[:space:]]*$1[[:space:]]*=" "${CONFIG}"; then
-                sed -i -E "s|^[[:space:]]*$1[[:space:]]*=.*|$1 = $2|" "${CONFIG}"
-            else
-                printf '%s = %s\n' "$1" "$2" >>"${CONFIG}"
-            fi
+        set_config() { # section key value
+            local section="$1" key="$2" value="$3" tmp="${CONFIG}.tmp.$$"
+            awk -v wanted_section="${section}" -v wanted_key="${key}" -v wanted_value="${value}" '
+                function trim(text) {
+                    gsub(/^[[:space:]]+|[[:space:]]+$/, "", text)
+                    return text
+                }
+                /^[[:space:]]*\[[^]]+\][[:space:]]*$/ {
+                    if (in_section && !written) {
+                        print wanted_key " = " wanted_value
+                        written = 1
+                    }
+                    current = $0
+                    gsub(/^[[:space:]]*\[|\][[:space:]]*$/, "", current)
+                    in_section = (current == wanted_section)
+                    if (in_section) section_found = 1
+                    print
+                    next
+                }
+                {
+                    if (in_section) {
+                        pos = index($0, "=")
+                        candidate = pos == 0 ? "" : trim(substr($0, 1, pos - 1))
+                        if (candidate == wanted_key) {
+                            print wanted_key " = " wanted_value
+                            written = 1
+                            next
+                        }
+                    }
+                    print
+                }
+                END {
+                    if (in_section && !written) {
+                        print wanted_key " = " wanted_value
+                    } else if (!section_found) {
+                        print ""
+                        print "[" wanted_section "]"
+                        print wanted_key " = " wanted_value
+                    }
+                }
+            ' "${CONFIG}" >"${tmp}"
+            mv "${tmp}" "${CONFIG}"
         }
-        set_config image_width "${MDL_W}"
-        set_config image_height "${MDL_H}"
-        set_config det_input_width "${MDL_W}"
-        set_config det_input_height "${MDL_H}"
-        set_config stream_width "${MDL_W}"
-        set_config stream_height "${MDL_H}"
+        set_config image_input width "${MDL_W}"
+        set_config image_input height "${MDL_H}"
+        set_config detection input_width "${MDL_W}"
+        set_config detection input_height "${MDL_H}"
+        set_config video_output width "${MDL_W}"
+        set_config video_output height "${MDL_H}"
         echo "已按模型输入更新配置: ${MDL_W}x${MDL_H} (${MODEL})"
     else
         echo "警告: 模型输入尺寸解析失败: shape=${SHAPE} format=${FORMAT}" >&2

@@ -125,7 +125,7 @@ test -x plane && test -f config/plane.conf && test -d plugins && test -d models
 ./plane --deps-check
 ```
 
-部署前按现场环境修改 `config/plane.conf`，至少确认飞控连接（`fc_link_type` 及对应的 UDP 或串口参数）、图像源、Zenoh 端点和推流参数。`plugins_dir` 与模型路径默认是相对于运行目录的路径，不要改成源码树路径。
+部署前按现场环境修改 `config/plane.conf`，至少确认 `[flight_control]` 中的连接类型及对应 UDP 或串口参数、图像源、Zenoh 端点和推流参数。`plugins.directory` 与 `detection.model_path` 默认是相对于运行目录的路径，不要改成源码树路径。
 
 `runplane.sh` 还要求目标机的 `PATH` 中存在 `rknn-inspect`；启动时它会读取 RKNN 模型尺寸并更新配置。交互式启动：
 
@@ -186,35 +186,35 @@ cd build/plane
 
 ## 配置说明
 
-默认配置为 [`config/plane.conf`](config/plane.conf)，格式为 `key = value`。
+默认配置为 [`config/plane.conf`](config/plane.conf)，采用带 section 的 INI 格式。配置项必须按模块放在 `[section]` 下，使用 `key = value`。
 
 ### 系统与通信
 
 | 配置 | 说明 |
 | --- | --- |
-| `safe_height_m` | 未指定起飞高度时使用的安全高度 |
-| `log_dir` | 日志目录 |
-| `state_report_period_ms` | 状态上报周期 |
-| `plane_id` / `station_id` | 本机和地面站标识 |
-| `zenoh_config_file` | 可选 Zenoh 配置文件 |
-| `zenoh_connect` / `zenoh_listen` | Zenoh 连接或监听端点 |
-| `comm_ack_timeout_ms` / `comm_ack_max_retries` | 可靠消息确认超时和重试次数 |
-| `comm_rx_queue_max` | 通信接收队列容量，满时丢弃最旧消息 |
-| `gcs_link_timeout_ms` | 地面站链路超时阈值 |
-| `debug_zenoh_log` | 是否记录 Zenoh 消息目标端点 |
+| `system.safe_height_m` | 未指定起飞高度时使用的安全高度 |
+| `system.log_dir` | 日志目录 |
+| `system.state_report_period_ms` | 状态上报周期 |
+| `communication.plane_id` / `station_id` | 本机和地面站标识 |
+| `communication.zenoh_config_file` | 可选 Zenoh 配置文件 |
+| `communication.zenoh_connect` / `zenoh_listen` | Zenoh 连接或监听端点 |
+| `communication.ack_timeout_ms` / `ack_max_retries` | 可靠消息确认超时和重试次数 |
+| `communication.rx_queue_max` | 通信接收队列容量，满时丢弃最旧消息 |
+| `communication.gcs_link_timeout_ms` | 地面站链路超时阈值 |
+| `communication.debug_log` | 是否记录 Zenoh 消息目标端点 |
 
 ### 飞控与任务
 
 | 配置 | 说明 |
 | --- | --- |
-| `fc_link_type` | `udp` 或 `serial` |
-| `fc_udp_url` | MAVSDK UDP 地址 |
-| `fc_serial_device` / `fc_serial_baud` | 串口设备和波特率 |
-| `fc_heartbeat_timeout_ms` | MAVSDK 心跳超时 |
-| `fc_route_speed_m_s` | 航点和航线速度 |
-| `bt_tick_interval_ms` | 行为树 tick 周期 |
-| `bt_node_timeout_ms` | 普通行为树节点超时 |
-| `bt_takeoff_tolerance_m` | 起飞高度判定容差 |
+| `flight_control.link_type` | `udp` 或 `serial` |
+| `flight_control.udp_url` | MAVSDK UDP 地址 |
+| `flight_control.serial_device` / `serial_baud` | 串口设备和波特率 |
+| `flight_control.heartbeat_timeout_ms` | MAVSDK 心跳超时 |
+| `flight_control.route_speed_m_s` | 航点和航线速度 |
+| `behavior_tree.tick_interval_ms` | 行为树 tick 周期 |
+| `behavior_tree.node_timeout_ms` | 普通行为树节点超时 |
+| `behavior_tree.takeoff_tolerance_m` | 起飞高度判定容差 |
 
 UDP 飞控端口位于 `14200`～`14299` 时，程序将本机视为仿真飞机，并禁用低电压告警。
 
@@ -222,45 +222,45 @@ UDP 飞控端口位于 `14200`～`14299` 时，程序将本机视为仿真飞机
 
 | 配置 | 说明 |
 | --- | --- |
-| `plugins_dir` | 动态插件目录 |
-| `image_source_type` | `Mipi` 或 `Rtsp` |
-| `image_mipi_device` | MIPI 设备；空值表示自动发现 |
-| `image_rtsp_url` | RTSP 输入地址 |
-| `image_reconnect_interval_s` | 图像源断流重试间隔 |
-| `image_width` / `image_height` | 图像输入尺寸 |
-| `det_model_path` | 检测模型文件或目录 |
-| `det_config_dir` | 检测插件配置目录 |
-| `det_confidence_threshold` / `det_nms_threshold` | 检测阈值 |
-| `det_track_thresh` / `det_track_buffer` | MOT 参数 |
-| `det_input_width` / `det_input_height` | 检测输入尺寸 |
+| `plugins.directory` | 动态插件目录 |
+| `image_input.type` | `Mipi` 或 `Rtsp` |
+| `image_input.mipi_device` | MIPI 设备；空值表示自动发现 |
+| `image_input.rtsp_url` | RTSP 输入地址 |
+| `image_input.reconnect_interval_s` | 图像源断流重试间隔 |
+| `image_input.width` / `height` | 图像输入尺寸 |
+| `detection.model_path` | 检测模型文件或目录 |
+| `detection.config_dir` | 检测插件配置目录 |
+| `detection.confidence_threshold` / `nms_threshold` | 检测阈值 |
+| `detection.track_thresh` / `track_buffer` | MOT 参数 |
+| `detection.input_width` / `input_height` | 检测输入尺寸 |
 
 ### 视频输出
 
 | 配置 | 说明 |
 | --- | --- |
-| `stream_type` | `Rtsp` 或 `WebRtc` |
-| `stream_url` | 可选的显式推流地址 |
-| `stream_app` / `stream_name` | 流应用名和流名称 |
-| `stream_rtsp_port` / `stream_http_port` / `stream_rtc_port` | 服务端口 |
-| `stream_width` / `stream_height` | 输出分辨率 |
-| `stream_max_fps` | 最大输出帧率 |
-| `stream_bitrate_kbps` / `stream_gop` | 编码码率和 GOP |
+| `video_output.type` | `Rtsp` 或 `WebRtc` |
+| `video_output.url` | 可选的显式推流地址 |
+| `video_output.app` / `stream` | 流应用名和流名称 |
+| `video_output.rtsp_port` / `http_port` / `rtc_port` | 服务端口 |
+| `video_output.width` / `height` | 输出分辨率 |
+| `video_output.max_fps` | 最大输出帧率 |
+| `video_output.bitrate_kbps` / `gop` | 编码码率和 GOP |
 
 ### 安全与反无人机任务
 
 | 配置 | 说明 |
 | --- | --- |
-| `alert_voltage_threshold_v` | 实机低电压告警阈值 |
-| `suicide_detection_start_distance_m` | 切换到检测阶段的水平距离 |
-| `suicide_approach_speed_m_s` | 中段逼近速度 |
-| `suicide_track_approach_speed_m_s` | 跟踪阶段逼近速度，当前尚未使用 |
-| `suicide_climb_speed_m_s` | 中段垂直速度限制 |
-| `suicide_target_select_rule` | 视觉目标选择规则，当前尚未使用 |
-| `suicide_guidance_start_stable_ms` | 导引启动稳定时间，当前尚未使用 |
-| `suicide_track_lost_timeout_ms` | 跟踪丢失超时，当前尚未使用 |
-| `suicide_phase_timeout_ms` | 中段和检测阶段超时 |
-| `suicide_impact_height_m` / `suicide_impact_vd_m_s` | 撞击判定参数，当前尚未使用 |
-| `debug_target_log` | 是否输出逐帧目标调试日志 |
+| `safety.alert_voltage_threshold_v` | 实机低电压告警阈值 |
+| `suicide_mission.detection_start_distance_m` | 切换到检测阶段的水平距离 |
+| `suicide_mission.approach_speed_m_s` | 中段逼近速度 |
+| `suicide_mission.track_approach_speed_m_s` | 跟踪阶段逼近速度，当前尚未使用 |
+| `suicide_mission.climb_speed_m_s` | 中段垂直速度限制 |
+| `suicide_mission.target_select_rule` | 视觉目标选择规则，当前尚未使用 |
+| `suicide_mission.guidance_start_stable_ms` | 导引启动稳定时间，当前尚未使用 |
+| `suicide_mission.track_lost_timeout_ms` | 跟踪丢失超时，当前尚未使用 |
+| `suicide_mission.phase_timeout_ms` | 中段和检测阶段超时 |
+| `suicide_mission.impact_height_m` / `impact_vd_m_s` | 撞击判定参数，当前尚未使用 |
+| `debug.target_log` | 是否输出逐帧目标调试日志 |
 
 配置文件修改后重启程序生效；`SystemParam` 消息可在运行中更新安全高度。
 

@@ -5,6 +5,7 @@
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_map>
 
 namespace plane::core {
 namespace {
@@ -20,6 +21,75 @@ std::string trim(const std::string& text) {
 
 bool parse_bool(const std::string& value) {
     return value == "1" || value == "true" || value == "True" || value == "on";
+}
+
+std::string canonical_key(const std::string& section, const std::string& key) {
+    static const std::unordered_map<std::string, std::string> keys = {
+        {"system.safe_height_m", "safe_height_m"},
+        {"system.log_dir", "log_dir"},
+        {"system.state_report_period_ms", "state_report_period_ms"},
+        {"communication.plane_id", "plane_id"},
+        {"communication.station_id", "station_id"},
+        {"communication.zenoh_config_file", "zenoh_config_file"},
+        {"communication.zenoh_connect", "zenoh_connect"},
+        {"communication.zenoh_listen", "zenoh_listen"},
+        {"communication.debug_log", "debug_zenoh_log"},
+        {"communication.ack_timeout_ms", "comm_ack_timeout_ms"},
+        {"communication.ack_max_retries", "comm_ack_max_retries"},
+        {"communication.rx_queue_max", "comm_rx_queue_max"},
+        {"communication.gcs_link_timeout_ms", "gcs_link_timeout_ms"},
+        {"flight_control.link_type", "fc_link_type"},
+        {"flight_control.udp_url", "fc_udp_url"},
+        {"flight_control.serial_device", "fc_serial_device"},
+        {"flight_control.serial_baud", "fc_serial_baud"},
+        {"flight_control.heartbeat_timeout_ms", "fc_heartbeat_timeout_ms"},
+        {"flight_control.route_speed_m_s", "fc_route_speed_m_s"},
+        {"behavior_tree.tick_interval_ms", "bt_tick_interval_ms"},
+        {"behavior_tree.node_timeout_ms", "bt_node_timeout_ms"},
+        {"behavior_tree.takeoff_tolerance_m", "bt_takeoff_tolerance_m"},
+        {"plugins.directory", "plugins_dir"},
+        {"image_input.type", "image_source_type"},
+        {"image_input.mipi_device", "image_mipi_device"},
+        {"image_input.rtsp_url", "image_rtsp_url"},
+        {"image_input.reconnect_interval_s", "image_reconnect_interval_s"},
+        {"image_input.width", "image_width"},
+        {"image_input.height", "image_height"},
+        {"detection.model_path", "det_model_path"},
+        {"detection.config_dir", "det_config_dir"},
+        {"detection.confidence_threshold", "det_confidence_threshold"},
+        {"detection.nms_threshold", "det_nms_threshold"},
+        {"detection.track_thresh", "det_track_thresh"},
+        {"detection.track_buffer", "det_track_buffer"},
+        {"detection.input_width", "det_input_width"},
+        {"detection.input_height", "det_input_height"},
+        {"video_output.type", "stream_type"},
+        {"video_output.url", "stream_url"},
+        {"video_output.app", "stream_app"},
+        {"video_output.stream", "stream_name"},
+        {"video_output.rtsp_port", "stream_rtsp_port"},
+        {"video_output.http_port", "stream_http_port"},
+        {"video_output.rtc_port", "stream_rtc_port"},
+        {"video_output.width", "stream_width"},
+        {"video_output.height", "stream_height"},
+        {"video_output.max_fps", "stream_max_fps"},
+        {"video_output.bitrate_kbps", "stream_bitrate_kbps"},
+        {"video_output.gop", "stream_gop"},
+        {"debug.target_log", "debug_target_log"},
+        {"safety.alert_voltage_threshold_v", "alert_voltage_threshold_v"},
+        {"suicide_mission.detection_start_distance_m", "suicide_detection_start_distance_m"},
+        {"suicide_mission.approach_speed_m_s", "suicide_approach_speed_m_s"},
+        {"suicide_mission.track_approach_speed_m_s", "suicide_track_approach_speed_m_s"},
+        {"suicide_mission.climb_speed_m_s", "suicide_climb_speed_m_s"},
+        {"suicide_mission.target_select_rule", "suicide_target_select_rule"},
+        {"suicide_mission.guidance_start_stable_ms", "suicide_guidance_start_stable_ms"},
+        {"suicide_mission.track_lost_timeout_ms", "suicide_track_lost_timeout_ms"},
+        {"suicide_mission.phase_timeout_ms", "suicide_phase_timeout_ms"},
+        {"suicide_mission.impact_height_m", "suicide_impact_height_m"},
+        {"suicide_mission.impact_vd_m_s", "suicide_impact_vd_m_s"},
+    };
+    const std::string qualified = section + "." + key;
+    const auto it = keys.find(qualified);
+    return it == keys.end() ? qualified : it->second;
 }
 
 /// 仿真飞机判定：udp 链路且 fc_udp_url 端口处于 14200-14299。
@@ -52,9 +122,18 @@ bool load_config(const std::string& path, AppConfig& out) {
     }
 
     std::string line;
+    std::string section;
     while (std::getline(file, line)) {
         line = trim(line);
-        if (line.empty() || line.front() == '#') {
+        if (line.empty() || line.front() == '#' || line.front() == ';') {
+            continue;
+        }
+        if (line.front() == '[') {
+            if (line.size() < 3 || line.back() != ']') {
+                SPDLOG_WARN("忽略无法解析的配置 section: {}", line);
+                continue;
+            }
+            section = trim(line.substr(1, line.size() - 2));
             continue;
         }
         const auto pos = line.find('=');
@@ -62,7 +141,12 @@ bool load_config(const std::string& path, AppConfig& out) {
             SPDLOG_WARN("忽略无法解析的配置行: {}", line);
             continue;
         }
-        const std::string key = trim(line.substr(0, pos));
+        if (section.empty()) {
+            SPDLOG_WARN("忽略缺少 section 的配置项: {}", line);
+            continue;
+        }
+        const std::string raw_key = trim(line.substr(0, pos));
+        const std::string key = canonical_key(section, raw_key);
         const std::string value = trim(line.substr(pos + 1));
         if (key == "safe_height_m") {
             out.system_param.safeHeight_m = std::stod(value);
@@ -187,7 +271,7 @@ bool load_config(const std::string& path, AppConfig& out) {
         } else if (key == "suicide_impact_vd_m_s") {
             out.suicide_impact_vd_m_s = std::stod(value);
         } else {
-            SPDLOG_WARN("未知配置项: {}", key);
+            SPDLOG_WARN("未知配置项: {}.{}", section, raw_key);
         }
     }
     out.is_sim = detect_is_simulation(out);

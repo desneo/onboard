@@ -88,7 +88,7 @@ struct AppConfig {
     double suicide_impact_vd_m_s = 3.0;
 };
 
-/// 从 key = value 文本文件加载配置；文件不存在时保留默认值并返回 false。
+/// 从带 section 的 INI 文件加载配置；文件不存在时保留默认值并返回 false。
 bool load_config(const std::string& path, AppConfig& out);
 
 }  // namespace plane::core
