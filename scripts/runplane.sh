@@ -64,16 +64,24 @@ case "${DET_MODEL_PATH}" in
 esac
 [ -f "${MODEL}" ] || { echo "错误: 模型文件不存在: ${MODEL}" >&2; exit 1; }
 
-command -v rknn-inspect >/dev/null 2>&1 || { echo "错误: 未找到 rknn-inspect 命令" >&2; exit 1; }
-
 # 解析模型 Input 的 Shape，按 Format(NHWC/NCHW) 取宽高。
-INSPECT="$(rknn-inspect -i "${MODEL}" 2>/dev/null || true)"
-LINE="$(printf '%s\n' "${INSPECT}" | grep -m1 'Input' || true)"
-SHAPE="$(printf '%s' "${LINE}" | grep -o '\[[0-9][0-9, ]*\]' | head -1 || true)"
-FORMAT="$(printf '%s' "${LINE}" | grep -o -E 'NHWC|NCHW' | head -1 || true)"
+# rknn-inspect 是配置同步辅助工具，不应成为核心程序的硬启动依赖；
+# 缺失时沿用打包配置中的尺寸，后续由插件自身报告真正的模型/配置不匹配。
+if command -v rknn-inspect >/dev/null 2>&1; then
+    INSPECT="$(rknn-inspect -i "${MODEL}" 2>/dev/null || true)"
+    LINE="$(printf '%s\n' "${INSPECT}" | grep -m1 'Input' || true)"
+    SHAPE="$(printf '%s' "${LINE}" | grep -o '\[[0-9][0-9, ]*\]' | head -1 || true)"
+    FORMAT="$(printf '%s' "${LINE}" | grep -o -E 'NHWC|NCHW' | head -1 || true)"
+else
+    echo "警告: 未找到 rknn-inspect 命令，沿用现有图像、检测和推流尺寸配置" >&2
+    SHAPE=""
+    FORMAT=""
+fi
 
 if [ -z "${SHAPE}" ]; then
-    echo "警告: 无法解析模型输入尺寸，保持配置不变 (${MODEL})" >&2
+    if command -v rknn-inspect >/dev/null 2>&1; then
+        echo "警告: 无法解析模型输入尺寸，保持配置不变 (${MODEL})" >&2
+    fi
 else
     NUMS=($(printf '%s' "${SHAPE}" | tr -dc '0-9,' | tr ',' ' '))
     if [ "${FORMAT}" = "NHWC" ]; then

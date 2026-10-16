@@ -99,6 +99,7 @@ export PLANE_IMAGE_INPUT_SO=/path/to/libimage_input.so
 export PLANE_VIDEO_OUTPUT_SO=/path/to/libvideostream_output.so
 export PLANE_DET_MOT_SO=/path/to/libdet_mot.so
 export PLANE_MODELS_DIR=/path/to/models
+export PLANE_DETECTION_CONFIG_DIR=/path/to/detection/configs
 ```
 
 已有构建目录也可以手动重新打包：
@@ -107,13 +108,13 @@ export PLANE_MODELS_DIR=/path/to/models
 ./tools/package.sh build
 ```
 
-系统级 OpenCV、FFmpeg、GStreamer 等运行库仍由部署环境提供。
+打包脚本会收集 `/lib`、`/usr/lib` 之外的项目/三方动态库，并把 RKNN 用户态运行库单独暂存到 `build/plane/rknn/`。OpenCV、FFmpeg、RGA、MPP、ZeroMQ、SRTP 等系统库由目标板通过 APT 安装；RKNN 库应在这些普通依赖之后安装。设备驱动以及插件运行时动态加载但未被 `ldd` 发现的组件仍由目标板提供。
 
 ## 运行与停止
 
 ### 部署独立运行目录
 
-`build/plane/` 是可整体交付的运行目录，其中包含本说明、主程序、配置、启停脚本、插件、模型和随包动态库。部署端应保持其内部目录结构不变。将整个目录复制到目标机后，在目录根部执行：
+`build/plane/` 包含本说明、主程序、配置、启停脚本、插件、模型、检测配置、项目动态库和 RKNN 安装源。测试环境优先使用 `tools/fleetctl.py` 自动准备系统依赖；手工复制时需先按 `config/fleet.ini` 的清单安装 APT 包，再安装 `rknn/` 中的库。在目录根部执行：
 
 ```bash
 cd /path/to/plane
@@ -127,7 +128,7 @@ test -x plane && test -f config/plane.conf && test -d plugins && test -d models
 
 部署前按现场环境修改 `config/plane.conf`，至少确认 `[flight_control]` 中的连接类型及对应 UDP 或串口参数、图像源、Zenoh 端点和推流参数。`plugins.directory` 与 `detection.model_path` 默认是相对于运行目录的路径，不要改成源码树路径。
 
-`runplane.sh` 还要求目标机的 `PATH` 中存在 `rknn-inspect`；启动时它会读取 RKNN 模型尺寸并更新配置。交互式启动：
+目标机的 `PATH` 中存在 `rknn-inspect` 时，`runplane.sh` 会读取 RKNN 模型尺寸并更新配置；命令缺失时记录警告并沿用现有尺寸配置。交互式启动：
 
 ```bash
 ./runplane.sh
@@ -148,7 +149,7 @@ tail -f logs/plane.log
 ./stopplane.sh
 ```
 
-若启动失败，先查看 `logs/plane.stdout.log` 和 `logs/plane.log`，并再次运行 `ldd ./plane` 以及 `ldd plugins/*.so` 检查目标机缺少的系统库。OpenCV、FFmpeg、GStreamer、RKNN/RGA 等硬件或系统运行库仍需由目标机提供。
+若启动失败，先查看 `logs/plane.stdout.log` 和 `logs/plane.log`，并再次运行 `ldd ./plane` 以及 `ldd plugins/*.so` 检查 APT 或 RKNN 运行库是否缺失。设备驱动和通过运行时动态加载的组件仍需由目标机提供。
 
 ### 从源码树运行
 
@@ -164,7 +165,7 @@ tail -f logs/plane.log
 ./scripts/runplane.sh /path/to/plane_dir
 ```
 
-启动脚本要求存在 `rknn-inspect`，会读取 RKNN 模型输入尺寸并同步更新取图、检测和推流分辨率，然后运行 `plane`。
+启动脚本会在存在 `rknn-inspect` 时读取 RKNN 模型输入尺寸并同步更新取图、检测和推流分辨率；命令缺失时沿用现有尺寸配置，然后运行 `plane`。
 
 停止程序：
 

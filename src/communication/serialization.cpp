@@ -1,6 +1,7 @@
 #include "communication/serialization.h"
 
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <magic_enum/magic_enum.hpp>
 #include <nlohmann/json.hpp>
@@ -27,18 +28,32 @@ namespace {
 
 using nlohmann::json;
 
+template <typename Number>
+Number finite_or_default(Number value, Number fallback = Number{}) {
+    return std::isfinite(value) ? value : fallback;
+}
+
+template <typename Number>
+Number number_or_default(const json& in, const char* key, Number fallback = Number{}) {
+    const auto item = in.find(key);
+    if (item == in.end() || item->is_null()) {
+        return fallback;
+    }
+    return item->get<Number>();
+}
+
 json to_json(const plane::model::GeoPoint& value) {
-    return json{{"latitude", value.latitude},
-                {"longitude", value.longitude},
-                {"height", value.height},
-                {"altitude", value.altitude}};
+    return json{{"latitude", finite_or_default(value.latitude)},
+                {"longitude", finite_or_default(value.longitude)},
+                {"height", finite_or_default(value.height)},
+                {"altitude", finite_or_default(value.altitude)}};
 }
 
 void geo_point_from_json(const json& in, plane::model::GeoPoint& out) {
-    out.latitude = in.at("latitude").get<double>();
-    out.longitude = in.at("longitude").get<double>();
-    out.height = in.at("height").get<float>();
-    out.altitude = in.at("altitude").get<float>();
+    out.latitude = number_or_default<double>(in, "latitude");
+    out.longitude = number_or_default<double>(in, "longitude");
+    out.height = number_or_default<float>(in, "height");
+    out.altitude = number_or_default<float>(in, "altitude");
 }
 
 template <typename Enum>
@@ -236,21 +251,21 @@ bool to_payload(const plane::model::VehicleState& value, std::string& out, std::
         out = json{{"planeId", value.planeId},
                    {"geoPos", to_json(value.geoPos)},
                    {"startPos", to_json(value.startPos)},
-                   {"roll_deg", value.roll_deg},
-                   {"pitch_deg", value.pitch_deg},
-                   {"yaw_deg", value.yaw_deg},
-                   {"vn_m_s", value.vn_m_s},
-                   {"ve_m_s", value.ve_m_s},
-                   {"vd_m_s", value.vd_m_s},
-                   {"airspeed_m_s", value.airspeed_m_s},
-                   {"voltage_v", value.voltage_v},
+                   {"roll_deg", finite_or_default(value.roll_deg)},
+                   {"pitch_deg", finite_or_default(value.pitch_deg)},
+                   {"yaw_deg", finite_or_default(value.yaw_deg)},
+                   {"vn_m_s", finite_or_default(value.vn_m_s)},
+                   {"ve_m_s", finite_or_default(value.ve_m_s)},
+                   {"vd_m_s", finite_or_default(value.vd_m_s)},
+                   {"airspeed_m_s", finite_or_default(value.airspeed_m_s)},
+                   {"voltage_v", finite_or_default(value.voltage_v)},
                    {"flightMode", value.flightMode},
                    {"fcLinkState", value.fcLinkState},
                    {"currentBehaviorTree", value.currentBehaviorTree},
                    {"currentNode", value.currentNode},
-                   {"cameraAngle_roll_deg", value.cameraAngle_roll_deg},
-                   {"cameraAngle_pitch_deg", value.cameraAngle_pitch_deg},
-                   {"cameraAngle_yaw_deg", value.cameraAngle_yaw_deg}}
+                   {"cameraAngle_roll_deg", finite_or_default(value.cameraAngle_roll_deg)},
+                   {"cameraAngle_pitch_deg", finite_or_default(value.cameraAngle_pitch_deg)},
+                   {"cameraAngle_yaw_deg", finite_or_default(value.cameraAngle_yaw_deg)}}
                   .dump();
         return true;
     } catch (const json::exception& e) {
@@ -267,21 +282,21 @@ bool from_payload(const std::string& payload, plane::model::VehicleState& out, s
         if (in.contains("startPos")) {
             geo_point_from_json(in.at("startPos"), out.startPos);
         }
-        out.roll_deg = in.value("roll_deg", 0.0F);
-        out.pitch_deg = in.value("pitch_deg", 0.0F);
-        out.yaw_deg = in.value("yaw_deg", 0.0F);
-        out.vn_m_s = in.value("vn_m_s", 0.0F);
-        out.ve_m_s = in.value("ve_m_s", 0.0F);
-        out.vd_m_s = in.value("vd_m_s", 0.0F);
-        out.airspeed_m_s = in.value("airspeed_m_s", 0.0F);
-        out.voltage_v = in.value("voltage_v", 0.0F);
+        out.roll_deg = number_or_default<float>(in, "roll_deg");
+        out.pitch_deg = number_or_default<float>(in, "pitch_deg");
+        out.yaw_deg = number_or_default<float>(in, "yaw_deg");
+        out.vn_m_s = number_or_default<float>(in, "vn_m_s");
+        out.ve_m_s = number_or_default<float>(in, "ve_m_s");
+        out.vd_m_s = number_or_default<float>(in, "vd_m_s");
+        out.airspeed_m_s = number_or_default<float>(in, "airspeed_m_s");
+        out.voltage_v = number_or_default<float>(in, "voltage_v");
         out.flightMode = in.value("flightMode", std::string{});
         out.fcLinkState = in.value("fcLinkState", std::string{});
         out.currentBehaviorTree = in.value("currentBehaviorTree", std::string{});
         out.currentNode = in.value("currentNode", std::string{});
-        out.cameraAngle_roll_deg = in.value("cameraAngle_roll_deg", 0.0F);
-        out.cameraAngle_pitch_deg = in.value("cameraAngle_pitch_deg", 0.0F);
-        out.cameraAngle_yaw_deg = in.value("cameraAngle_yaw_deg", 0.0F);
+        out.cameraAngle_roll_deg = number_or_default<float>(in, "cameraAngle_roll_deg");
+        out.cameraAngle_pitch_deg = number_or_default<float>(in, "cameraAngle_pitch_deg");
+        out.cameraAngle_yaw_deg = number_or_default<float>(in, "cameraAngle_yaw_deg");
         return true;
     } catch (const json::exception& e) {
         error = e.what();

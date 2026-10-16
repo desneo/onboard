@@ -102,6 +102,19 @@ target_link_libraries(plugin_load_check PRIVATE
 
 include(CTest)
 if(BUILD_TESTING)
+  add_executable(serialization_vehicle_state_test
+    tests/unit/serialization_vehicle_state_test.cpp
+    src/communication/serialization.cpp
+  )
+  target_include_directories(serialization_vehicle_state_test PRIVATE src)
+  target_compile_options(serialization_vehicle_state_test PRIVATE -Wall -Wextra)
+  target_link_libraries(serialization_vehicle_state_test PRIVATE
+    plane::common_include
+    plane::magic_enum
+    plane::nlohmann_json
+  )
+  add_test(NAME serialization_vehicle_state COMMAND serialization_vehicle_state_test)
+
   add_executable(mission_node_timeout_test
     tests/unit/mission_node_timeout_test.cpp
     src/task/nodes/mission_node.cpp

@@ -17,12 +17,55 @@
 
 ### 2.1 平台与设备
 #### px4 sitl环境
-1）192.168.1.56 aeroarx/1, 登录后执行脚本  ~/v1.7.0./run_multi.sh -n 3用于启动3架飞机
-2) 3588板子(ubuntu22.04), 部署到用户根目录下即可
-  1号机， 192.168.1.100 firefly/firefly， 仿真飞控地址udpout://192.168.1.56:14280，视频流地址
-  2号机， 192.168.1.101 firefly/firefly， 仿真飞控地址udpout://192.168.1.56:14281，视频流地址
+1）192.168.1.56 aeroarx/1, 登录后到home/aeroarx/zsh/PX4-Autopilot/scenarios/02_rocket_two_axis_pod执行
+    先停止，再启动全新的环境
+    ./start.sh 脚本启动测试仿真环境，默认3架， -n 参数用于指定启动的飞机架次；
+    ./stop.sh停止仿真环境
+2）start脚本执行后会输出几架飞机使用的飞机url、吊舱视频流和吊舱控制端口，从中解析出信息来修改飞机中对应的配置文件
 
-### 2.2 软件与数据
+#### 测试环境
+1）每架机载对应一块板子
+2）1号飞机，192.168.1.100, firefly/firefly
+   2号飞机，192.168.1.101，firefly/firefly
+3）机器可读清单以 `config/fleet.ini` 为准。请求飞机数超过其中声明的板卡数时，必须在启动任何程序前报告环境不足。
+
+#### 多机自动化
+
+只做连接和环境预检：
+
+```bash
+python3 tools/fleetctl.py preflight --count 2
+```
+
+启动两架飞机并验证双方至少连续解析到 3 个友机状态样本：
+
+```bash
+python3 tools/fleetctl.py test --count 2
+```
+
+如果部署已启动但监控会话中断，可复核并重写该次报告，不重启现场：
+
+```bash
+python3 tools/fleetctl.py verify --count 2 --run-id <run_id>
+```
+
+停止本次环境：
+
+```bash
+python3 tools/fleetctl.py down --count 2
+```
+
+`test` 使用完整的 `build/plane`；包不完整时才调用 CMake 编译。脚本先停止旧机载进程，随后按以下顺序准备板端环境：
+
+1. 校验板端架构与 Ubuntu 版本，再把 `config/fleet.ini` 中的代理写入板端 `/etc/apt/apt.conf.d/99zz-fleet-proxy`；
+2. 先安装 `libopencv-dev`，再补装其余 APT 运行库；
+3. 安装 `build/plane/rknn/` 中的 RKNN 用户态库并运行 `ldconfig`；
+4. 重启 SITL，实时解析本次输出中的飞控和 RTSP 地址；
+5. 同步到 `/home/firefly/plane`，生成逐机配置，启动并持续分析日志。
+
+Zenoh 使用默认发现，不依赖 GCS 地址。测试证据写入 `logs/fleet/<run_id>/`；验证通过后环境保持运行，以便继续检查，失败时也保留现场并提示使用 `down` 停止。
+
+### 2.2 软件出包
 
 执行媒体测试前应具备：
 
