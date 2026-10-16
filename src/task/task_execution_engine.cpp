@@ -9,6 +9,8 @@
 #include <utility>
 #include <vector>
 
+#include "task/command_tree_plan.h"
+#include "task/nodes/adjust_height_node.h"
 #include "task/nodes/arm_node.h"
 #include "task/nodes/detect_node.h"
 #include "task/nodes/disarm_node.h"
@@ -22,6 +24,21 @@
 #include "task/task_events.h"
 
 namespace plane::task {
+namespace {
+
+std::string sequence_structure(const std::vector<std::string>& node_names) {
+    std::string structure = "Sequence[";
+    for (std::size_t index = 0; index < node_names.size(); ++index) {
+        if (index > 0) {
+            structure += " -> ";
+        }
+        structure += node_names[index];
+    }
+    structure += "]";
+    return structure;
+}
+
+}  // namespace
 
 TaskExecutionEngine::TaskExecutionEngine(plane::core::EventBus& event_bus, const plane::core::AppConfig& config,
                                          plane::flight_control::FlightControlApi& flight_control,
@@ -90,11 +107,12 @@ BT::Tree TaskExecutionEngine::build_anti_uav() {
     return tree;
 }
 
-void TaskExecutionEngine::launch_tree(BT::Tree tree, const std::string& tree_name) {
+void TaskExecutionEngine::launch_tree(BT::Tree tree, const std::string& tree_name, const std::string& tree_structure) {
     tree_ = std::move(tree);
     current_tree_name_ = tree_name;
     tree_ready_ = true;
     current_node_.clear();
+    SPDLOG_INFO("行为树结构: tree={}, structure={}", current_tree_name_, tree_structure);
     ticking_ = true;
     tick_thread_ = std::thread([this]() { tick_loop(); });
 }
@@ -111,7 +129,8 @@ bool TaskExecutionEngine::start(const plane::model::TaskInfo& task, std::string&
         return false;
     }
     is_task_tree_ = true;
-    launch_tree(std::move(tree), "anti-uav");
+    const std::vector<std::string> node_names{"Arm", "Takeoff", "Midcourse", "Detect"};
+    launch_tree(std::move(tree), "anti-uav", sequence_structure(node_names));
     SPDLOG_INFO("行为树已创建: {}, taskId={}, taskCode={}", current_tree_name_, task.taskId,
                 std::string(magic_enum::enum_name(task.taskCode)));
     return true;
@@ -123,27 +142,30 @@ bool TaskExecutionEngine::start_command(const plane::model::Command& command, st
     command_context_.commandId = command.commandId;
     command_context_.type = command.type;
     command_context_.waypoints = command.waypoints;
-    float height = command.takeoffHeight_m;
+    float height = command.type == plane::model::CommandType::Takeoff ? command.takeoffHeight_m : 0.0F;
     if (height <= 0.0F) {
         height = static_cast<float>(system_param_.current().safeHeight_m);
         SPDLOG_INFO("Takeoff 未指定高度，使用安全高度: {} m", height);
     }
     command_context_.takeoffHeight_m = height;
 
+    const plane::flight_control::FlightStatus flight_status = flight_control_.flight_status();
+    const std::vector<std::string> node_names = command_node_names(command_context_.type, flight_status);
     BT::Tree tree;
     try {
-        tree = build_command_tree();
+        tree = build_command_tree(node_names);
     } catch (const std::exception& e) {
         error = std::string("指令行为树创建失败: ") + e.what();
         return false;
     }
     is_task_tree_ = false;
-    launch_tree(std::move(tree), std::string("cmd-") + std::string(magic_enum::enum_name(command.type)));
+    launch_tree(std::move(tree), std::string("cmd-") + std::string(magic_enum::enum_name(command.type)),
+                sequence_structure(node_names));
     SPDLOG_INFO("指令行为树已创建: {}, commandId={}", current_tree_name_, command.commandId);
     return true;
 }
 
-BT::Tree TaskExecutionEngine::build_command_tree() {
+BT::Tree TaskExecutionEngine::build_command_tree(const std::vector<std::string>& node_names) {
     BT::BehaviorTreeFactory factory;
     factory.registerNodeType<ArmNode>("Arm", &flight_control_, &state_store_, &config_);
     factory.registerNodeType<DisarmNode>("Disarm", &flight_control_, &state_store_, &config_);
@@ -153,6 +175,8 @@ BT::Tree TaskExecutionEngine::build_command_tree() {
     factory.registerNodeType<RtlNode>("RTL", &flight_control_, &state_store_, &config_);
     factory.registerNodeType<HoverNode>("Hover", &flight_control_, &state_store_, &config_);
     factory.registerNodeType<StopMotorNode>("StopMotor", &flight_control_, &state_store_, &config_);
+    factory.registerNodeType<AdjustHeightNode>("AdjustHeight", &flight_control_, &state_store_, &config_,
+                                               &command_context_);
     factory.registerNodeType<MissionNode>("Mission", &flight_control_, &state_store_, &config_, &command_context_);
 
     auto subtree = std::make_shared<BT::Tree::Subtree>();
@@ -175,33 +199,7 @@ BT::Tree TaskExecutionEngine::build_command_tree() {
         }
     };
 
-    switch (command_context_.type) {
-        case plane::model::CommandType::Takeoff:
-            make_sequence({"Arm", "Takeoff"});
-            break;
-        case plane::model::CommandType::Arm:
-            make_sequence({"Arm"});
-            break;
-        case plane::model::CommandType::Disarm:
-            make_sequence({"Disarm"});
-            break;
-        case plane::model::CommandType::Land:
-            make_sequence({"Land"});
-            break;
-        case plane::model::CommandType::RTL:
-            make_sequence({"RTL"});
-            break;
-        case plane::model::CommandType::Hover:
-            make_sequence({"Hover"});
-            break;
-        case plane::model::CommandType::StopMotor:
-            make_sequence({"StopMotor"});
-            break;
-        case plane::model::CommandType::Waypoint:
-        case plane::model::CommandType::Route:
-            make_sequence({"Mission"});
-            break;
-    }
+    make_sequence(node_names);
 
     BT::Tree tree;
     tree.subtrees.push_back(subtree);

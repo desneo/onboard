@@ -129,6 +129,9 @@ void FlightControlModule::monitor_loop() {
 
 void FlightControlModule::attach_system(const std::shared_ptr<mavsdk::System>& system) {
     system_ = system;
+    // subscribe_is_connected 只保证通知后续变化；接入时系统可能已经连接，
+    // 因此必须先同步当前状态，避免 connected_ 永久保留默认 false。
+    connected_ = system_->is_connected();
     action_ = std::make_unique<mavsdk::Action>(system_);
     telemetry_ = std::make_unique<mavsdk::Telemetry>(system_);
     mission_ = std::make_unique<mavsdk::Mission>(system_);
@@ -198,7 +201,7 @@ void FlightControlModule::attach_system(const std::shared_ptr<mavsdk::System>& s
         SPDLOG_INFO("飞控连接{}", connected ? "建立" : "异常");
     });
 
-    SPDLOG_INFO("飞控系统已接入: system_id={}", system_->get_system_id());
+    SPDLOG_INFO("飞控系统已接入: system_id={}, connected={}", system_->get_system_id(), connected_.load());
 }
 
 void FlightControlModule::detach_system() {
@@ -396,21 +399,28 @@ bool FlightControlModule::stop_motor(std::string& error) {
 }
 
 bool FlightControlModule::goto_waypoint(const plane::model::GeoPoint& point, std::string& error) {
-    return upload_and_start_mission({point}, error);
+    return upload_and_start_mission({point}, false, error);
 }
 
 bool FlightControlModule::execute_route(const std::vector<plane::model::GeoPoint>& points, std::string& error) {
-    return upload_and_start_mission(points, error);
+    return upload_and_start_mission(points, true, error);
 }
 
 bool FlightControlModule::upload_and_start_mission(const std::vector<plane::model::GeoPoint>& points,
-                                                   std::string& error) {
+                                                   bool fly_through, std::string& error) {
     if (!ensure_connected(error)) {
         return false;
     }
     if (points.empty()) {
         error = "航点列表为空";
         return false;
+    }
+    // MAVSDK 在新任务上传/启动完成前仍可能保留上一条任务的完成进度。
+    // 先清空缓存，避免 MissionNode 将旧的 current == total 误判为本次任务已完成。
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        cache_.mission_current = 0;
+        cache_.mission_total = 0;
     }
     mavsdk::Mission::MissionPlan plan;
     for (const auto& point : points) {
@@ -419,7 +429,7 @@ bool FlightControlModule::upload_and_start_mission(const std::vector<plane::mode
         item.longitude_deg = point.longitude;
         item.relative_altitude_m = point.height;
         item.speed_m_s = static_cast<float>(config_.fc_route_speed_m_s);
-        item.is_fly_through = true;
+        item.is_fly_through = fly_through;
         plan.mission_items.push_back(item);
     }
     const auto upload_result = await_async<mavsdk::Mission::Result>(
@@ -431,14 +441,21 @@ bool FlightControlModule::upload_and_start_mission(const std::vector<plane::mode
         report_error(error);
         return false;
     }
-    SPDLOG_INFO("下发飞控指令成功: UploadMission waypoints={} speed={:.1f}m/s", points.size(),
-                config_.fc_route_speed_m_s);
+    SPDLOG_INFO("下发飞控指令成功: UploadMission waypoints={} speed={:.1f}m/s fly_through={}", points.size(),
+                config_.fc_route_speed_m_s, fly_through);
     const auto start_result = await_async<mavsdk::Mission::Result>(
         [this](mavsdk::Mission::ResultCallback cb) { mission_->start_mission_async(std::move(cb)); });
     if (start_result != mavsdk::Mission::Result::Success) {
         error = "下发飞控StartMission 失败: " + result_text(start_result);
         report_error(error);
         return false;
+    }
+    // start_mission_async 返回前可能还没有收到新任务的首个进度回调。此处再次
+    // 建立本次任务的初始进度，确保紧随其后的行为树 tick 必须等待新任务推进。
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        cache_.mission_current = 0;
+        cache_.mission_total = static_cast<int>(points.size());
     }
     SPDLOG_INFO("下发飞控指令成功: StartMission");
     return true;

@@ -7,6 +7,7 @@
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <set>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <utility>
@@ -40,6 +41,7 @@ struct Options {
     std::vector<Action> actions;
     std::string target_track_id;
     float takeoff_height_m = 10.0F;
+    std::vector<plane::model::GeoPoint> waypoints;
     std::string gcs_target_id;
     int gcs_target_repeat = 1;
     std::vector<std::pair<std::string, std::string>> send_params;
@@ -72,6 +74,7 @@ void print_usage() {
         "  --hover                  悬停 (Hover)\n"
         "  --stop-motor             停桨 (StopMotor)\n"
         "  --takeoff-height <m>     起飞高度(米)，默认 10；填 0 表示使用安全高度\n"
+        "  --waypoint <lat,lon,height[,altitude]>  添加航点，可重复指定\n"
         "  --command-type <type>    直接指定指令类型 (Arm/Disarm/Takeoff/Land/RTL/...)\n"
         "\n"
         "任务 (按出现顺序发往 sendToPlane/<plane-id>):\n"
@@ -93,6 +96,7 @@ void print_usage() {
         "示例:\n"
         "  gcs_sim --plane-id uav1 --arm\n"
         "  gcs_sim --plane-id uav1 --takeoff --takeoff-height 20\n"
+        "  gcs_sim --plane-id uav1 --sender-id GCS --waypoint 32.2,119.1,40 --command-type Route\n"
         "  gcs_sim --plane-id uav1 --anti-uav --target-track-id t-1\n"
         "  gcs_sim --plane-id uav1 --arm --takeoff --takeoff-height 20 --anti-uav\n";
     spdlog::info("{}", usage);
@@ -134,6 +138,24 @@ Options parse_options(int argc, char** argv) {
             options.ack_timeout_ms = std::stoi(argv[++i]);
         } else if (arg == "--takeoff-height" && i + 1 < argc) {
             options.takeoff_height_m = std::stof(argv[++i]);
+        } else if (arg == "--waypoint" && i + 1 < argc) {
+            std::stringstream stream(argv[++i]);
+            std::string field;
+            std::vector<std::string> fields;
+            while (std::getline(stream, field, ',')) {
+                fields.push_back(field);
+            }
+            if (fields.size() != 3 && fields.size() != 4) {
+                throw std::invalid_argument("--waypoint 格式应为 lat,lon,height[,altitude]");
+            }
+            plane::model::GeoPoint point;
+            point.latitude = std::stod(fields[0]);
+            point.longitude = std::stod(fields[1]);
+            point.height = std::stof(fields[2]);
+            if (fields.size() == 4) {
+                point.altitude = std::stof(fields[3]);
+            }
+            options.waypoints.push_back(point);
         } else if (arg == "--arm") {
             options.actions.push_back({ActionKind::Command, "Arm", {}});
         } else if (arg == "--disarm") {
@@ -275,10 +297,17 @@ int main(int argc, char** argv) {
         std::string payload;
         if (action.kind == ActionKind::Command) {
             type = "Command";
+            nlohmann::json waypoints = nlohmann::json::array();
+            for (const auto& point : options.waypoints) {
+                waypoints.push_back({{"latitude", point.latitude},
+                                     {"longitude", point.longitude},
+                                     {"height", point.height},
+                                     {"altitude", point.altitude}});
+            }
             payload = nlohmann::json{{"commandId", "cmd-" + std::to_string(++command_index)},
                                      {"type", action.type},
                                      {"takeoffHeight_m", options.takeoff_height_m},
-                                     {"waypoints", nlohmann::json::array()}}
+                                     {"waypoints", std::move(waypoints)}}
                           .dump();
         } else {
             type = "TaskInfo";

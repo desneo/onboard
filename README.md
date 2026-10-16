@@ -212,10 +212,12 @@ cd build/plane
 | `flight_control.udp_url` | MAVSDK UDP 地址 |
 | `flight_control.serial_device` / `serial_baud` | 串口设备和波特率 |
 | `flight_control.heartbeat_timeout_ms` | MAVSDK 心跳超时 |
-| `flight_control.route_speed_m_s` | 航点和航线速度 |
+| `flight_control.route_speed_m_s` | 航点、航线以及航线开始前临时高度航点的速度 |
 | `behavior_tree.tick_interval_ms` | 行为树 tick 周期 |
 | `behavior_tree.node_timeout_ms` | 普通行为树节点超时；Route 航线飞行不受该时限限制，持续等待飞控任务进度完成 |
 | `behavior_tree.takeoff_tolerance_m` | 起飞高度判定容差 |
+| `behavior_tree.height_adjust_timeout_ms` | 航线开始前调整相对高度的超时 |
+| `behavior_tree.height_adjust_tolerance_m` | 航线开始前调整相对高度的到达容差 |
 
 UDP 飞控端口位于 `14200`～`14299` 时，程序将本机视为仿真飞机，并禁用低电压告警。
 

@@ -36,6 +36,8 @@ struct AppConfig {
     int bt_tick_interval_ms = 50;
     int bt_node_timeout_ms = 30000;
     double bt_takeoff_tolerance_m = 1.0;
+    int bt_height_adjust_timeout_ms = 120000;
+    double bt_height_adjust_tolerance_m = 1.0;
 
     std::string plugins_dir = "build/plugins";
 

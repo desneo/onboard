@@ -25,6 +25,7 @@ class TakeoffNode final : public FlightActionNode {
    private:
     const plane::core::SystemParamApi* system_param_;
     const CommandContext* command_context_;
+    float target_relative_height_m_ = 0.0F;
 };
 
 }  // namespace plane::task

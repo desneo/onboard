@@ -37,7 +37,9 @@ add_executable(plane
   src/flight_control/flight_control_module.cpp
   src/geo/geo_tool.cpp
   src/task/task_scheduler.cpp
+  src/task/command_tree_plan.cpp
   src/task/nodes/arm_node.cpp
+  src/task/nodes/adjust_height_node.cpp
   src/task/nodes/disarm_node.cpp
   src/task/nodes/mission_node.cpp
   src/task/nodes/takeoff_node.cpp
@@ -127,6 +129,21 @@ if(BUILD_TESTING)
     spdlog::spdlog
   )
   add_test(NAME mission_node_timeout COMMAND mission_node_timeout_test)
+
+  add_executable(route_preflight_test
+    tests/unit/route_preflight_test.cpp
+    src/task/command_tree_plan.cpp
+    src/task/nodes/adjust_height_node.cpp
+    src/task/nodes/takeoff_node.cpp
+  )
+  target_include_directories(route_preflight_test PRIVATE src)
+  target_compile_options(route_preflight_test PRIVATE -Wall -Wextra)
+  target_link_libraries(route_preflight_test PRIVATE
+    plane::common_include
+    plane::behaviortree
+    spdlog::spdlog
+  )
+  add_test(NAME route_preflight COMMAND route_preflight_test)
 endif()
 
 # 默认构建即组装 build/plane 独立运行目录：暂存正式插件、复制三方库、改写 rpath。

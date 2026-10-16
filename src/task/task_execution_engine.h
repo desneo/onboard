@@ -7,6 +7,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "core/config.h"
 #include "core/event_bus.h"
@@ -43,9 +44,9 @@ class TaskExecutionEngine final : public plane::core::IModule, public TaskExecut
 
    private:
     BT::Tree build_anti_uav();
-    BT::Tree build_command_tree();
+    BT::Tree build_command_tree(const std::vector<std::string>& node_names);
     /// 在持锁状态下装载并启动一棵树（供任务/指令共用）。
-    void launch_tree(BT::Tree tree, const std::string& tree_name);
+    void launch_tree(BT::Tree tree, const std::string& tree_name, const std::string& tree_structure);
     void tick_loop();
     void publish_progress(const std::string& node);
     void finish(plane::model::TaskStatus status, const std::string& detail);

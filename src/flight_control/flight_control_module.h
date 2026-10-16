@@ -83,7 +83,8 @@ class FlightControlModule final : public plane::core::IModule, public FlightCont
     void attach_system(const std::shared_ptr<mavsdk::System>& system);
     void detach_system();
     bool ensure_connected(std::string& error) const;
-    bool upload_and_start_mission(const std::vector<plane::model::GeoPoint>& points, std::string& error);
+    bool upload_and_start_mission(const std::vector<plane::model::GeoPoint>& points, bool fly_through,
+                                  std::string& error);
     void report_error(const std::string& detail) const;
 
     plane::core::EventBus& event_bus_;

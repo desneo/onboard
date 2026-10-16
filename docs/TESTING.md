@@ -186,6 +186,22 @@ ctest --test-dir build -R '^mission_node_timeout$' --output-on-failure
 - Waypoint 仍遵守普通节点超时。
 - 长航线仍支持中止和重新启动，飞控分发失败仍返回 FAILURE。
 
+### 4.7 航线起飞与高度调整
+
+```bash
+cmake --build build --target route_preflight_test -j
+ctest --test-dir build -R '^route_preflight$' --output-on-failure
+```
+
+使用模拟飞控验证：
+
+- 未解锁且未起飞、已解锁但未起飞、已经起飞三种状态生成正确的航线前置节点；
+- 高度调整只使用首航点和当前状态的相对高度，不混用海拔高度；
+- 高度调整向飞控下发当前位置、目标相对高度的临时非穿越航点，不使用 Offboard；
+- 临时航点任务完成、达到高度容差并退出 Mission 后才开始正式航线；
+- 中止和超时时切换 Hold，停止临时航点任务；
+- 起飞节点使用本次实际下发的目标高度判定完成。
+
 ## 5. 媒体性能场景
 
 推流输出目标帧率约为 30 FPS。测试时必须记录：
@@ -211,7 +227,7 @@ ctest --test-dir build -R '^mission_node_timeout$' --output-on-failure
 | Land/RTL | 以实际离地状态判定完成 |
 | Hover | PX4 接受 Hold 指令 |
 | Waypoint | 上传单航点并以 Mission Progress 判定完成 |
-| Route | 按顺序执行多航点并以 Mission Progress 判定完成；飞行超过普通节点超时仍继续等待完成，新指令仍可替换航线 |
+| Route | 未起飞时自动解锁并起飞；开始前调整到首航点相对高度；随后按顺序执行多航点并以 Mission Progress 判定完成；飞行超过普通节点超时仍继续等待完成，新指令仍可替换航线 |
 | StopMotor | 仅接受地面站人工指令，不由任务自主触发 |
 | NED 控制 | Offboard 持续发送速度，停止任务时退出 Offboard 控制 |
 

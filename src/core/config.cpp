@@ -47,6 +47,8 @@ std::string canonical_key(const std::string& section, const std::string& key) {
         {"behavior_tree.tick_interval_ms", "bt_tick_interval_ms"},
         {"behavior_tree.node_timeout_ms", "bt_node_timeout_ms"},
         {"behavior_tree.takeoff_tolerance_m", "bt_takeoff_tolerance_m"},
+        {"behavior_tree.height_adjust_timeout_ms", "bt_height_adjust_timeout_ms"},
+        {"behavior_tree.height_adjust_tolerance_m", "bt_height_adjust_tolerance_m"},
         {"plugins.directory", "plugins_dir"},
         {"image_input.type", "image_source_type"},
         {"image_input.mipi_device", "image_mipi_device"},
@@ -192,6 +194,10 @@ bool load_config(const std::string& path, AppConfig& out) {
             out.bt_node_timeout_ms = std::stoi(value);
         } else if (key == "bt_takeoff_tolerance_m") {
             out.bt_takeoff_tolerance_m = std::stod(value);
+        } else if (key == "bt_height_adjust_timeout_ms") {
+            out.bt_height_adjust_timeout_ms = std::stoi(value);
+        } else if (key == "bt_height_adjust_tolerance_m") {
+            out.bt_height_adjust_tolerance_m = std::stod(value);
         } else if (key == "plugins_dir") {
             out.plugins_dir = value;
         } else if (key == "image_source_type") {

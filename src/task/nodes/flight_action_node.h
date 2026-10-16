@@ -47,6 +47,7 @@ class FlightActionNode : public BT::StatefulActionNode {
         ++tick_count_;
         if (timeout_enabled() && plane::core::now_ms() - start_ms_ > node_timeout_ms()) {
             SPDLOG_ERROR("节点 {} 超时 ({} ms)", name(), node_timeout_ms());
+            onTimeout();
             return BT::NodeStatus::FAILURE;
         }
         return report_status(checkFinish());
@@ -56,6 +57,9 @@ class FlightActionNode : public BT::StatefulActionNode {
 
     /// 默认启用超时；需要持续等待实际完成的节点可覆写。
     virtual bool timeout_enabled() const { return true; }
+
+    /// 节点超时时的资源清理钩子。
+    virtual void onTimeout() {}
 
     /// 节点超时；默认取全局配置，长阶段节点可覆写（M10）。
     virtual std::int64_t node_timeout_ms() const { return app_config_->bt_node_timeout_ms; }
