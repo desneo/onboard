@@ -2,6 +2,10 @@
 
 namespace plane::task {
 
+bool MissionNode::timeout_enabled() const {
+    return command_context_ == nullptr || command_context_->type != plane::model::CommandType::Route;
+}
+
 bool MissionNode::dispatch(std::string& error) {
     if (command_context_ == nullptr || command_context_->waypoints.empty()) {
         error = "航点为空";

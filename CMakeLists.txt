@@ -100,6 +100,22 @@ target_link_libraries(plugin_load_check PRIVATE
   spdlog::spdlog
 )
 
+include(CTest)
+if(BUILD_TESTING)
+  add_executable(mission_node_timeout_test
+    tests/unit/mission_node_timeout_test.cpp
+    src/task/nodes/mission_node.cpp
+  )
+  target_include_directories(mission_node_timeout_test PRIVATE src)
+  target_compile_options(mission_node_timeout_test PRIVATE -Wall -Wextra)
+  target_link_libraries(mission_node_timeout_test PRIVATE
+    plane::common_include
+    plane::behaviortree
+    spdlog::spdlog
+  )
+  add_test(NAME mission_node_timeout COMMAND mission_node_timeout_test)
+endif()
+
 # 默认构建即组装 build/plane 独立运行目录：暂存正式插件、复制三方库、改写 rpath。
 add_custom_target(package_plane ALL
   COMMAND bash "${CMAKE_SOURCE_DIR}/tools/bundle_plane.sh" "${CMAKE_BINARY_DIR}" "${CMAKE_SOURCE_DIR}"

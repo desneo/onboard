@@ -13,7 +13,7 @@
 
 namespace plane::task {
 
-/// 飞控动作节点基类：分发一次、轮询完成、统一超时（SPEC §5.8 以实际状态判定）。
+/// 飞控动作节点基类：分发一次、轮询完成，默认统一超时（SPEC §5.8 以实际状态判定）。
 class FlightActionNode : public BT::StatefulActionNode {
    public:
     FlightActionNode(const std::string& name, const BT::NodeConfig& config,
@@ -45,7 +45,7 @@ class FlightActionNode : public BT::StatefulActionNode {
 
     BT::NodeStatus onRunning() override {
         ++tick_count_;
-        if (plane::core::now_ms() - start_ms_ > node_timeout_ms()) {
+        if (timeout_enabled() && plane::core::now_ms() - start_ms_ > node_timeout_ms()) {
             SPDLOG_ERROR("节点 {} 超时 ({} ms)", name(), node_timeout_ms());
             return BT::NodeStatus::FAILURE;
         }
@@ -53,6 +53,9 @@ class FlightActionNode : public BT::StatefulActionNode {
     }
 
     void onHalted() override { SPDLOG_INFO("节点 {} 已中止", name()); }
+
+    /// 默认启用超时；需要持续等待实际完成的节点可覆写。
+    virtual bool timeout_enabled() const { return true; }
 
     /// 节点超时；默认取全局配置，长阶段节点可覆写（M10）。
     virtual std::int64_t node_timeout_ms() const { return app_config_->bt_node_timeout_ms; }

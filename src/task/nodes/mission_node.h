@@ -16,6 +16,7 @@ class MissionNode final : public FlightActionNode {
     static BT::PortsList providedPorts() { return {}; }
 
    protected:
+    bool timeout_enabled() const override;
     bool dispatch(std::string& error) override;
     BT::NodeStatus checkFinish() override;
 

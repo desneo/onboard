@@ -121,6 +121,20 @@ bash tests/integration/test_pipeline_stream.sh
 - RTSP 输出可由 `ffmpeg` 连续解码并产生视频帧；
 - WebRTC 观看地址可访问，返回 HTTP 200、301 或 302。
 
+### 4.6 航线执行超时回归
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build --target mission_node_timeout_test -j
+ctest --test-dir build -R '^mission_node_timeout$' --output-on-failure
+```
+
+使用模拟飞控与测试时间源验证，无需仿真飞控或真实等待：
+
+- Route 在等待首次进度、飞行时间超过普通节点超时和长时间运行时均保持 RUNNING，直到任务进度完成。
+- Waypoint 仍遵守普通节点超时。
+- 长航线仍支持中止和重新启动，飞控分发失败仍返回 FAILURE。
+
 ## 5. 媒体性能场景
 
 推流输出目标帧率约为 30 FPS。测试时必须记录：
@@ -146,7 +160,7 @@ bash tests/integration/test_pipeline_stream.sh
 | Land/RTL | 以实际离地状态判定完成 |
 | Hover | PX4 接受 Hold 指令 |
 | Waypoint | 上传单航点并以 Mission Progress 判定完成 |
-| Route | 按顺序执行多航点并以 Mission Progress 判定完成 |
+| Route | 按顺序执行多航点并以 Mission Progress 判定完成；飞行超过普通节点超时仍继续等待完成，新指令仍可替换航线 |
 | StopMotor | 仅接受地面站人工指令，不由任务自主触发 |
 | NED 控制 | Offboard 持续发送速度，停止任务时退出 Offboard 控制 |
 
