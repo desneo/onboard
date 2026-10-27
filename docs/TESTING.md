@@ -73,6 +73,10 @@ python3 tools/fleetctl.py down --count 2
 
 Zenoh 使用默认发现，不依赖 GCS 地址。测试证据写入 `logs/fleet/<run_id>/`；验证通过后环境保持运行，以便继续检查，失败时也保留现场并提示使用 `down` 停止。
 
+板端运行日志固定写入 `logs/plane.log`，不创建日期目录，单文件达到 50 MB 后轮转为
+`plane.1.log` 至 `plane.5.log`。`logs/plane.stdout.log` 保存本次启动的标准输出和错误输出。
+`verify --run-id` 将当前板端日志采集到指定的本地证据目录，不用于读取板端历史运行。
+
 ### 2.2 软件出包
 
 执行媒体测试前应具备：

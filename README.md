@@ -134,6 +134,9 @@ test -x plane && test -f config/plane.conf && test -d plugins && test -d models
 ./runplane.sh
 ```
 
+查看启动用法可执行 `./runplane.sh --help`。启动脚本会自动为 `plane` 和已有的 `stopplane.sh` 补齐执行权限。
+若上传工具丢失了启动脚本自身的执行权限，可使用 `bash ./runplane.sh` 启动。
+
 无人值守后台启动及状态检查：
 
 ```bash
@@ -142,6 +145,12 @@ nohup ./runplane.sh >logs/plane.stdout.log 2>&1 &
 pgrep -a -x plane
 tail -f logs/plane.log
 ```
+
+主日志固定写入 `logs/plane.log`，重启后追加；单文件达到 50 MB 后按
+`plane.1.log`、`plane.2.log` 至 `plane.5.log` 轮转（序号越小越新，超过 5 份淘汰最旧文件）。
+多机部署同样使用此目录，不再为每次启动创建日期目录。
+`plane.stdout.log` 单独记录标准输出和错误输出，包含重复的程序日志以及第三方库、插件和启动脚本输出；
+它不参与主日志轮转，后台启动时覆盖。
 
 停止程序（默认等待 10 秒优雅退出）：
 

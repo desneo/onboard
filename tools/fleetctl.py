@@ -671,10 +671,10 @@ def set_ini_value(text: str, section: str, key: str, value: str) -> str:
     return "".join(lines)
 
 
-def configure_plane(base: str, plane: Plane, flight_url: str, rtsp_url: str | None, run_id: str) -> str:
+def configure_plane(base: str, plane: Plane, flight_url: str, rtsp_url: str | None) -> str:
     result = base
     updates = [
-        ("system", "log_dir", f"logs/{run_id}"),
+        ("system", "log_dir", "logs"),
         ("communication", "plane_id", plane.plane_id),
         ("communication", "station_id", "GCS"),
         ("communication", "zenoh_config_file", ""),
@@ -713,12 +713,12 @@ def sync_plane(
     runtime = shlex.quote(plane.runtime_dir)
     config_path = f"{plane.runtime_dir}/config/plane.conf"
     base = remote_config_or_default(plane, remote, bundle / "config" / "plane.conf")
-    rendered = configure_plane(base, plane, flight_url, rtsp_url, run_id)
+    rendered = configure_plane(base, plane, flight_url, rtsp_url)
     local_config = run_dir / f"{plane.plane_id}.plane.conf"
     local_config.write_text(rendered, encoding="utf-8")
 
     prepare = (
-        f"mkdir -p {runtime}/config {runtime}/logs/{shlex.quote(run_id)} && "
+        f"mkdir -p {runtime}/config {runtime}/logs && "
         f"if [ -f {shlex.quote(config_path)} ]; then "
         f"cp -a {shlex.quote(config_path)} {shlex.quote(config_path + '.fleet-backup-' + run_id)}; fi"
     )
@@ -757,9 +757,9 @@ def check_remote_dependencies(plane: Plane, remote: RemoteExecutor) -> None:
     print(f"[deps] {plane.plane_id}: 可执行文件与插件依赖完整")
 
 
-def start_plane(plane: Plane, run_id: str, remote: RemoteExecutor) -> None:
+def start_plane(plane: Plane, remote: RemoteExecutor) -> None:
     runtime = shlex.quote(plane.runtime_dir)
-    log_dir = f"logs/{run_id}"
+    log_dir = "logs"
     script = (
         f"cd {runtime} && mkdir -p {shlex.quote(log_dir)} && "
         "command -v setsid >/dev/null && "
@@ -771,8 +771,8 @@ def start_plane(plane: Plane, run_id: str, remote: RemoteExecutor) -> None:
     print(f"[{plane.plane_id}] {result.stdout.strip()}")
 
 
-def read_plane_logs(plane: Plane, run_id: str, remote: RemoteExecutor) -> str:
-    base = f"{plane.runtime_dir}/logs/{run_id}"
+def read_plane_logs(plane: Plane, remote: RemoteExecutor) -> str:
+    base = f"{plane.runtime_dir}/logs"
     script = (
         f"for file in {shlex.quote(base + '/plane.stdout.log')} {shlex.quote(base + '/plane.log')}; do "
         "if [ -f \"$file\" ]; then printf '\\n===== %s =====\\n' \"$file\"; tail -n 5000 \"$file\"; fi; done"
@@ -816,7 +816,7 @@ def verify_planes(
         results = []
         all_passed = True
         for plane in planes:
-            text = read_plane_logs(plane, run_id, remote)
+            text = read_plane_logs(plane, remote)
             latest_logs[plane.plane_id] = text
             result = analyze_plane(plane, planes, text, config.state_samples)
             running = remote.run(plane, "pgrep -x plane >/dev/null 2>&1", timeout=10, check=False)
@@ -931,7 +931,7 @@ def command_test(args: argparse.Namespace, config: FleetConfig, remote: RemoteEx
         sync_plane(plane, bundle, endpoints.flight_urls[index], rtsp_url, run_id, remote, run_dir)
         check_remote_dependencies(plane, remote)
     for plane in planes:
-        start_plane(plane, run_id, remote)
+        start_plane(plane, remote)
     results = verify_planes(config, planes, run_id, remote, run_dir)
     write_report(run_dir, run_id, planes, endpoints, results, config.state_samples)
     passed = all(

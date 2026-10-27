@@ -5,7 +5,7 @@
 
 namespace plane::core {
 
-/// 日志配置；默认单文件 50 MB、保留 5 个历史文件（ARCHITECTURE §28.3）。
+/// 日志配置；默认写入 logs/plane.log，单文件 50 MB、保留 plane.1.log 至 plane.5.log。
 struct LogOptions {
     std::string app_name = "plane";
     std::string log_dir = "logs";
