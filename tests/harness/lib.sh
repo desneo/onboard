@@ -4,7 +4,6 @@ set -euo pipefail
 
 PLANE_TEST_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 PLANE_BIN="${PLANE_BIN:-${PLANE_TEST_ROOT}/build/plane/plane}"
-PLANE_PLUGINS_DIR="${PLANE_PLUGINS_DIR:-${PLANE_TEST_ROOT}/build/plugins}"
 PLANE_FIXTURES_DIR="${PLANE_FIXTURES_DIR:-${PLANE_TEST_ROOT}/tests/fixtures}"
 SKIP_HW="${SKIP_HW:-0}"
 
@@ -14,14 +13,13 @@ fail() {
   exit 1
 }
 
-# 构造运行目录：临时目录内含 config/plane.conf 与 plugins 软链。
+# 构造运行目录：临时目录内含 config/plane.conf。
 make_run_dir() {
   local fixture="$1"
   local dir
   dir="$(mktemp -d "${TMPDIR:-/tmp}/plane-test.XXXXXX")"
   mkdir -p "${dir}/config"
   cp "${fixture}" "${dir}/config/plane.conf"
-  ln -sfn "${PLANE_PLUGINS_DIR}" "${dir}/plugins"
   echo "${dir}"
 }
 
@@ -72,12 +70,6 @@ wait_for_log() {
     sleep 0.5
   done
   return 1
-}
-
-# 从日志解析推流地址（推流地址=<url>）。
-extract_stream_url() {
-  local logfile="$1"
-  grep -Eo '推流地址=[^[:space:]]+' "${logfile}" | tail -n1 | cut -d= -f2- || true
 }
 
 # 清理临时运行目录。

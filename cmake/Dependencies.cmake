@@ -30,7 +30,6 @@ list(PREPEND CMAKE_PREFIX_PATH
 find_package(fmt REQUIRED CONFIG)
 find_package(spdlog REQUIRED CONFIG)
 find_package(GeographicLib REQUIRED CONFIG)
-find_package(OpenCV REQUIRED COMPONENTS core imgproc)
 find_package(MAVSDK REQUIRED CONFIG)
 find_package(zenohc REQUIRED CONFIG)
 find_package(zenohcxx REQUIRED CONFIG)
@@ -41,12 +40,6 @@ target_include_directories(plane_behaviortree INTERFACE
   "${PLANE_3RDPARTY_DIR}/behaviortree/4.10.0/${PLANE_PLATFORM_DIR}/include")
 target_link_libraries(plane_behaviortree INTERFACE
   "${PLANE_3RDPARTY_DIR}/behaviortree/4.10.0/${PLANE_PLATFORM_DIR}/lib/libbehaviortree_cpp.so")
-
-add_library(plane_pluma INTERFACE)
-target_include_directories(plane_pluma INTERFACE
-  "${PLANE_3RDPARTY_DIR}/pluma/${PLANE_PLATFORM_DIR}/include")
-target_link_libraries(plane_pluma INTERFACE
-  "${PLANE_3RDPARTY_DIR}/pluma/${PLANE_PLATFORM_DIR}/lib/libpluma.so")
 
 add_library(plane_eventpp INTERFACE)
 target_include_directories(plane_eventpp INTERFACE
@@ -69,37 +62,24 @@ target_link_libraries(plane_deps INTERFACE
   fmt::fmt
   spdlog::spdlog
   GeographicLib::GeographicLib
-  opencv_core
-  opencv_imgproc
   MAVSDK::mavsdk
   zenohc::lib
   zenohcxx::zenohc
   plane_behaviortree
-  plane_pluma
   plane_eventpp
   plane_magic_enum
   plane_nlohmann_json
 )
 
-# RK3588 分辨率转换使用 RGA 硬件（仅 arm64 平台存在 librga）。
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
-  find_library(PLANE_RGA_LIBRARY NAMES rga)
-  if(NOT PLANE_RGA_LIBRARY)
-    message(FATAL_ERROR "缺少 librga（RK3588 RGA 分辨率转换依赖）")
-  endif()
-  target_link_libraries(plane_deps INTERFACE "${PLANE_RGA_LIBRARY}")
-endif()
-
 add_library(plane::deps ALIAS plane_deps)
 add_library(plane::common_include ALIAS plane_common_include)
 add_library(plane::behaviortree ALIAS plane_behaviortree)
-add_library(plane::pluma ALIAS plane_pluma)
 add_library(plane::eventpp ALIAS plane_eventpp)
 add_library(plane::magic_enum ALIAS plane_magic_enum)
 add_library(plane::nlohmann_json ALIAS plane_nlohmann_json)
 
 foreach(_target fmt::fmt spdlog::spdlog GeographicLib::GeographicLib MAVSDK::mavsdk
-                zenohc::lib zenohcxx::zenohc opencv_core opencv_imgproc)
+                zenohc::lib zenohcxx::zenohc)
   if(NOT TARGET ${_target})
     message(FATAL_ERROR "缺少 CMake target: ${_target}")
   endif()

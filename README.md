@@ -7,7 +7,7 @@
 
 ## 项目背景
 
-`plane` 是运行在无人机机载计算平台上的 C++17 应用，面向基于 PX4 的反无人机任务。程序连接飞控、地面站、其他无人机和视觉插件，在单进程内完成状态管理、任务仲裁、行为树执行、感知和视频推流。
+`plane` 是运行在无人机机载计算平台上的 C++17 应用，面向基于 PX4 的反无人机任务。程序连接飞控、地面站、其他无人机和相机控制接口，在单进程内完成状态管理、任务仲裁和行为树执行。本版本不启动图像处理、视觉插件和视频推流。
 
 支持 Ubuntu 22.04 的 x86_64 与 ARM64，首要硬件平台为 RK3588。
 
@@ -15,15 +15,9 @@
 
 以下场景描述项目的目标用途；实际完成情况以“当前能力”和“当前已知限制”为准。
 
-### 自主反无人机任务
+### 任务范围
 
-地面站下发目标和任务后，机载程序按预定流程控制基于 PX4 的火箭穿越机执行自杀式反制：
-
-```text
-解锁 → 起飞 → 中段制导 → 目标检测 → 单目标跟踪 → 导引撞击
-```
-
-系统负责组织任务阶段、调用外部视觉算法并向飞控下发控制；飞控固件和检测、跟踪、导引算法本身由外部能力提供。
+本版本完全移除本地视觉处理。依赖原有视觉流程的任务在启动时返回不可用；不将截短的流程报告为任务完成。
 
 ### 单机飞行控制
 
@@ -33,9 +27,9 @@
 
 系统不维护任务或指令等待队列，任意时刻只执行一个 Task 或 Command。收到新的控制内容时，中止当前执行并立即切换到最新内容。
 
-### 感知与视频链路
+### 相机／吊舱控制
 
-系统从 MIPI 或 RTSP 获取图像，按任务阶段调用检测、单目标跟踪和图像导引插件，管理算法输出，并通过视频推流模块向外提供实时画面。
+保留相机控制接口，用于发送吊舱指令及获取状态，不进行图像采集、处理或视频转发。当前实现仍为 Noop，未接入具体吊舱协议。
 
 ### 地面站与机间通信
 
@@ -48,17 +42,15 @@
 - 基于 Zenoh 接收地面站任务、指令、系统参数和目标信息。
 - 周期广播本机状态，接收并缓存其他无人机的最新状态。
 - 通过 BehaviorTree 仲裁和执行单个 Task 或 Command，新控制内容替换当前内容。
-- 从 MIPI 或 RTSP 取图，调用检测/MOT 插件并输出视觉目标。
-- 通过插件输出 RTSP 或 WebRTC 视频流，并叠加检测结果。
+- 本版本已停用图像采集、检测/MOT 和视频推流。
 - 监测实机低电压并向地面站告警。
-- 执行反无人机任务的解锁、起飞、中段制导和目标检测阶段。
+- 已删除检测节点及原有视觉任务流程，相关任务启动时返回不可用。
 
 当前已知限制：
 
 - 反无人机任务尚未实现单目标跟踪和末段导引撞击。
 - 相机控制模块目前是 Noop，不控制真实相机或云台。
 - 友机状态已交换和缓存，但尚未参与编队、避碰或协同决策。
-- 视觉目标仅在本机保存和叠加显示，尚未通过通信模块上报。
 
 ## 目录概览
 
@@ -67,7 +59,7 @@ src/                  机载程序源码
 config/plane.conf     默认运行配置
 tests/                契约测试、集成测试及测试配置
 scripts/              源码树中的程序启停脚本
-tools/                插件暂存、打包和辅助程序
+tools/                打包和辅助程序
 cmake/                CMake 依赖配置
 docs/                 需求、架构和测试说明
 ```
@@ -78,12 +70,11 @@ docs/                 需求、架构和测试说明
 
 - 公共数据模型与插件接口：`../common/common_include`
 - 预编译第三方库：`../../../3rdparty/common`
-- 默认插件来源：相邻的 `functional/` 和 `algorithm/` 工程
-- 默认模型来源：`../algorithm/perception/models`
+- 历史视觉插件和模型本版本不参与打包或运行。
 
-主要依赖包括 MAVSDK、Zenoh、BehaviorTree.CPP、eventpp、Pluma、OpenCV、GeographicLib、spdlog、fmt、nlohmann-json、magic_enum，以及 ARM64 上用于缩放的 RGA。
+主要依赖包括 MAVSDK、Zenoh、BehaviorTree.CPP、eventpp、GeographicLib、spdlog、fmt、nlohmann-json 和 magic_enum。
 
-依赖缺失时应补充对应本地库或通过下述环境变量指定插件，项目不会在线下载依赖。
+依赖缺失时应补充对应本地库，项目不会在线下载依赖。
 
 ## 构建与打包
 
@@ -92,15 +83,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
-默认构建会生成可独立运行的 `build/plane/`，同时暂存插件和运行库。插件不在默认位置时，可在构建前设置：
-
-```bash
-export PLANE_IMAGE_INPUT_SO=/path/to/libimage_input.so
-export PLANE_VIDEO_OUTPUT_SO=/path/to/libvideostream_output.so
-export PLANE_DET_MOT_SO=/path/to/libdet_mot.so
-export PLANE_MODELS_DIR=/path/to/models
-export PLANE_DETECTION_CONFIG_DIR=/path/to/detection/configs
-```
+默认构建会生成可独立运行的 `build/plane/`，包含主程序及运行库；本版本不暂存图像插件、模型、检测配置或 RKNN 库。
 
 已有构建目录也可以手动重新打包：
 
@@ -108,27 +91,27 @@ export PLANE_DETECTION_CONFIG_DIR=/path/to/detection/configs
 ./tools/package.sh build
 ```
 
-打包脚本会收集 `/lib`、`/usr/lib` 之外的项目/三方动态库，并把 RKNN 用户态运行库单独暂存到 `build/plane/rknn/`。OpenCV、FFmpeg、RGA、MPP、ZeroMQ、SRTP 等系统库由目标板通过 APT 安装；RKNN 库应在这些普通依赖之后安装。设备驱动以及插件运行时动态加载但未被 `ldd` 发现的组件仍由目标板提供。
+打包脚本会收集 `/lib`、`/usr/lib` 之外的项目/三方动态库。系统库仍需由目标机提供。
 
 ## 运行与停止
 
 ### 部署独立运行目录
 
-`build/plane/` 包含本说明、主程序、配置、启停脚本、插件、模型、检测配置、项目动态库和 RKNN 安装源。测试环境优先使用 `tools/fleetctl.py` 自动准备系统依赖；手工复制时需先按 `config/fleet.ini` 的清单安装 APT 包，再安装 `rknn/` 中的库。在目录根部执行：
+`build/plane/` 包含本说明、主程序、配置、启停脚本和项目动态库。本版本启动不需要模型或图像插件。在目录根部执行：
 
 ```bash
 cd /path/to/plane
 
 # 确认目标机架构正确、关键文件齐全，并检查随包动态库解析。
 uname -m
-test -x plane && test -f config/plane.conf && test -d plugins && test -d models
+test -x plane && test -f config/plane.conf && test -d lib
 ! ldd ./plane | grep 'not found'
 ./plane --deps-check
 ```
 
-部署前按现场环境修改 `config/plane.conf`，至少确认 `[flight_control]` 中的连接类型及对应 UDP 或串口参数、图像源、Zenoh 端点和推流参数。`plugins.directory` 与 `detection.model_path` 默认是相对于运行目录的路径，不要改成源码树路径。
+部署前按现场环境修改 `config/plane.conf`，至少确认 `[flight_control]` 中的连接类型及对应 UDP 或串口参数和 Zenoh 端点。图像相关配置已删除。
 
-目标机的 `PATH` 中存在 `rknn-inspect` 时，`runplane.sh` 会读取 RKNN 模型尺寸并更新配置；命令缺失时记录警告并沿用现有尺寸配置。交互式启动：
+本版本启动脚本不检查 RKNN 模型，也不修改图像尺寸配置。交互式启动：
 
 ```bash
 ./runplane.sh
@@ -158,7 +141,7 @@ tail -f logs/plane.log
 ./stopplane.sh
 ```
 
-若启动失败，先查看 `logs/plane.stdout.log` 和 `logs/plane.log`，并再次运行 `ldd ./plane` 以及 `ldd plugins/*.so` 检查 APT 或 RKNN 运行库是否缺失。设备驱动和通过运行时动态加载的组件仍需由目标机提供。
+若启动失败，先查看 `logs/plane.stdout.log` 和 `logs/plane.log`，并再次运行 `ldd ./plane` 检查运行库是否缺失。
 
 ### 从源码树运行
 
@@ -174,7 +157,7 @@ tail -f logs/plane.log
 ./scripts/runplane.sh /path/to/plane_dir
 ```
 
-启动脚本会在存在 `rknn-inspect` 时读取 RKNN 模型输入尺寸并同步更新取图、检测和推流分辨率；命令缺失时沿用现有尺寸配置，然后运行 `plane`。
+启动脚本会补齐执行权限后运行 `plane`，不再检查图像模型或调用 `rknn-inspect`。
 
 停止程序：
 
@@ -228,35 +211,7 @@ cd build/plane
 | `behavior_tree.height_adjust_timeout_ms` | 航线开始前调整相对高度的超时 |
 | `behavior_tree.height_adjust_tolerance_m` | 航线开始前调整相对高度的到达容差 |
 
-UDP 飞控端口位于 `14200`～`14299` 时，程序将本机视为仿真飞机，并禁用低电压告警。
-
-### 图像与检测
-
-| 配置 | 说明 |
-| --- | --- |
-| `plugins.directory` | 动态插件目录 |
-| `image_input.type` | `Mipi` 或 `Rtsp` |
-| `image_input.mipi_device` | MIPI 设备；空值表示自动发现 |
-| `image_input.rtsp_url` | RTSP 输入地址 |
-| `image_input.reconnect_interval_s` | 图像源断流重试间隔 |
-| `image_input.width` / `height` | 图像输入尺寸 |
-| `detection.model_path` | 检测模型文件或目录 |
-| `detection.config_dir` | 检测插件配置目录 |
-| `detection.confidence_threshold` / `nms_threshold` | 检测阈值 |
-| `detection.track_thresh` / `track_buffer` | MOT 参数 |
-| `detection.input_width` / `input_height` | 检测输入尺寸 |
-
-### 视频输出
-
-| 配置 | 说明 |
-| --- | --- |
-| `video_output.type` | `Rtsp` 或 `WebRtc` |
-| `video_output.url` | 可选的显式推流地址 |
-| `video_output.app` / `stream` | 流应用名和流名称 |
-| `video_output.rtsp_port` / `http_port` / `rtc_port` | 服务端口 |
-| `video_output.width` / `height` | 输出分辨率 |
-| `video_output.max_fps` | 最大输出帧率 |
-| `video_output.bitrate_kbps` / `gop` | 编码码率和 GOP |
+UDP 飞控端口位于 `14580`～`14589`（`1458*`） 时，程序将本机视为仿真飞机，并禁用低电压告警。
 
 ### 安全与反无人机任务
 
@@ -265,14 +220,8 @@ UDP 飞控端口位于 `14200`～`14299` 时，程序将本机视为仿真飞机
 | `safety.alert_voltage_threshold_v` | 实机低电压告警阈值 |
 | `suicide_mission.detection_start_distance_m` | 切换到检测阶段的水平距离 |
 | `suicide_mission.approach_speed_m_s` | 中段逼近速度 |
-| `suicide_mission.track_approach_speed_m_s` | 跟踪阶段逼近速度，当前尚未使用 |
 | `suicide_mission.climb_speed_m_s` | 中段垂直速度限制 |
-| `suicide_mission.target_select_rule` | 视觉目标选择规则，当前尚未使用 |
-| `suicide_mission.guidance_start_stable_ms` | 导引启动稳定时间，当前尚未使用 |
-| `suicide_mission.track_lost_timeout_ms` | 跟踪丢失超时，当前尚未使用 |
 | `suicide_mission.phase_timeout_ms` | 中段和检测阶段超时 |
-| `suicide_mission.impact_height_m` / `impact_vd_m_s` | 撞击判定参数，当前尚未使用 |
-| `debug.target_log` | 是否输出逐帧目标调试日志 |
 
 配置文件修改后重启程序生效；`SystemParam` 消息可在运行中更新安全高度。
 

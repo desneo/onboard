@@ -17,7 +17,7 @@
 
 ### 2.1 平台与设备
 #### px4 sitl环境
-1）192.168.1.56 aeroarx/1, 登录后到home/aeroarx/zsh/PX4-Autopilot/scenarios/02_rocket_two_axis_pod执行
+1）192.168.1.40 zsh/1，登录后到 `/home/zsh/code/PX4-Autopilot/scenarios/02_rocket_two_axis_pod` 执行
     先停止，再启动全新的环境
     ./start.sh 脚本启动测试仿真环境，默认3架， -n 参数用于指定启动的飞机架次；
     ./stop.sh停止仿真环境
@@ -25,8 +25,7 @@
 
 #### 测试环境
 1）每架机载对应一块板子
-2）1号飞机，192.168.1.100, firefly/firefly
-   2号飞机，192.168.1.101，firefly/firefly
+2）4架飞机分别是 `192.168.1.100`、`192.168.1.101`、`192.168.1.102`、`192.168.1.103`，均使用 `firefly/firefly`
 3）机器可读清单以 `config/fleet.ini` 为准。请求飞机数超过其中声明的板卡数时，必须在启动任何程序前报告环境不足。
 
 #### 多机自动化
@@ -37,7 +36,7 @@
 - 环境清单以 `config/fleet.ini` 为准，不得扫描或猜测未声明的板卡。
 - 请求数量超过清单声明数量时，只报告环境不足，不启动部分 SITL 或机载程序。
 - 板端架构或 Ubuntu 版本与 `fleet.ini` 不一致时，必须在修改远端环境前终止，不得跨发行版混装 APT 依赖。
-- SITL 端点必须从本次启动输出动态解析，并通过数量和唯一性校验，不得使用猜测的端点。
+- 飞控端口使用 `fleet.ini` 声明的 API/Offboard 端口基准，并在每次启动后验证对应 UDP 端口均已实际监听。所有端点都必须通过数量和唯一性校验，不得使用未经验证的猜测值。
 
 只做连接和环境预检：
 
@@ -66,10 +65,9 @@ python3 tools/fleetctl.py down --count 2
 `test` 使用完整的 `build/plane`；包不完整时才调用 CMake 编译。脚本先停止旧机载进程，随后按以下顺序准备板端环境：
 
 1. 校验板端架构与 Ubuntu 版本，再把 `config/fleet.ini` 中的代理写入板端 `/etc/apt/apt.conf.d/99zz-fleet-proxy`；
-2. 先安装 `libopencv-dev`，再补装其余 APT 运行库；
-3. 安装 `build/plane/rknn/` 中的 RKNN 用户态库并运行 `ldconfig`；
-4. 重启 SITL，实时解析本次输出中的飞控和 RTSP 地址；
-5. 同步到 `/home/firefly/plane`，生成逐机配置，启动并持续分析日志。
+2. 按清单补装核心运行依赖，不安装图像处理或媒体库；
+3. 重启 SITL，解析飞控地址；本版本不安装 RKNN 库或启动图像链路；
+4. 同步到 `/home/firefly/plane`，生成逐机配置，启动并持续分析日志。
 
 Zenoh 使用默认发现，不依赖 GCS 地址。测试证据写入 `logs/fleet/<run_id>/`；验证通过后环境保持运行，以便继续检查，失败时也保留现场并提示使用 `down` 停止。
 
@@ -79,23 +77,8 @@ Zenoh 使用默认发现，不依赖 GCS 地址。测试证据写入 `logs/fleet
 
 ### 2.2 软件出包
 
-执行媒体测试前应具备：
-
-- 已构建的 `build/plane/plane`；
-- `build/plugins` 下所需插件；
-- 可用的检测模型和算法配置；
-- `ffprobe`、`ffmpeg` 和 `curl`；
-- RTSP/WebRTC 所需网络端口未被占用。
-- 如果是sitl测试要检查仿真是否正常启动了
-
-测试脚本支持以下环境变量：
-
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `PLANE_BIN` | `build/plane/plane` | 待测试程序 |
-| `PLANE_PLUGINS_DIR` | `build/plugins` | 插件目录 |
-| `PLANE_FIXTURES_DIR` | `tests/fixtures` | 测试配置目录 |
-| `SKIP_HW` | `0` | 为 `1` 时跳过脚本中标记的硬件场景 |
+运行包只要求主程序、配置、启停脚本和核心动态库；不包含模型、视觉插件或媒体服务。
+相机控制模块保留，但接口不传递图像帧。
 
 ## 3. 基础验证
 
@@ -124,59 +107,23 @@ cd build/plane
 
 ## 4. 自动化测试
 
-### 4.1 插件加载契约
+### 4.1 无图像依赖检查
+
+- 源码不得引用 Perception、DetectionResult、VisionTarget 或 OpenCV 图像帧类型。
+- 编译参数、链接命令及主程序的动态依赖不得包含 OpenCV、RGA、Pluma 或 RKNN。
+- 启动脚本不要求模型或图像插件；保留自动修复执行权限。
+- 相机控制仍可通过现有接口发送指令和查询状态；具体吊舱联调另行验证。
+
+### 4.2 核心回归
+
+`config_simulation` 验证 UDP 端口 `14580`～`14589` 为仿真，范围外端口和串口不判定为仿真。
 
 ```bash
-bash tests/contract/test_plugin_load.sh build
+ctest --test-dir build --output-on-failure
+python3 tests/unit/test_fleetctl.py
 ```
 
-验证 `build/plugins` 中的 ImageInput、DetMot 和 VideoStreamOutput Provider 均可被宿主发现和实例化。
-
-### 4.2 插件异常降级
-
-```bash
-bash tests/integration/test_failfast.sh
-```
-
-验证插件目录缺失、检测模型不可用时：
-
-- 输出包含插件名称和失败原因的错误日志；
-- 不输出插件 `[fatal]` 日志；
-- 核心程序进入就绪状态并保持运行。
-
-### 4.3 配置切换
-
-```bash
-bash tests/integration/test_config_switch.sh
-```
-
-验证只修改配置即可切换：
-
-- RTSP 输入与 MIPI 输入；
-- RTSP 输出与 WebRTC 输出；
-- 插件实际收到的类型和参数与配置一致。
-
-### 4.4 取图、检测和推流日志
-
-```bash
-bash tests/integration/test_pipeline_logs.sh
-```
-
-通过标准：日志能够确认插件加载、取图初始化、检测初始化、推流初始化、首帧、检测结果、推流地址和推流状态。无观看者时允许推流插件进入 Ready 并暂停编码。
-
-### 4.5 视频流
-
-```bash
-bash tests/integration/test_pipeline_stream.sh
-```
-
-验证：
-
-- RTSP 输出可由 `ffprobe` 拉取，编码为 H.264，分辨率符合测试配置；
-- RTSP 输出可由 `ffmpeg` 连续解码并产生视频帧；
-- WebRTC 观看地址可访问，返回 HTTP 200、301 或 302。
-
-### 4.6 航线执行超时回归
+### 4.3 航线执行超时回归
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
@@ -190,7 +137,7 @@ ctest --test-dir build -R '^mission_node_timeout$' --output-on-failure
 - Waypoint 仍遵守普通节点超时。
 - 长航线仍支持中止和重新启动，飞控分发失败仍返回 FAILURE。
 
-### 4.7 航线起飞与高度调整
+### 4.4 航线起飞与高度调整
 
 ```bash
 cmake --build build --target route_preflight_test -j
@@ -206,17 +153,9 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 - 中止和超时时切换 Hold，停止临时航点任务；
 - 起飞节点使用本次实际下发的目标高度判定完成。
 
-## 5. 媒体性能场景
+## 5. 相机／吊舱控制
 
-推流输出目标帧率约为 30 FPS。测试时必须记录：
-
-- 输入源帧率；
-- 检测耗时或检测吞吐；
-- 分辨率转换平均耗时；
-- 编码和输出帧率；
-- 是否存在断流、重连或无观看者暂停编码。
-
-当前不设未经确认的固定容差。若实测帧率明显偏离 30 FPS，不能只报告失败，必须分析瓶颈属于取图、缩放、检测、叠加、编码、网络还是观看端，并向用户说明测量值和证据。
+保留指令发送、状态查询和链路状态接口，不做图像处理。当前为 Noop 实现，不能将其单元验证等同于真实吊舱接入成功。
 
 ## 6. 飞控与指令验收
 
@@ -253,41 +192,19 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 | 队列上限 | 接收队列满时丢弃最旧消息，进程保持可用 |
 | 确认重试 | 可靠消息超时后按配置重试，超过次数产生明确错误 |
 
-## 8. 反无人机任务验收
+## 8. 已移除任务流程
 
-完整目标流程为：
+原本依赖本地视觉检测的任务启动时必须明确返回不可用，不启动截短的任务树，也不误报完成。
 
-```text
-Arm → Takeoff → Midcourse → Detection → Tracking → Guidance/Impact
-```
-
-逐阶段验证：
-
-1. 指定 `targetTrackId` 时选择对应 GCS 目标；未指定时只有唯一目标才允许自动选择。
-2. 中段制导根据本机与目标位置生成 NED 速度和朝向。
-3. 到达配置的检测启动距离后进入 Detection。
-4. Detection 输出有效目标后按规则选择跟踪目标。
-5. Tracking 持续更新目标；超过丢失阈值后任务失败。
-6. Guidance 输出被转换为飞控控制；达到撞击完成条件后任务完成。
-7. 任一阶段超时或失败时停止后续阶段并清理检测及速度控制。
-
-当前代码只实现到 Detection。Tracking 和 Guidance/Impact 场景应标记为“未实现”，不得标记为测试通过。
-
-## 9. 感知、目标和安全验收
+## 9. 目标和安全验收
 
 | 场景 | 通过标准 |
 | --- | --- |
-| MIPI 输入 | 能自动发现或使用指定设备持续获取图像 |
-| RTSP 输入 | 能连接、断流后按配置重试并恢复取图 |
-| 分辨率转换 | 输出尺寸等于检测输入尺寸，ARM64 优先使用 RGA |
-| 检测/MOT | 插件输出被保存为最新视觉目标并叠加到视频 |
 | GCS 目标 | 按 trackId 保存最新值，每个目标最多保留 20 条历史 |
 | 动态安全高度 | SystemParam 更新后，后续默认起飞使用新值 |
 | 实机低电压 | 飞控连接正常且首次低于阈值时发送一次告警 |
 | 电压恢复 | 电压恢复后解除锁存，再次低电压可重新告警 |
 | 仿真低电压 | 仿真飞机不发送低电压告警 |
-| 插件初始化/配置失败 | 记录插件和原因，禁用对应能力，核心程序保持运行 |
-| 插件运行失败 | 记录插件和原因，有序关闭并返回非 0 |
 
 ## 10. 测试报告
 
@@ -297,7 +214,6 @@ Arm → Takeoff → Midcourse → Detection → Tracking → Guidance/Impact
 构建：通过/失败/未执行，命令与结果
 自动化测试：逐项状态
 硬件与联调测试：逐项状态、环境和设备
-媒体指标：分辨率、编码、输入/输出 FPS
 未执行项：原因和风险
 失败项：日志位置、现象和初步定位
 ```

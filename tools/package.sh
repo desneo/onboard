@@ -9,4 +9,4 @@ cmake --build "${BUILD_DIR}" -j
 bash "${ROOT}/tools/bundle_plane.sh" "${BUILD_DIR}" "${ROOT}"
 
 echo "运行: cd ${BUILD_DIR}/plane && ./plane"
-echo "注意: 系统库 (OpenCV/FFmpeg/GStreamer 等) 需按部署环境提供"
+echo "注意: 系统运行库 需按部署环境提供"

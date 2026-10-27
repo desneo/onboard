@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "communication/communication_events.h"
-#include "perception/perception_events.h"
 
 namespace plane::target {
 namespace {
@@ -29,25 +28,16 @@ bool TargetStore::start() {
     event_bus_.subscribe<plane::model::GcsTarget>(
         plane::communication::events::kGcsTargetReceived,
         [this](const plane::model::GcsTarget& target) { on_gcs_target(target); });
-    event_bus_.subscribe<plane::perception::DetectionResult>(
-        plane::perception::events::kDetection,
-        [this](const plane::perception::DetectionResult& result) { on_detection(result); });
     return true;
 }
 
 void TargetStore::stop() {
     std::lock_guard<std::mutex> lock(mutex_);
-    vision_targets_.clear();
     gcs_latest_.clear();
     gcs_history_.clear();
 }
 
 void TargetStore::release() {}
-
-std::vector<plane::model::VisionTarget> TargetStore::vision_targets() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return vision_targets_;
-}
 
 std::vector<plane::model::GcsTarget> TargetStore::gcs_targets() const {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -91,16 +81,6 @@ void TargetStore::on_gcs_target(const plane::model::GcsTarget& target) {
         history_size = history.size();
     }
     SPDLOG_INFO("GCS 目标更新: trackId={}, 历史={}", target.trackId, history_size);
-}
-
-void TargetStore::on_detection(const plane::perception::DetectionResult& result) {
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        vision_targets_ = result.targets;
-    }
-    if (config_.debug_target_log) {
-        SPDLOG_INFO("视觉目标更新: {} 个", result.targets.size());
-    }
 }
 
 }  // namespace plane::target

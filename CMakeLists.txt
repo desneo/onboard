@@ -32,6 +32,7 @@ add_executable(plane
   src/core/runtime.cpp
   src/core/system_param_store.cpp
   src/core/time_utils.cpp
+  src/plugin/plugin_management.cpp
   src/state/state_store.cpp
   src/state/state_monitor.cpp
   src/flight_control/flight_control_module.cpp
@@ -49,13 +50,8 @@ add_executable(plane
   src/task/nodes/stop_motor_node.cpp
   src/task/nodes/approach_controller.cpp
   src/task/nodes/midcourse_node.cpp
-  src/task/nodes/detect_node.cpp
   src/task/task_execution_engine.cpp
-  src/perception/plugin_management.cpp
-  src/perception/plugin_providers.cpp
-  src/perception/perception.cpp
   src/target/target_store.cpp
-  src/video/video_streaming.cpp
 )
 target_include_directories(plane PRIVATE src)
 target_compile_options(plane PRIVATE -Wall -Wextra)
@@ -83,27 +79,24 @@ target_link_libraries(gcs_sim PRIVATE
   zenohcxx::zenohc
 )
 
-# 正式插件暂存：将三个插件 .so 拷贝到 build/plugins（路径可用环境变量覆盖）。
-add_custom_target(stage_plugins
-  COMMAND bash "${CMAKE_SOURCE_DIR}/tools/stage_plugins.sh" "${CMAKE_BINARY_DIR}"
-  COMMENT "暂存正式插件到 build/plugins"
-  VERBATIM
-)
-
-# 插件加载契约测试（不进入正式运行目录）。
-add_executable(plugin_load_check tests/contract/plugin_load_check.cpp)
-target_include_directories(plugin_load_check PRIVATE src)
-target_compile_options(plugin_load_check PRIVATE -Wall -Wextra)
-target_link_libraries(plugin_load_check PRIVATE
-  plane::pluma
-  plane::common_include
-  opencv_core
-  fmt::fmt
-  spdlog::spdlog
-)
-
 include(CTest)
 if(BUILD_TESTING)
+  add_executable(config_simulation_test tests/unit/config_simulation_test.cpp src/core/config.cpp)
+  target_include_directories(config_simulation_test PRIVATE src)
+  target_compile_options(config_simulation_test PRIVATE -Wall -Wextra)
+  target_link_libraries(config_simulation_test PRIVATE plane::common_include spdlog::spdlog)
+  add_test(NAME config_simulation COMMAND config_simulation_test)
+
+  add_executable(camera_target_test
+    tests/unit/camera_target_test.cpp
+    src/camera/camera_control_module.cpp
+    src/target/target_store.cpp
+  )
+  target_include_directories(camera_target_test PRIVATE src)
+  target_compile_options(camera_target_test PRIVATE -Wall -Wextra)
+  target_link_libraries(camera_target_test PRIVATE plane::common_include plane::eventpp spdlog::spdlog)
+  add_test(NAME camera_target COMMAND camera_target_test)
+
   add_executable(serialization_vehicle_state_test
     tests/unit/serialization_vehicle_state_test.cpp
     src/communication/serialization.cpp
@@ -146,10 +139,10 @@ if(BUILD_TESTING)
   add_test(NAME route_preflight COMMAND route_preflight_test)
 endif()
 
-# 默认构建即组装 build/plane 独立运行目录：暂存正式插件、复制三方库、改写 rpath。
+# 默认构建即组装 build/plane 独立运行目录：复制三方库、改写 rpath；不分发图像插件。
 add_custom_target(package_plane ALL
   COMMAND bash "${CMAKE_SOURCE_DIR}/tools/bundle_plane.sh" "${CMAKE_BINARY_DIR}" "${CMAKE_SOURCE_DIR}"
-  DEPENDS plane stage_plugins
-  COMMENT "组装 build/plane 独立运行目录（正式插件 + 三方库 + rpath）"
+  DEPENDS plane
+  COMMENT "组装 build/plane 独立运行目录（三方库 + rpath）"
   VERBATIM
 )

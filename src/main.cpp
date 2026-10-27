@@ -20,14 +20,12 @@
 #include "core/system_param_store.h"
 #include "flight_control/flight_control_events.h"
 #include "flight_control/flight_control_module.h"
-#include "perception/perception.h"
-#include "perception/plugin_management.h"
+#include "plugin/plugin_management.h"
 #include "state/state_monitor.h"
 #include "state/state_store.h"
 #include "target/target_store.h"
 #include "task/task_execution_engine.h"
 #include "task/task_scheduler.h"
-#include "video/video_streaming.h"
 
 namespace {
 
@@ -68,14 +66,11 @@ int main(int argc, char** argv) {
     auto state_store = std::make_unique<plane::state::StateStore>(event_bus, config);
     auto flight_control = std::make_unique<plane::flight_control::FlightControlModule>(event_bus, config, *state_store);
     auto system_param_store = std::make_unique<plane::core::SystemParamStore>(event_bus, config);
-    auto plugin_management = std::make_unique<plane::perception::PluginManagement>(config);
+    auto plugin_management = std::make_unique<plane::plugin::PluginManagement>();
     auto camera_control = std::make_unique<plane::camera::CameraControlModule>(event_bus);
-    auto video_streaming = std::make_unique<plane::video::VideoStreaming>(config, *plugin_management);
-    auto perception = std::make_unique<plane::perception::Perception>(event_bus, config, *plugin_management,
-                                                                      *video_streaming);
     auto target_store = std::make_unique<plane::target::TargetStore>(event_bus, config);
-    auto task_engine = std::make_unique<plane::task::TaskExecutionEngine>(
-        event_bus, config, *flight_control, *state_store, *system_param_store, *perception, *target_store);
+    auto task_engine = std::make_unique<plane::task::TaskExecutionEngine>(event_bus, config, *flight_control,
+                                                                          *state_store, *system_param_store);
     auto task_scheduler = std::make_unique<plane::task::TaskScheduler>(event_bus, config, task_engine.get());
     auto communication =
         std::make_unique<plane::communication::CommunicationModule>(event_bus, config, *state_store, *task_scheduler);
@@ -88,8 +83,6 @@ int main(int argc, char** argv) {
     runtime.add_module(std::move(system_param_store));
     runtime.add_module(std::move(plugin_management));
     runtime.add_module(std::move(camera_control));
-    runtime.add_module(std::move(video_streaming));
-    runtime.add_module(std::move(perception));
     runtime.add_module(std::move(target_store));
     runtime.add_module(std::move(task_engine));
     runtime.add_module(std::move(task_scheduler));
@@ -97,8 +90,7 @@ int main(int argc, char** argv) {
     runtime.add_module(std::move(state_monitor));
     for (auto& module : plane::core::make_placeholder_modules(
              {"Communication", "UAV State Management", "Flight Control", "Task Scheduler", "Task Execution Engine",
-              "Plugin Management", "Camera Control", "Video Streaming", "Perception", "Target Management",
-              "StateMonitor"})) {
+              "Camera Control", "Target Management", "StateMonitor"})) {
         runtime.add_module(std::move(module));
     }
     if (!runtime.run()) {

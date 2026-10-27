@@ -7,10 +7,8 @@
 #include <spdlog/spdlog.h>
 
 #include <GeographicLib/Geodesic.hpp>
-#include <Pluma/Pluma.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <nlohmann/json.hpp>
-#include <opencv2/core.hpp>
 #include <string>
 #include <zenoh/api.hxx>
 
@@ -29,9 +27,6 @@ int run_deps_check() {
     dispatcher.appendListener(1, []() {});
     dispatcher.dispatch(1);
 
-    pluma::Pluma pluma;
-    static_cast<void>(pluma);
-
     BT::BehaviorTreeFactory factory;
     static_cast<void>(factory);
 
@@ -42,12 +37,8 @@ int run_deps_check() {
     zenoh::Config zenoh_config = zenoh::Config::create_default();
     static_cast<void>(zenoh_config);
 
-    const cv::Mat empty_frame;
-    static_cast<void>(empty_frame);
-
-    SPDLOG_INFO("deps-check: magic_enum={} nlohmann={} fmt={} spdlog={} bt={} geodesic={:.1f}m cv={}", state,
-                NLOHMANN_JSON_VERSION_MAJOR, FMT_VERSION, SPDLOG_VERSION, BT::LibraryVersionString(), distance_m,
-                CV_VERSION);
+    SPDLOG_INFO("deps-check: magic_enum={} nlohmann={} fmt={} spdlog={} bt={} geodesic={:.1f}m", state,
+                NLOHMANN_JSON_VERSION_MAJOR, FMT_VERSION, SPDLOG_VERSION, BT::LibraryVersionString(), distance_m);
     return 0;
 }
 

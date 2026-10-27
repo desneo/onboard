@@ -26,9 +26,8 @@ class PlaceholderModule final : public IModule {
 
 std::vector<std::unique_ptr<IModule>> make_placeholder_modules(const std::vector<std::string>& skip) {
     const char* names[] = {
-        "Plugin Management", "Communication",  "UAV State Management",  "StateMonitor",
-        "Target Management", "Flight Control", "Camera Control",        "Perception",
-        "Video Streaming",   "Task Scheduler", "Task Execution Engine",
+        "Communication",  "UAV State Management", "StateMonitor",   "Target Management",
+        "Flight Control", "Camera Control",       "Task Scheduler", "Task Execution Engine",
     };
     std::vector<std::unique_ptr<IModule>> modules;
     modules.reserve(std::size(names));

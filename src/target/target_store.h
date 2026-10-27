@@ -9,12 +9,11 @@
 #include "core/config.h"
 #include "core/event_bus.h"
 #include "core/module.h"
-#include "perception/perception_api.h"
 #include "target/target_store_api.h"
 
 namespace plane::target {
 
-/// 目标管理：机载感知目标（最新）与 GCS 目标（最新 + 历史）（ARCHITECTURE §16）。
+/// 目标管理：GCS 目标（最新 + 历史）（ARCHITECTURE §16）。
 class TargetStore final : public plane::core::IModule, public TargetStoreApi {
    public:
     TargetStore(plane::core::EventBus& event_bus, const plane::core::AppConfig& config);
@@ -26,19 +25,16 @@ class TargetStore final : public plane::core::IModule, public TargetStoreApi {
     void stop() override;
     void release() override;
 
-    std::vector<plane::model::VisionTarget> vision_targets() const override;
     std::vector<plane::model::GcsTarget> gcs_targets() const override;
     bool gcs_target(const std::string& track_id, plane::model::GcsTarget& out) const override;
     std::vector<plane::model::GcsTarget> gcs_target_history(const std::string& track_id) const override;
 
    private:
     void on_gcs_target(const plane::model::GcsTarget& target);
-    void on_detection(const plane::perception::DetectionResult& result);
 
     plane::core::EventBus& event_bus_;
     const plane::core::AppConfig& config_;
     mutable std::mutex mutex_;
-    std::vector<plane::model::VisionTarget> vision_targets_;
     std::unordered_map<std::string, plane::model::GcsTarget> gcs_latest_;
     std::unordered_map<std::string, std::deque<plane::model::GcsTarget>> gcs_history_;
 };

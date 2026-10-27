@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "config" / "fleet.ini"
 STATE_UPDATE_RE = re.compile(r"他机状态更新:\s*([^\s]+)")
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
-URI_RE = re.compile(r"(?:udp(?:out|in)?|rtsp|tcp)://[^\s\"'<>\[\]{}(),;]+", re.IGNORECASE)
+URI_RE = re.compile(r"(?:udp(?:out|in)?|tcp)://[^\s\"'<>\[\]{}(),;]+", re.IGNORECASE)
 PORT_RE = re.compile(r":(\d+)(?:[/?:#]|$)")
 
 
@@ -51,6 +51,7 @@ class Simulator(RemoteHost):
     scenario_dir: str
     start_command: str
     stop_command: str
+    flight_port_base: int | None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -76,7 +77,6 @@ class FleetConfig:
 @dataclasses.dataclass(frozen=True)
 class EndpointSet:
     flight_urls: tuple[str, ...]
-    rtsp_urls: tuple[str, ...]
     all_uris: tuple[str, ...]
 
 
@@ -114,6 +114,7 @@ def load_config(path: Path) -> FleetConfig:
             scenario_dir=sim["scenario_dir"].strip(),
             start_command=sim.get("start_command", "./start").strip(),
             stop_command=sim.get("stop_command", "./stop.sh").strip(),
+            flight_port_base=sim.getint("flight_port_base", fallback=None),
         )
     except (KeyError, ValueError) as exc:
         raise FleetError(f"环境清单缺少 simulator/fleet 字段: {exc}") from exc
@@ -349,17 +350,9 @@ def require_local_commands(commands: Iterable[str]) -> None:
 
 def bundle_problems(bundle: Path) -> list[str]:
     required_files = ["plane", "runplane.sh", "stopplane.sh", "config/plane.conf"]
-    required_dirs = ["plugins", "models", "configs", "lib", "rknn"]
+    required_dirs = ["lib"]
     problems = [name for name in required_files if not (bundle / name).is_file()]
     problems.extend(name + "/" for name in required_dirs if not (bundle / name).is_dir())
-    if (bundle / "plugins").is_dir() and not list((bundle / "plugins").glob("*.so")):
-        problems.append("plugins/*.so")
-    if (bundle / "models").is_dir() and not list((bundle / "models").rglob("*.rknn")):
-        problems.append("models/**/*.rknn")
-    if not (bundle / "configs" / "det_mot.json").is_file():
-        problems.append("configs/det_mot.json")
-    if (bundle / "rknn").is_dir() and not list((bundle / "rknn").glob("librknn*.so*")):
-        problems.append("rknn/librknn*.so*")
     return problems
 
 
@@ -414,12 +407,11 @@ def preflight(config: FleetConfig, planes: Sequence[Plane], remote: RemoteExecut
             f"echo '环境不满足: 期望架构 {config.board_arch}，实际架构' \"$actual_arch\"; exit 14; fi; "
             f"if [ \"$actual_os\" != {expected_os} ]; then "
             f"echo '环境不满足: 期望 Ubuntu {config.board_os_version}，实际版本' \"$actual_os\"; exit 15; fi; "
-            "printf 'ok arch=%s os=%s free_kb=%s rknn_inspect=%s\\n' "
-            "\"$actual_arch\" \"$actual_os\" \"$(df -Pk /home | awk 'NR==2 {print $4}')\" "
-            "\"$(command -v rknn-inspect 2>/dev/null || printf missing)\"; "
+            "printf 'ok arch=%s os=%s free_kb=%s\\n' "
+            "\"$actual_arch\" \"$actual_os\" \"$(df -Pk /home | awk 'NR==2 {print $4}')\"; "
             f"if [ -x {shlex.quote(plane.runtime_dir + '/plane')} ]; then "
             f"cd {shlex.quote(plane.runtime_dir)} && "
-            "for target in ./plane ./plugins/*.so; do "
+            "for target in ./plane; do "
             "[ -e \"$target\" ] || continue; "
             "ldd \"$target\" 2>/dev/null | awk -v target=\"$target\" '/not found/ {print target \": \" $1 \": not found\"}'; "
             "done; fi"
@@ -507,7 +499,7 @@ def install_system_dependencies(
         return
 
     apt_update(plane, remote)
-    # libopencv-dev 等基础包必须先装，让 APT 先解决大批图像和编解码传递依赖。
+    # 先安装基础包，再补装其他运行依赖。
     apt_install(plane, bootstrap_missing, remote, label="安装基础依赖")
     regular_missing = missing_apt_packages(plane, config.apt_packages, remote)
     apt_install(plane, regular_missing, remote, label="补装运行依赖")
@@ -518,34 +510,6 @@ def install_system_dependencies(
     if unresolved:
         raise FleetError(f"{plane.plane_id} APT 安装后仍缺少: {', '.join(unresolved)}")
     print(f"[deps] {plane.plane_id}: APT 依赖安装完成")
-
-
-def install_rknn_dependencies(
-    plane: Plane, bundle: Path, remote: RemoteExecutor
-) -> None:
-    rknn_dir = bundle / "rknn"
-    libraries = sorted(rknn_dir.glob("librknn*.so*"))
-    if not libraries:
-        raise FleetError(f"运行包缺少 RKNN 用户态库: {rknn_dir}")
-    remote_dir = plane.runtime_dir.rstrip("/") + "/rknn/"
-    remote.run(plane, f"mkdir -p {shlex.quote(remote_dir)}")
-    remote.rsync_to(plane, str(rknn_dir) + "/", remote_dir, extra=("--delete",))
-    sources = " ".join(shlex.quote(remote_dir + library.name) for library in libraries)
-    script = (
-        "mkdir -p /usr/local/lib; "
-        f"for library in {sources}; do install -m 0644 \"$library\" /usr/local/lib/; done; "
-        "ldconfig"
-    )
-    remote.run_sudo(plane, script, timeout=30)
-    verify = remote.run(
-        plane,
-        "ldconfig -p | grep -q 'librknn'",
-        timeout=15,
-        check=False,
-    )
-    if verify.returncode != 0:
-        raise FleetError(f"{plane.plane_id} RKNN 库安装后未进入动态链接器缓存")
-    print(f"[deps] {plane.plane_id}: RKNN 用户态库安装完成")
 
 
 def stop_planes(planes: Sequence[Plane], remote: RemoteExecutor) -> None:
@@ -582,33 +546,50 @@ def endpoint_port(uri: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def parse_endpoints(text: str, simulator_host: str, count: int) -> EndpointSet:
+def validate_flight_listeners(base_port: int, count: int, socket_text: str) -> tuple[int, ...]:
+    if base_port <= 0 or base_port + count - 1 > 65535:
+        raise FleetError(f"非法飞控端口范围: {base_port}～{base_port + count - 1}")
+    expected = tuple(range(base_port, base_port + count))
+    listening = {int(port) for port in re.findall(r":(\d+)\s", socket_text)}
+    missing = [port for port in expected if port not in listening]
+    if missing:
+        raise FleetError(
+            f"SITL 未监听声明的飞控端口: {', '.join(map(str, missing))}。"
+            "不会修改板端配置。"
+        )
+    return expected
+
+
+def parse_endpoints(
+    text: str,
+    simulator_host: str,
+    count: int,
+    flight_ports: Sequence[int] | None = None,
+) -> EndpointSet:
     clean = sanitize_output(text)
     all_uris = tuple(dict.fromkeys(uri.rstrip(".，。") for uri in URI_RE.findall(clean)))
-    flight_ports = sorted(
-        {
-            port
-            for uri in all_uris
-            if uri.lower().startswith(("udp://", "udpin://", "udpout://"))
-            for port in [endpoint_port(uri)]
-            if port is not None and 14200 <= port <= 14299
-        }
-    )
-    if len(flight_ports) != count:
-        raise FleetError(
-            f"无法唯一解析 {count} 个飞控端点：发现端口 {flight_ports or '无'}。"
-            "已保存 SITL 原始输出，不会修改板端配置。"
+    if flight_ports is None:
+        parsed_flight_ports = sorted(
+            {
+                port
+                for uri in all_uris
+                if uri.lower().startswith(("udp://", "udpin://", "udpout://"))
+                for port in [endpoint_port(uri)]
+                if port is not None and 14200 <= port <= 14299
+            }
         )
-    flight_urls = tuple(f"udpout://{simulator_host}:{port}" for port in flight_ports)
+        if len(parsed_flight_ports) != count:
+            raise FleetError(
+                f"无法唯一解析 {count} 个飞控端点：发现端口 {parsed_flight_ports or '无'}。"
+                "已保存 SITL 原始输出，不会修改板端配置。"
+            )
+    else:
+        parsed_flight_ports = list(flight_ports)
+        if len(parsed_flight_ports) != count or len(set(parsed_flight_ports)) != count:
+            raise FleetError(f"飞控端口数量或唯一性不满足 {count} 架飞机要求")
+    flight_urls = tuple(f"udpout://{simulator_host}:{port}" for port in parsed_flight_ports)
 
-    rtsp_urls = tuple(sorted({uri for uri in all_uris if uri.lower().startswith("rtsp://")}))
-    if rtsp_urls and len(rtsp_urls) != count:
-        print(
-            f"[sitl] 警告: RTSP 地址数量为 {len(rtsp_urls)}，与飞机数量 {count} 不一致；本次不写入 RTSP 配置",
-            file=sys.stderr,
-        )
-        rtsp_urls = ()
-    return EndpointSet(flight_urls=flight_urls, rtsp_urls=rtsp_urls, all_uris=all_uris)
+    return EndpointSet(flight_urls=flight_urls, all_uris=all_uris)
 
 
 def start_simulator(
@@ -624,8 +605,13 @@ def start_simulator(
     (run_dir / "sitl-start.log").write_text(output, encoding="utf-8")
     if rc != 0:
         raise FleetError(f"SITL start 失败: rc={rc}，输出见 {run_dir / 'sitl-start.log'}")
+    flight_ports = None
+    if sim.flight_port_base is not None:
+        listeners = remote.run(sim, "ss -H -lun", timeout=15).stdout
+        (run_dir / "sitl-udp-listeners.log").write_text(listeners, encoding="utf-8")
+        flight_ports = validate_flight_listeners(sim.flight_port_base, count, listeners)
     try:
-        endpoints = parse_endpoints(output, sim.host, count)
+        endpoints = parse_endpoints(output, sim.host, count, flight_ports)
     except FleetError:
         probe = remote.run(
             sim,
@@ -634,13 +620,12 @@ def start_simulator(
             check=False,
         ).stdout
         (run_dir / "sitl-processes.log").write_text(probe, encoding="utf-8")
-        endpoints = parse_endpoints(output + "\n" + probe, sim.host, count)
+        endpoints = parse_endpoints(output + "\n" + probe, sim.host, count, flight_ports)
     (run_dir / "endpoints.json").write_text(
         json.dumps(dataclasses.asdict(endpoints), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     for index, url in enumerate(endpoints.flight_urls, start=1):
-        rtsp = endpoints.rtsp_urls[index - 1] if endpoints.rtsp_urls else "未唯一识别"
-        print(f"[sitl] #{index}: flight={url}, rtsp={rtsp}")
+        print(f"[sitl] #{index}: flight={url}")
     return endpoints
 
 
@@ -671,8 +656,17 @@ def set_ini_value(text: str, section: str, key: str, value: str) -> str:
     return "".join(lines)
 
 
-def configure_plane(base: str, plane: Plane, flight_url: str, rtsp_url: str | None) -> str:
-    result = base
+def configure_plane(base: str, plane: Plane, flight_url: str) -> str:
+    # 旧板端配置可能仍包含已移除的图像模块，生成配置时清除这些 section。
+    lines = []
+    retired = False
+    for line in base.splitlines(keepends=True):
+        section = re.match(r"^\s*\[([^]]+)\]", line)
+        if section:
+            retired = section.group(1).strip() in {"plugins", "image_input", "detection", "video_output", "debug"}
+        if not retired:
+            lines.append(line)
+    result = "".join(lines)
     updates = [
         ("system", "log_dir", "logs"),
         ("communication", "plane_id", plane.plane_id),
@@ -682,10 +676,7 @@ def configure_plane(base: str, plane: Plane, flight_url: str, rtsp_url: str | No
         ("communication", "zenoh_listen", ""),
         ("flight_control", "link_type", "udp"),
         ("flight_control", "udp_url", flight_url),
-        ("detection", "config_dir", "configs"),
     ]
-    if rtsp_url:
-        updates.extend([("image_input", "type", "Rtsp"), ("image_input", "rtsp_url", rtsp_url)])
     for section, key, value in updates:
         result = set_ini_value(result, section, key, value)
     return result
@@ -705,7 +696,6 @@ def sync_plane(
     plane: Plane,
     bundle: Path,
     flight_url: str,
-    rtsp_url: str | None,
     run_id: str,
     remote: RemoteExecutor,
     run_dir: Path,
@@ -713,7 +703,7 @@ def sync_plane(
     runtime = shlex.quote(plane.runtime_dir)
     config_path = f"{plane.runtime_dir}/config/plane.conf"
     base = remote_config_or_default(plane, remote, bundle / "config" / "plane.conf")
-    rendered = configure_plane(base, plane, flight_url, rtsp_url)
+    rendered = configure_plane(base, plane, flight_url)
     local_config = run_dir / f"{plane.plane_id}.plane.conf"
     local_config.write_text(rendered, encoding="utf-8")
 
@@ -742,7 +732,7 @@ def check_remote_dependencies(plane: Plane, remote: RemoteExecutor) -> None:
     runtime = shlex.quote(plane.runtime_dir)
     script = (
         f"cd {runtime} && missing=0; "
-        "for target in ./plane ./plugins/*.so; do "
+        "for target in ./plane; do "
         "[ -e \"$target\" ] || continue; "
         "unresolved=$(ldd \"$target\" 2>/dev/null | awk '/not found/ {print $1}'); "
         "if [ -n \"$unresolved\" ]; then "
@@ -922,13 +912,10 @@ def command_test(args: argparse.Namespace, config: FleetConfig, remote: RemoteEx
     stop_planes(planes, remote)
     for plane in planes:
         install_system_dependencies(config, plane, remote)
-    for plane in planes:
-        install_rknn_dependencies(plane, bundle, remote)
     stop_simulator(config, remote)
     endpoints = start_simulator(config, len(planes), remote, run_dir)
     for index, plane in enumerate(planes):
-        rtsp_url = endpoints.rtsp_urls[index] if endpoints.rtsp_urls else None
-        sync_plane(plane, bundle, endpoints.flight_urls[index], rtsp_url, run_id, remote, run_dir)
+        sync_plane(plane, bundle, endpoints.flight_urls[index], run_id, remote, run_dir)
         check_remote_dependencies(plane, remote)
     for plane in planes:
         start_plane(plane, remote)
@@ -969,7 +956,6 @@ def command_verify(args: argparse.Namespace, config: FleetConfig, remote: Remote
         raw = json.loads(endpoint_file.read_text(encoding="utf-8"))
         endpoints = EndpointSet(
             flight_urls=tuple(raw.get("flight_urls", ())),
-            rtsp_urls=tuple(raw.get("rtsp_urls", ())),
             all_uris=tuple(raw.get("all_uris", ())),
         )
 
