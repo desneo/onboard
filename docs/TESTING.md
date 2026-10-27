@@ -44,11 +44,21 @@
 python3 tools/fleetctl.py preflight --count 2
 ```
 
-启动两架飞机并验证双方至少连续解析到 3 个友机状态样本：
+启动两架飞机并验证双方通过 Zenoh liveliness 感知到友机在线：
 
 ```bash
 python3 tools/fleetctl.py test --count 2
 ```
+
+只部署双机并验证上下线及日志降频，不重启 SITL、不修改板端现有连接参数：
+
+```bash
+python3 tools/fleetctl.py test-presence --count 2
+```
+
+该命令只预检和操作清单中的前两块板卡，备份旧程序及配置，验证双向正常退出、恢复上线，
+再终止二号机进程以验证异常退出及恢复。初始和结束各观察 10 秒，检查重复上下线和位置更新日志。
+报告及各阶段原始日志保存在 `logs/fleet/<run_id>/`，成功后双机保持运行。
 
 如果部署已启动但监控会话中断，可复核并重写该次报告，不重启现场：
 
@@ -115,6 +125,11 @@ cd build/plane
 - 相机控制仍可通过现有接口发送指令和查询状态；具体吊舱联调另行验证。
 
 ### 4.2 核心回归
+
+`zenoh_liveliness` 在本机 TCP 回环网络上验证已有存活标记发现、退出下线和重连上线，不连接飞机。
+`state_store_quiet` 验证连续状态更新仍发布内部事件并更新缓存，但不产生日志。
+部署工具按最新运行中的上下线事件验证在线状态，不再把日志条数当作收到的位置样本数。
+
 
 `config_simulation` 验证 UDP 端口 `14580`～`14589` 为仿真，范围外端口和串口不判定为仿真。
 
@@ -186,7 +201,8 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 | 非 GCS 控制 | 拒绝其他发送方下发的 Task 和 Command |
 | 任务确认 | 收到合法 Task 后返回对应 messageId 的 Ack |
 | 状态广播 | 按配置周期广播本机最新 VehicleState |
-| 友机状态 | 按 planeId 更新和查询其他无人机最新状态 |
+| 友机状态 | 按 planeId 更新和查询其他无人机最新状态，位置更新不打印日志 |
+| 友机上下线 | Zenoh 存活标记出现时打印一次上线，撤销或失联时打印一次下线，恢复后重新打印上线 |
 | 任务状态 | 地面站能获得状态、行为树和当前节点；无任务时为 None |
 | GCS 链路 | 收到 GCS 报文变为 connected，超过阈值变为 disconnected |
 | 队列上限 | 接收队列满时丢弃最旧消息，进程保持可用 |

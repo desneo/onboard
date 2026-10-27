@@ -19,6 +19,7 @@ struct ZenohEndpoints {
 class ZenohTransport {
    public:
     using SampleHandler = std::function<void(const std::string& payload)>;
+    using LivelinessHandler = std::function<void(const std::string& key_expr, bool online)>;
 
     ZenohTransport();
     ~ZenohTransport();
@@ -28,6 +29,8 @@ class ZenohTransport {
     bool open(const ZenohEndpoints& endpoints, std::string& error);
     void close();
     bool subscribe(const std::string& key_expr, SampleHandler handler, std::string& error);
+    bool subscribe_liveliness(const std::string& key_expr, LivelinessHandler handler, std::string& error);
+    bool declare_liveliness_token(const std::string& key_expr, std::string& error);
     bool put(const std::string& key_expr, const std::string& payload, std::string& error);
 
    private:

@@ -81,6 +81,20 @@ target_link_libraries(gcs_sim PRIVATE
 
 include(CTest)
 if(BUILD_TESTING)
+  add_executable(zenoh_liveliness_test tests/unit/zenoh_liveliness_test.cpp src/communication/zenoh_transport.cpp)
+  target_include_directories(zenoh_liveliness_test PRIVATE src)
+  target_compile_options(zenoh_liveliness_test PRIVATE -Wall -Wextra)
+  target_link_libraries(zenoh_liveliness_test PRIVATE spdlog::spdlog zenohc::lib zenohcxx::zenohc)
+  add_test(NAME zenoh_liveliness COMMAND zenoh_liveliness_test)
+  set_tests_properties(zenoh_liveliness PROPERTIES TIMEOUT 45)
+
+  add_executable(state_store_quiet_test
+    tests/unit/state_store_quiet_test.cpp src/state/state_store.cpp src/core/time_utils.cpp)
+  target_include_directories(state_store_quiet_test PRIVATE src)
+  target_compile_options(state_store_quiet_test PRIVATE -Wall -Wextra)
+  target_link_libraries(state_store_quiet_test PRIVATE plane::common_include plane::eventpp spdlog::spdlog)
+  add_test(NAME state_store_quiet COMMAND state_store_quiet_test)
+
   add_executable(config_simulation_test tests/unit/config_simulation_test.cpp src/core/config.cpp)
   target_include_directories(config_simulation_test PRIVATE src)
   target_compile_options(config_simulation_test PRIVATE -Wall -Wextra)

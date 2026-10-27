@@ -90,6 +90,11 @@ Perception、检测节点、视觉目标接口和视频推流已完全移除，�
 
 ### 3.2 通信边界
 
+Communication 通过 ZenohTransport 声明 `plane/liveliness/<plane_id>` 并订阅 `plane/liveliness/*`，
+开启 history 以发现先上线的节点。仅记录其他飞机的上下线变化；重复通知不重复打印。
+存活性判断由 Zenoh 负责，状态更新日志不作为在线心跳。所有参与此发现机制的飞机均需声明存活标记。
+
+
 | 场景 | 机制 |
 | --- | --- |
 | GCS/UAV 网络通信 | Zenoh，仅限 Communication 模块 |

@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -93,6 +94,55 @@ class FleetCtlTest(unittest.TestCase):
             parser.parse_args(["verify", "--count", "2"])
         args = parser.parse_args(["verify", "--count", "2", "--run-id", "20261016-000000"])
         self.assertEqual(args.run_id, "20261016-000000")
+
+    def test_peer_presence_uses_latest_event_across_duplicate_logs(self):
+        planes = fleetctl.load_config(ROOT / "config" / "fleet.ini").planes[:2]
+        online = "[2026-10-27 18:00:01.000] [info] 他机上线: uav2\n"
+        offline = "[2026-10-27 18:00:02.000] [info] 他机下线: uav2\n"
+        result = fleetctl.analyze_plane(planes[0], planes, online + offline + online)
+        self.assertFalse(result.peer_online["uav2"])
+        recovered = "[2026-10-27 18:00:03.000] [info] 他机上线: uav2\n"
+        result = fleetctl.analyze_plane(planes[0], planes, recovered + online + offline)
+        self.assertTrue(result.peer_online["uav2"])
+
+    def test_old_run_cannot_satisfy_current_presence_check(self):
+        planes = fleetctl.load_config(ROOT / "config" / "fleet.ini").planes[:2]
+        text = (
+            "[2026-10-27 17:00:00.000] [info] 他机上线: uav2\n"
+            "[2026-10-27 17:00:01.000] [info] 飞控连接建立\n"
+            "[2026-10-27 18:00:00.000] [info] plane 启动: version=0.1.0\n"
+        )
+        result = fleetctl.analyze_plane(planes[0], planes, text)
+        self.assertFalse(result.peer_online["uav2"])
+        self.assertFalse(result.flight_connected)
+
+    def test_presence_deployment_preserves_board_connections(self):
+        plane = fleetctl.load_config(ROOT / "config" / "fleet.ini").planes[1]
+        base = (
+            "[communication]\nplane_id = old\nzenoh_connect = tcp/127.0.0.1:7447\n"
+            "[flight_control]\nlink_type = serial\nserial_device = /dev/test\n"
+            "[image_input]\ntype = Rtsp\n"
+        )
+        template = (ROOT / "config" / "plane.conf").read_text()
+        result = fleetctl.render_presence_config(base, template, plane)
+        self.assertIn("plane_id = uav2", result)
+        self.assertIn("zenoh_connect = tcp/127.0.0.1:7447", result)
+        self.assertIn("link_type = serial", result)
+        self.assertIn("serial_device = /dev/test", result)
+        self.assertNotIn("[image_input]", result)
+
+    def test_presence_preflight_only_contacts_selected_boards(self):
+        config = fleetctl.load_config(ROOT / "config" / "fleet.ini")
+        planes = fleetctl.selected_planes(config, 2)
+        remote = Mock()
+        remote.run.return_value.stdout = "ok"
+        with patch.object(fleetctl, "require_local_commands"):
+            fleetctl.preflight(config, planes, remote, include_simulator=False)
+        self.assertEqual([call.args[0] for call in remote.run.call_args_list], list(planes))
+
+    def test_presence_counts_match_exact_plane_id(self):
+        text = "他机上线: uav2\n他机上线: uav20\n他机下线: uav2\n他机上线: uav2\n"
+        self.assertEqual(fleetctl.presence_event_counts(text, "uav2"), (2, 1))
 
 
 if __name__ == "__main__":

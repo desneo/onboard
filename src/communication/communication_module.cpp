@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <cstddef>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -18,6 +19,7 @@ using plane::core::now_ms;
 namespace {
 
 constexpr int kWorkerTickMs = 50;
+constexpr std::string_view kLivelinessPrefix = "plane/liveliness/";
 
 bool is_reliable(plane::model::MessageType type) {
     return type == plane::model::MessageType::Alert || type == plane::model::MessageType::Ack;
@@ -58,6 +60,18 @@ bool CommunicationModule::start() {
         return false;
     }
 
+    {
+        std::lock_guard<std::mutex> lock(presence_mutex_);
+        presence_active_ = true;
+    }
+    if (!transport_.subscribe_liveliness(
+            std::string(kLivelinessPrefix) + "*",
+            [this](const std::string& key_expr, bool online) { on_peer_liveliness(key_expr, online); }, error) ||
+        !transport_.declare_liveliness_token(std::string(kLivelinessPrefix) + config_.plane_id, error)) {
+        report_error("飞机存活性声明失败: " + error);
+        return false;
+    }
+
     running_ = true;
     worker_ = std::thread([this]() { worker_loop(); });
     SPDLOG_INFO("Communication 已启动: plane_id={}, station_id={}", config_.plane_id, config_.station_id);
@@ -65,6 +79,11 @@ bool CommunicationModule::start() {
 }
 
 void CommunicationModule::stop() {
+    {
+        std::lock_guard<std::mutex> lock(presence_mutex_);
+        presence_active_ = false;
+        online_peers_.clear();
+    }
     const bool was_running = running_.exchange(false);
     if (was_running) {
         rx_cv_.notify_all();
@@ -102,6 +121,27 @@ void CommunicationModule::enqueue_wire(std::string raw) {
         rx_queue_.push_back(std::move(raw));
     }
     rx_cv_.notify_one();
+}
+
+void CommunicationModule::on_peer_liveliness(const std::string& key_expr, bool online) {
+    if (key_expr.compare(0, kLivelinessPrefix.size(), kLivelinessPrefix) != 0) {
+        return;
+    }
+    const std::string plane_id = key_expr.substr(kLivelinessPrefix.size());
+    if (plane_id.empty() || plane_id == config_.plane_id) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(presence_mutex_);
+    if (!presence_active_) {
+        return;
+    }
+    if (online) {
+        if (online_peers_.insert(plane_id).second) {
+            SPDLOG_INFO("他机上线: {}", plane_id);
+        }
+    } else if (online_peers_.erase(plane_id) != 0) {
+        SPDLOG_INFO("他机下线: {}", plane_id);
+    }
 }
 
 void CommunicationModule::worker_loop() {

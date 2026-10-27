@@ -7,6 +7,7 @@ import argparse
 import configparser
 import dataclasses
 import datetime as dt
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -25,7 +26,8 @@ from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "config" / "fleet.ini"
-STATE_UPDATE_RE = re.compile(r"他机状态更新:\s*([^\s]+)")
+PEER_LINK_RE = re.compile(r"他机(上线|下线):\s*([^\s]+)")
+LOG_TIME_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\]")
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 URI_RE = re.compile(r"(?:udp(?:out|in)?|tcp)://[^\s\"'<>\[\]{}(),;]+", re.IGNORECASE)
 PORT_RE = re.compile(r":(\d+)(?:[/?:#]|$)")
@@ -64,7 +66,6 @@ class Plane(RemoteHost):
 class FleetConfig:
     simulator: Simulator
     planes: tuple[Plane, ...]
-    state_samples: int
     startup_timeout_s: int
     verify_timeout_s: int
     board_arch: str
@@ -86,7 +87,7 @@ class PlaneResult:
     host: str
     process_running: bool = False
     flight_connected: bool = False
-    peer_counts: dict[str, int] = dataclasses.field(default_factory=dict)
+    peer_online: dict[str, bool] = dataclasses.field(default_factory=dict)
     errors: list[str] = dataclasses.field(default_factory=list)
 
 def now_shanghai() -> dt.datetime:
@@ -149,7 +150,6 @@ def load_config(path: Path) -> FleetConfig:
     return FleetConfig(
         simulator=simulator,
         planes=tuple(planes),
-        state_samples=fleet.getint("state_samples", 3),
         startup_timeout_s=fleet.getint("startup_timeout_s", 60),
         verify_timeout_s=fleet.getint("verify_timeout_s", 45),
         board_arch=fleet.get("board_arch", "aarch64").strip(),
@@ -378,7 +378,9 @@ def ensure_bundle() -> Path:
     return bundle
 
 
-def preflight(config: FleetConfig, planes: Sequence[Plane], remote: RemoteExecutor) -> None:
+def preflight(
+    config: FleetConfig, planes: Sequence[Plane], remote: RemoteExecutor, *, include_simulator: bool = True
+) -> None:
     require_local_commands(["python3", "ssh", "rsync", "cmake"])
     sim = config.simulator
     sim_script = (
@@ -391,8 +393,9 @@ def preflight(config: FleetConfig, planes: Sequence[Plane], remote: RemoteExecut
         f"echo '停止脚本不存在或不可执行: {shlex.quote(sim.stop_command)}'; ls -la; exit 13; fi; "
         "printf 'ok arch=%s dir=%s\\n' \"$(uname -m)\" \"$(pwd)\""
     )
-    print(f"[preflight] 检查 SITL 主机 {sim.target}")
-    print("[preflight] " + remote.run(sim, sim_script).stdout.strip())
+    if include_simulator:
+        print(f"[preflight] 检查 SITL 主机 {sim.target}", flush=True)
+        print("[preflight] " + remote.run(sim, sim_script).stdout.strip(), flush=True)
     for plane in planes:
         print(f"[preflight] 检查 {plane.plane_id} {plane.target}")
         expected_arch = shlex.quote(config.board_arch)
@@ -770,14 +773,26 @@ def read_plane_logs(plane: Plane, remote: RemoteExecutor) -> str:
     return sanitize_output(remote.run(plane, script, timeout=10, check=False).stdout)
 
 
-def analyze_plane(plane: Plane, peers: Sequence[Plane], text: str, samples: int) -> PlaneResult:
+def analyze_plane(plane: Plane, peers: Sequence[Plane], text: str) -> PlaneResult:
     result = PlaneResult(plane_id=plane.plane_id, host=plane.host)
-    result.flight_connected = "飞控系统已接入" in text or "飞控连接建立" in text
-    ids = STATE_UPDATE_RE.findall(text)
-    result.peer_counts = {peer.plane_id: ids.count(peer.plane_id) for peer in peers if peer != plane}
+    # 两个日志文件可能重复或跨运行保留历史；只采信最新启动之后的状态变更。
+    records = [(match.group(1), line) for line in text.splitlines() if (match := LOG_TIME_RE.match(line))]
+    latest_start = max((timestamp for timestamp, line in records if "plane 启动:" in line), default="")
+    current = sorted(
+        ((timestamp, line) for timestamp, line in records if timestamp >= latest_start),
+        key=lambda record: record[0],
+    )
+    current_text = "\n".join(line for _, line in current) if latest_start else text
+    result.flight_connected = "飞控系统已接入" in current_text or "飞控连接建立" in current_text
+    result.peer_online = {peer.plane_id: False for peer in peers if peer != plane}
+    for _, line in current:
+        if match := PEER_LINK_RE.search(line):
+            status, peer_id = match.groups()
+            if peer_id in result.peer_online:
+                result.peer_online[peer_id] = status == "上线"
     result.errors = [
         line.strip()
-        for line in text.splitlines()
+        for line in current_text.splitlines()
         if "[error]" in line.lower()
         or "错误:" in line
         or "error while loading shared libraries" in line
@@ -785,9 +800,6 @@ def analyze_plane(plane: Plane, peers: Sequence[Plane], text: str, samples: int)
         or "[fatal]" in line.lower()
     ][-30:]
     result.process_running = False
-    for peer_id in result.peer_counts:
-        if result.peer_counts[peer_id] < samples:
-            break
     return result
 
 
@@ -808,7 +820,7 @@ def verify_planes(
         for plane in planes:
             text = read_plane_logs(plane, remote)
             latest_logs[plane.plane_id] = text
-            result = analyze_plane(plane, planes, text, config.state_samples)
+            result = analyze_plane(plane, planes, text)
             running = remote.run(plane, "pgrep -x plane >/dev/null 2>&1", timeout=10, check=False)
             result.process_running = running.returncode == 0
             results.append(result)
@@ -820,14 +832,14 @@ def verify_planes(
                 events.add("zenoh")
             if result.flight_connected:
                 events.add("flight")
-            for peer_id, count in result.peer_counts.items():
-                if count >= config.state_samples:
+            for peer_id, online in result.peer_online.items():
+                if online:
                     events.add("peer:" + peer_id)
             for event in sorted(events - last_events[plane.plane_id]):
                 print(f"[verify] {plane.plane_id}: {event}")
             last_events[plane.plane_id] = events
 
-            peers_ok = all(count >= config.state_samples for count in result.peer_counts.values())
+            peers_ok = all(result.peer_online.values())
             all_passed = all_passed and result.process_running and result.flight_connected and peers_ok
         if all_passed:
             break
@@ -844,7 +856,6 @@ def write_report(
     planes: Sequence[Plane],
     endpoints: EndpointSet | None,
     results: Sequence[PlaneResult],
-    required_samples: int,
 ) -> None:
     report = {
         "run_id": run_id,
@@ -854,7 +865,7 @@ def write_report(
             | {
                 "passed": result.process_running
                 and result.flight_connected
-                and all(count >= required_samples for count in result.peer_counts.values())
+                and all(result.peer_online.values())
             }
             for result in results
         ],
@@ -871,8 +882,8 @@ def write_report(
             if source == plane:
                 cells.append("—")
             else:
-                count = result.peer_counts.get(source.plane_id, 0)
-                cells.append(f"通过 ({count})" if count >= required_samples else f"失败 ({count}/{required_samples})")
+                online = result.peer_online.get(source.plane_id, False)
+                cells.append("在线" if online else "离线或未发现")
         lines.append(
             f"| {plane.plane_id} | {'通过' if result.process_running else '失败'} | "
             f"{'通过' if result.flight_connected else '失败'} | " + " | ".join(cells) + " |"
@@ -901,6 +912,172 @@ def command_preflight(args: argparse.Namespace, config: FleetConfig, remote: Rem
     return 0
 
 
+def render_presence_config(base: str, template_text: str, plane: Plane) -> str:
+    """保留板端现有连接参数，只分发当前版本支持的配置项。"""
+    current = configparser.ConfigParser(interpolation=None)
+    current.read_string(base)
+    template = configparser.ConfigParser(interpolation=None)
+    template.read_string(template_text)
+    result = template_text
+    for section in template.sections():
+        for key in template[section]:
+            if current.has_option(section, key):
+                result = set_ini_value(result, section, key, current[section][key])
+    result = set_ini_value(result, "system", "log_dir", "logs")
+    return set_ini_value(result, "communication", "plane_id", plane.plane_id)
+
+
+def presence_event_counts(text: str, peer_id: str) -> tuple[int, int]:
+    events = [status for status, peer in PEER_LINK_RE.findall(text) if peer == peer_id]
+    return events.count("上线"), events.count("下线")
+
+
+def command_test_presence(args: argparse.Namespace, config: FleetConfig, remote: RemoteExecutor) -> int:
+    planes = selected_planes(config, args.count)
+    if len(planes) != 2:
+        raise FleetError("test-presence 当前要求 --count 2")
+    run_id = new_run_id()
+    run_dir = ROOT / "logs" / "fleet" / run_id
+    run_dir.mkdir(parents=True, exist_ok=False)
+    report = {"run_id": run_id, "status": "running", "checks": [], "backups": {}, "flight_or_task_commands_sent": False}
+    print(f"[run] 上下线验证 run_id={run_id}, 证据目录={run_dir}", flush=True)
+
+    def save_report() -> None:
+        (run_dir / "presence-report.json").write_text(
+            json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+
+    def passed(name: str) -> None:
+        report["checks"].append({"name": name, "status": "passed"})
+        save_report()
+        print(f"[presence] 通过: {name}", flush=True)
+
+    def snapshot(plane: Plane, stage: str) -> str:
+        path = f"{plane.runtime_dir}/logs/plane.stdout.log"
+        result = remote.run(plane, f"cat {shlex.quote(path)}", timeout=15, check=False)
+        text = sanitize_output(result.stdout)
+        (run_dir / f"{stage}-{plane.plane_id}.log").write_text(text, encoding="utf-8")
+        return text
+
+    def running(plane: Plane) -> bool:
+        return remote.run(plane, "pgrep -x plane >/dev/null", timeout=10, check=False).returncode == 0
+
+    def wait_for_counts(observer: Plane, peer: Plane, expected: tuple[int, int], stage: str) -> None:
+        deadline = time.monotonic() + config.verify_timeout_s
+        while time.monotonic() < deadline:
+            text = snapshot(observer, stage)
+            if not running(observer):
+                raise FleetError(f"{stage}: {observer.plane_id} 意外退出")
+            counts = presence_event_counts(text, peer.plane_id)
+            if counts == expected:
+                passed(f"{stage}: {observer.plane_id} 观察 {peer.plane_id}, 上线/下线次数={counts}")
+                return
+            if any(actual > wanted for actual, wanted in zip(counts, expected)):
+                raise FleetError(f"{stage}: 出现重复上下线日志: {counts}, 期望 {expected}")
+            time.sleep(0.5)
+        raise FleetError(f"{stage}: {observer.plane_id} 未观察到 {peer.plane_id} 的预期变化 {expected}")
+
+    def quiet_window(stage: str, seconds: int) -> None:
+        before = {plane.plane_id: snapshot(plane, stage + "-before") for plane in planes}
+        time.sleep(seconds)
+        for observer in planes:
+            peer = next(plane for plane in planes if plane != observer)
+            text = snapshot(observer, stage)
+            if not running(observer) or "系统就绪" not in text:
+                raise FleetError(f"{stage}: {observer.plane_id} 未保持运行")
+            if "他机状态更新:" in text:
+                raise FleetError(f"{stage}: {observer.plane_id} 仍逐条打印位置更新")
+            if presence_event_counts(text, peer.plane_id) != presence_event_counts(before[observer.plane_id], peer.plane_id):
+                raise FleetError(f"{stage}: {observer.plane_id} 稳定运行期间出现额外上下线日志")
+            if PEER_LINK_RE.search(text) is None:
+                raise FleetError(f"{stage}: {observer.plane_id} 缺少友机发现日志")
+            if re.search(r"他机(?:上线|下线):\s*" + re.escape(observer.plane_id) + r"(?:\s|$)", text):
+                raise FleetError(f"{stage}: {observer.plane_id} 把自身打印为友机")
+            result = analyze_plane(observer, planes, text)
+            if result.errors or not all(result.peer_online.values()):
+                raise FleetError(f"{stage}: {observer.plane_id} 存在错误或未感知友机在线: {result.errors}")
+        passed(f"{stage}: 双机稳定运行 {seconds}s，仅打印上下线，无位置更新日志")
+
+    def restart_cycle(victim: Plane, observer: Plane, *, abrupt: bool) -> None:
+        stage = ("crash" if abrupt else "stop") + "-" + victim.plane_id
+        online, offline = presence_event_counts(snapshot(observer, stage + "-baseline"), victim.plane_id)
+        try:
+            if abrupt:
+                # 只终止本次已部署运行目录中的进程，不操作其他板卡或仿真环境。
+                runtime = shlex.quote(victim.runtime_dir)
+                remote.run(victim, f'for pid in $(pgrep -x plane); do '
+                           f'[ "$(readlink /proc/$pid/exe)" = {runtime}/plane ] || exit 2; '
+                           'kill -KILL "$pid"; done', timeout=10)
+            else:
+                stop_planes((victim,), remote)
+            stopped_deadline = time.monotonic() + 5
+            while running(victim):
+                if time.monotonic() >= stopped_deadline:
+                    raise FleetError(f"{stage}: 进程未停止")
+                time.sleep(0.2)
+            wait_for_counts(observer, victim, (online, offline + 1), stage + "-offline")
+            time.sleep(2)
+            if presence_event_counts(snapshot(observer, stage + "-offline-held"), victim.plane_id) != (online, offline + 1):
+                raise FleetError(f"{stage}: 离线期间重复打印日志")
+        finally:
+            if not running(victim):
+                start_plane(victim, remote)
+        wait_for_counts(observer, victim, (online + 1, offline + 1), stage + "-recovered")
+        # 重启节点应通过 history 发现先上线的观察节点。
+        wait_for_counts(victim, observer, (1, 0), stage + "-history")
+
+    try:
+        preflight(config, planes, remote, include_simulator=False)
+        bundle = ensure_bundle()
+        template = (bundle / "config/plane.conf").read_text(encoding="utf-8")
+        rendered = {}
+        for plane in planes:
+            existing = remote.run(plane, f"cat {shlex.quote(plane.runtime_dir + '/config/plane.conf')}").stdout
+            (run_dir / f"{plane.plane_id}.previous.conf").write_text(existing, encoding="utf-8")
+            local_config = run_dir / f"{plane.plane_id}.plane.conf"
+            local_config.write_text(render_presence_config(existing, template, plane), encoding="utf-8")
+            rendered[plane.plane_id] = local_config
+        for plane in planes:
+            backup = plane.runtime_dir + ".backup-presence-" + run_id
+            remote.run(plane, f"mkdir -p {shlex.quote(backup)} && rsync -a --exclude=/logs/ "
+                       f"{shlex.quote(plane.runtime_dir + '/')} {shlex.quote(backup + '/')}", timeout=60)
+            report["backups"][plane.plane_id] = backup
+        save_report()
+        stop_planes(planes, remote)
+        expected_sha = hashlib.sha256((bundle / "plane").read_bytes()).hexdigest()
+        for plane in planes:
+            remote.rsync_to(plane, str(bundle) + "/", plane.runtime_dir + "/",
+                            extra=("--delete", "--exclude=/logs/", "--exclude=/config/plane.conf"))
+            remote.rsync_to(plane, rendered[plane.plane_id], plane.runtime_dir + "/config/plane.conf")
+            check_remote_dependencies(plane, remote)
+            deps = remote.run(plane, f"cd {shlex.quote(plane.runtime_dir)} && sha256sum plane && ./plane --deps-check")
+            (run_dir / f"{plane.plane_id}.deps.log").write_text(deps.stdout, encoding="utf-8")
+            if expected_sha not in deps.stdout:
+                raise FleetError(f"{plane.plane_id} 程序校验值不匹配")
+        passed("双机部署校验及依赖自检")
+        for plane in planes:
+            start_plane(plane, remote)
+        wait_for_counts(planes[0], planes[1], (1, 0), "initial-uav1")
+        wait_for_counts(planes[1], planes[0], (1, 0), "initial-uav2")
+        quiet_window("initial-quiet", 10)
+        restart_cycle(planes[1], planes[0], abrupt=False)
+        restart_cycle(planes[0], planes[1], abrupt=False)
+        restart_cycle(planes[1], planes[0], abrupt=True)
+        quiet_window("final-quiet", 10)
+        report["status"] = "passed"
+        report["binary_sha256"] = expected_sha
+        save_report()
+        print(f"[result] 上下线及安静日志验证通过；双机保持运行。报告: {run_dir / 'presence-report.json'}", flush=True)
+        return 0
+    except (FleetError, OSError, configparser.Error) as exc:
+        report["status"] = "failed"
+        report["error"] = str(exc)
+        save_report()
+        for plane in planes:
+            snapshot(plane, "failure")
+        raise FleetError(f"上下线验证失败: {exc}；证据目录: {run_dir}") from exc
+
+
 def command_test(args: argparse.Namespace, config: FleetConfig, remote: RemoteExecutor) -> int:
     planes = selected_planes(config, args.count)
     run_id = new_run_id()
@@ -920,16 +1097,16 @@ def command_test(args: argparse.Namespace, config: FleetConfig, remote: RemoteEx
     for plane in planes:
         start_plane(plane, remote)
     results = verify_planes(config, planes, run_id, remote, run_dir)
-    write_report(run_dir, run_id, planes, endpoints, results, config.state_samples)
+    write_report(run_dir, run_id, planes, endpoints, results)
     passed = all(
         result.process_running
         and result.flight_connected
-        and all(count >= config.state_samples for count in result.peer_counts.values())
+        and all(result.peer_online.values())
         for result in results
     )
     print(f"[report] {run_dir / 'report.md'}")
     if passed:
-        print("[result] 多机启动与友机状态解析验证通过；环境保持运行。")
+        print("[result] 多机启动与友机上线感知验证通过；环境保持运行。")
         return 0
     print("[result] 验证失败；环境保持现场，使用 down 命令停止。", file=sys.stderr)
     return 1
@@ -961,16 +1138,16 @@ def command_verify(args: argparse.Namespace, config: FleetConfig, remote: Remote
 
     print(f"[verify] 复核运行现场 run_id={run_id}")
     results = verify_planes(config, planes, run_id, remote, run_dir)
-    write_report(run_dir, run_id, planes, endpoints, results, config.state_samples)
+    write_report(run_dir, run_id, planes, endpoints, results)
     passed = all(
         result.process_running
         and result.flight_connected
-        and all(count >= config.state_samples for count in result.peer_counts.values())
+        and all(result.peer_online.values())
         for result in results
     )
     print(f"[report] {run_dir / 'report.md'}")
     if passed:
-        print("[result] 当前运行现场的多机状态解析验证通过；环境保持运行。")
+        print("[result] 当前运行现场的友机上线感知验证通过；环境保持运行。")
         return 0
     print("[result] 当前运行现场验证失败；环境保持运行。", file=sys.stderr)
     return 1
@@ -983,6 +1160,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name, help_text in (
         ("preflight", "只执行环境和连接预检"),
         ("test", "启动、同步并验证多机状态互通"),
+        ("test-presence", "部署双机并验证上线、退出、崩溃和恢复，不重启 SITL"),
         ("verify", "复核一个已启动运行现场的多机状态互通"),
         ("down", "停止机载程序和 SITL"),
     ):
@@ -1000,6 +1178,8 @@ def main() -> int:
         remote = RemoteExecutor(ROOT / ".fleet")
         if args.command == "preflight":
             return command_preflight(args, config, remote)
+        if args.command == "test-presence":
+            return command_test_presence(args, config, remote)
         if args.command == "test":
             return command_test(args, config, remote)
         if args.command == "verify":

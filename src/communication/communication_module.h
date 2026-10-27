@@ -8,6 +8,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "communication/communication_api.h"
 #include "communication/zenoh_transport.h"
@@ -45,6 +46,7 @@ class CommunicationModule final : public plane::core::IModule, public Communicat
     };
 
     void enqueue_wire(std::string raw);
+    void on_peer_liveliness(const std::string& key_expr, bool online);
     void worker_loop();
     void on_wire_message(const std::string& raw);
     void handle_envelope(const plane::model::Message& envelope);
@@ -61,6 +63,9 @@ class CommunicationModule final : public plane::core::IModule, public Communicat
     plane::task::TaskStateProvider& task_state_provider_;
     std::int64_t last_report_ms_ = 0;
     ZenohTransport transport_;
+    std::mutex presence_mutex_;
+    bool presence_active_ = false;
+    std::unordered_set<std::string> online_peers_;
     std::mutex rx_mutex_;
     std::condition_variable rx_cv_;
     std::deque<std::string> rx_queue_;

@@ -92,7 +92,6 @@ void StateStore::update_peer_state(const plane::model::VehicleState& state) {
         std::lock_guard<std::mutex> lock(mutex_);
         peers_[state.planeId] = state;
     }
-    SPDLOG_INFO("他机状态更新: {}", state.planeId);
     event_bus_.publish(events::kPeerStateChanged, state);
 }
 

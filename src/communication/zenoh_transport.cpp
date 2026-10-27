@@ -64,6 +64,7 @@ std::string endpoints_or_default(const std::string& endpoints) {
 struct ZenohTransport::Impl {
     std::optional<zenoh::Session> session;
     std::vector<zenoh::Subscriber<void>> subscribers;
+    std::vector<zenoh::LivelinessToken> liveliness_tokens;
     bool debug_log = false;
     std::string remote_endpoints;
 };
@@ -103,9 +104,10 @@ bool ZenohTransport::open(const ZenohEndpoints& endpoints, std::string& error) {
         } catch (const zenoh::ZException& e) {
             SPDLOG_WARN("Zenoh 已上线但获取对端信息失败: {}", e.what());
         }
-        SPDLOG_INFO("Zenoh 已上线: 远端端点(connect)=[{}], 本地监听(listen)=[{}], 本机 zid={}, routers=[{}], peers=[{}]",
-                    endpoints_or_default(endpoints.connect), endpoints_or_default(endpoints.listen),
-                    impl_->session->get_zid().to_string(), routers, peers);
+        SPDLOG_INFO(
+            "Zenoh 已上线: 远端端点(connect)=[{}], 本地监听(listen)=[{}], 本机 zid={}, routers=[{}], peers=[{}]",
+            endpoints_or_default(endpoints.connect), endpoints_or_default(endpoints.listen),
+            impl_->session->get_zid().to_string(), routers, peers);
         return true;
     } catch (const zenoh::ZException& e) {
         error = e.what();
@@ -117,6 +119,7 @@ void ZenohTransport::close() {
     if (!impl_) {
         return;
     }
+    impl_->liveliness_tokens.clear();
     impl_->subscribers.clear();
     impl_->session.reset();
 }
@@ -137,6 +140,55 @@ bool ZenohTransport::subscribe(const std::string& key_expr, SampleHandler handle
             return false;
         }
         impl_->subscribers.push_back(std::move(subscriber));
+        return true;
+    } catch (const zenoh::ZException& e) {
+        error = e.what();
+        return false;
+    }
+}
+
+bool ZenohTransport::subscribe_liveliness(const std::string& key_expr, LivelinessHandler handler, std::string& error) {
+    if (!impl_ || !impl_->session.has_value()) {
+        error = "Session 未打开";
+        return false;
+    }
+    try {
+        auto options = zenoh::Session::LivelinessSubscriberOptions::create_default();
+        options.history = true;
+        zenoh::ZResult result = Z_OK;
+        auto subscriber = impl_->session->liveliness_declare_subscriber(
+            zenoh::KeyExpr(canon_key_expr(key_expr)),
+            [handler = std::move(handler)](zenoh::Sample& sample) {
+                handler(std::string(sample.get_keyexpr().as_string_view()), sample.get_kind() == Z_SAMPLE_KIND_PUT);
+            },
+            []() {}, std::move(options), &result);
+        if (result != Z_OK) {
+            error = "存活性订阅失败: " + key_expr;
+            return false;
+        }
+        impl_->subscribers.push_back(std::move(subscriber));
+        return true;
+    } catch (const zenoh::ZException& e) {
+        error = e.what();
+        return false;
+    }
+}
+
+bool ZenohTransport::declare_liveliness_token(const std::string& key_expr, std::string& error) {
+    if (!impl_ || !impl_->session.has_value()) {
+        error = "Session 未打开";
+        return false;
+    }
+    try {
+        zenoh::ZResult result = Z_OK;
+        auto token = impl_->session->liveliness_declare_token(
+            zenoh::KeyExpr(canon_key_expr(key_expr)), zenoh::Session::LivelinessDeclarationOptions::create_default(),
+            &result);
+        if (result != Z_OK) {
+            error = "存活标记声明失败: " + key_expr;
+            return false;
+        }
+        impl_->liveliness_tokens.push_back(std::move(token));
         return true;
     } catch (const zenoh::ZException& e) {
         error = e.what();
