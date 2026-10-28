@@ -672,6 +672,7 @@ def configure_plane(base: str, plane: Plane, flight_url: str) -> str:
     result = "".join(lines)
     updates = [
         ("system", "log_dir", "logs"),
+        ("system", "board_ip", plane.host),
         ("communication", "plane_id", plane.plane_id),
         ("communication", "station_id", "GCS"),
         ("communication", "zenoh_config_file", ""),
@@ -924,6 +925,8 @@ def render_presence_config(base: str, template_text: str, plane: Plane) -> str:
             if current.has_option(section, key):
                 result = set_ini_value(result, section, key, current[section][key])
     result = set_ini_value(result, "system", "log_dir", "logs")
+    if not current.get("system", "board_ip", fallback="").strip():
+        result = set_ini_value(result, "system", "board_ip", plane.host)
     return set_ini_value(result, "communication", "plane_id", plane.plane_id)
 
 
@@ -1078,6 +1081,154 @@ def command_test_presence(args: argparse.Namespace, config: FleetConfig, remote:
         raise FleetError(f"上下线验证失败: {exc}；证据目录: {run_dir}") from exc
 
 
+def command_test_vehicle_info(args: argparse.Namespace, config: FleetConfig, remote: RemoteExecutor) -> int:
+    planes = selected_planes(config, args.count)
+    if len(planes) != 1:
+        raise FleetError("test-vehicle-info 当前要求 --count 1")
+    plane = planes[0]
+    preflight(config, planes, remote, include_simulator=False)
+    bundle = ensure_bundle()
+    gcs_binary = ROOT / "build" / "gcs_sim"
+    if not gcs_binary.is_file():
+        raise FleetError("缺少 build/gcs_sim，请先完成构建")
+    run_id = new_run_id()
+    run_dir = ROOT / "logs" / "fleet" / run_id
+    run_dir.mkdir(parents=True, exist_ok=False)
+    runtime = shlex.quote(plane.runtime_dir)
+    test_dir = f"/tmp/plane-vehicle-info-{run_id}"
+    report = {"run_id": run_id, "status": "running", "checks": [], "plane": plane.plane_id,
+              "host": plane.host, "flight_or_task_commands_sent": False}
+
+    def save() -> None:
+        (run_dir / "vehicle-info-report.json").write_text(
+            json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    def passed(name: str) -> None:
+        report["checks"].append({"name": name, "status": "passed"})
+        save()
+        print(f"[vehicle-info] 通过: {name}", flush=True)
+
+    def gcs_text(stage: str) -> str:
+        text = sanitize_output(remote.run(plane, f"cat {shlex.quote(test_dir + '/' + stage + '.log')}",
+                                          check=False, timeout=10).stdout)
+        (run_dir / f"gcs-{stage}.log").write_text(text, encoding="utf-8")
+        return text
+
+    def wait_gcs(stage: str) -> tuple[int, str]:
+        deadline = time.monotonic() + 20
+        status_path = shlex.quote(test_dir + "/" + stage + ".status")
+        while time.monotonic() < deadline:
+            result = remote.run(plane, f"cat {status_path} 2>/dev/null", check=False, timeout=10)
+            if result.returncode == 0 and result.stdout.strip():
+                return int(result.stdout.strip()), gcs_text(stage)
+            time.sleep(0.2)
+        raise FleetError(f"gcs_sim {stage} 未按时退出")
+
+    def launch_gcs(stage: str, *, query: str = "", seconds: int = 2,
+                   presence: bool = True, plane_id: str | None = None) -> None:
+        options = ["--plane-id", plane_id or plane.plane_id, "--sender-id", station_id,
+                   "--listen-seconds", str(seconds), "--query-timeout-ms", "1500"]
+        if query:
+            options += ["--query", query]
+        if not presence:
+            options += ["--no-presence"]
+        log = shlex.quote(test_dir + "/" + stage + ".log")
+        status = shlex.quote(test_dir + "/" + stage + ".status")
+        command = (f"LD_LIBRARY_PATH={shlex.quote(plane.runtime_dir + '/lib')} "
+                   f"{shlex.quote(test_dir + '/gcs_sim')} {shlex.join(options)} >{log} 2>&1; "
+                   f"printf '%s\\n' \"$?\" >{status}")
+        remote.run(plane, f"setsid -f bash -c {shlex.quote(command)} </dev/null >/dev/null 2>&1", timeout=10)
+
+    def verify_gcs(stage: str, *, query: bool, push_count: int) -> None:
+        code, text = wait_gcs(stage)
+        if code != 0:
+            raise FleetError(f"{stage}: gcs_sim 返回 {code}，详见 {run_dir / ('gcs-' + stage + '.log')}")
+        pushes = [json.loads(item) for item in re.findall(r"收到 VehicleInfo: (\{[^\n]*\})", text)]
+        replies = [json.loads(item) for item in re.findall(r"查询成功 VehicleInfo: (\{[^\n]*\})", text)]
+        if len(pushes) != push_count or any(item != expected for item in pushes):
+            raise FleetError(f"{stage}: 主动上报数量或内容错误: {pushes}，期望 {push_count} 次 {expected}")
+        if len(replies) != int(query) or any(item != expected for item in replies):
+            raise FleetError(f"{stage}: 查询结果错误: {replies}")
+        passed(f"{stage}: 主动上报 {push_count} 次，查询结果与板端配置一致" if query else
+               f"{stage}: 主动上报 {push_count} 次，无周期重复上报")
+
+    try:
+        existing = remote.run(plane, f"cat {runtime}/config/plane.conf").stdout
+        (run_dir / "previous.conf").write_text(existing, encoding="utf-8")
+        template = (bundle / "config/plane.conf").read_text(encoding="utf-8")
+        rendered = render_presence_config(existing, template, plane)
+        local_config = run_dir / "plane.conf"
+        local_config.write_text(rendered, encoding="utf-8")
+        parser = configparser.ConfigParser(interpolation=None)
+        parser.read_string(rendered)
+        station_id = parser["communication"]["station_id"]
+        port = endpoint_port(parser.get("flight_control", "udp_url", fallback=""))
+        is_sim = parser.get("flight_control", "link_type", fallback="udp") == "udp" and port is not None and 14580 <= port <= 14589
+        expected = {"planeId": plane.plane_id, "boardIp": parser["system"]["board_ip"],
+                    "podVideoUrl": parser["camera"]["pod_video_url"], "isSim": is_sim}
+        report["expected"] = expected
+        backup = plane.runtime_dir + ".backup-vehicle-info-" + run_id
+        remote.run(plane, f"mkdir -p {shlex.quote(backup)} && rsync -a --exclude=/logs/ "
+                   f"{shlex.quote(plane.runtime_dir + '/')} {shlex.quote(backup + '/')}", timeout=60)
+        report["backup"] = backup
+        save()
+        stop_planes(planes, remote)
+        remote.rsync_to(plane, str(bundle) + "/", plane.runtime_dir + "/",
+                        extra=("--delete", "--exclude=/logs/", "--exclude=/config/plane.conf"))
+        remote.rsync_to(plane, local_config, plane.runtime_dir + "/config/plane.conf")
+        remote.run(plane, f"mkdir -p {shlex.quote(test_dir)}")
+        remote.rsync_to(plane, gcs_binary, test_dir + "/gcs_sim")
+        check_remote_dependencies(plane, remote)
+        expected_sha = hashlib.sha256((bundle / "plane").read_bytes()).hexdigest()
+        deps = remote.run(plane, f"cd {runtime} && sha256sum plane && ./plane --deps-check")
+        (run_dir / "deps.log").write_text(deps.stdout, encoding="utf-8")
+        if expected_sha not in deps.stdout:
+            raise FleetError("板端二进制校验值不匹配")
+        report["binary_sha256"] = expected_sha
+        passed("一号机部署校验及依赖自检")
+        launch_gcs("startup", seconds=7)
+        deadline = time.monotonic() + 10
+        while "地面站订阅已就绪" not in gcs_text("startup"):
+            if time.monotonic() >= deadline:
+                raise FleetError("地面站订阅未就绪")
+            time.sleep(0.2)
+        start_plane(plane, remote)
+        verify_gcs("startup", query=False, push_count=1)
+        time.sleep(1)
+        for stage in ("station-online", "station-reonline"):
+            launch_gcs(stage, query="VehicleInfo")
+            verify_gcs(stage, query=True, push_count=1)
+            time.sleep(1)
+        launch_gcs("query-only", query="VehicleInfo", seconds=0, presence=False)
+        verify_gcs("query-only", query=True, push_count=0)
+        launch_gcs("missing-plane", query="VehicleInfo", seconds=0, presence=False,
+                   plane_id="vehicle-info-nonexistent-" + run_id)
+        code, text = wait_gcs("missing-plane")
+        if code == 0 or "查询失败" not in text or "查询成功" in text:
+            raise FleetError("不存在的飞机未明确返回查询失败")
+        passed("不存在的飞机明确返回无响应或超时")
+        launch_gcs("unsupported-type", query="VehicleState", seconds=0, presence=False)
+        code, text = wait_gcs("unsupported-type")
+        if code == 0 or "不支持的查询类型" not in text:
+            raise FleetError("不支持的类型未明确拒绝")
+        passed("不支持的查询类型明确拒绝")
+        text = sanitize_output(remote.run(plane, f"cat {runtime}/logs/plane.stdout.log").stdout)
+        (run_dir / "plane.stdout.log").write_text(text, encoding="utf-8")
+        remote.run(plane, "pgrep -x plane >/dev/null")
+        if "系统就绪" not in text or text.count("已上报 VehicleInfo:") != 3:
+            raise FleetError("机载未保持就绪，或出现多余/缺失的 VehicleInfo 上报")
+        passed("机载保持运行，启动及两次地面站上线共上报 3 次")
+        report["status"] = "passed"
+        save()
+        print(f"[result] VehicleInfo 板端验证通过；一号机保持运行。报告: {run_dir / 'vehicle-info-report.json'}")
+        return 0
+    except (FleetError, OSError, ValueError, configparser.Error) as exc:
+        report["status"] = "failed"
+        report["error"] = str(exc)
+        save()
+        raise FleetError(f"VehicleInfo 验证失败: {exc}；证据目录: {run_dir}") from exc
+
+
 def command_test(args: argparse.Namespace, config: FleetConfig, remote: RemoteExecutor) -> int:
     planes = selected_planes(config, args.count)
     run_id = new_run_id()
@@ -1160,6 +1311,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name, help_text in (
         ("preflight", "只执行环境和连接预检"),
         ("test", "启动、同步并验证多机状态互通"),
+        ("test-vehicle-info", "部署一号机并验证 VehicleInfo 上报、重连和原生查询，不重启 SITL"),
         ("test-presence", "部署双机并验证上线、退出、崩溃和恢复，不重启 SITL"),
         ("verify", "复核一个已启动运行现场的多机状态互通"),
         ("down", "停止机载程序和 SITL"),
@@ -1178,6 +1330,8 @@ def main() -> int:
         remote = RemoteExecutor(ROOT / ".fleet")
         if args.command == "preflight":
             return command_preflight(args, config, remote)
+        if args.command == "test-vehicle-info":
+            return command_test_vehicle_info(args, config, remote)
         if args.command == "test-presence":
             return command_test_presence(args, config, remote)
         if args.command == "test":

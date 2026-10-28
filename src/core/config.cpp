@@ -27,6 +27,8 @@ std::string canonical_key(const std::string& section, const std::string& key) {
     static const std::unordered_map<std::string, std::string> keys = {
         {"system.safe_height_m", "safe_height_m"},
         {"system.log_dir", "log_dir"},
+        {"system.board_ip", "board_ip"},
+        {"camera.pod_video_url", "pod_video_url"},
         {"system.state_report_period_ms", "state_report_period_ms"},
         {"communication.plane_id", "plane_id"},
         {"communication.station_id", "station_id"},
@@ -122,6 +124,10 @@ bool load_config(const std::string& path, AppConfig& out) {
             out.log_dir = value;
         } else if (key == "state_report_period_ms") {
             out.state_report_period_ms = std::stoi(value);
+        } else if (key == "board_ip") {
+            out.board_ip = value;
+        } else if (key == "pod_video_url") {
+            out.pod_video_url = value;
         } else if (key == "plane_id") {
             out.plane_id = value;
         } else if (key == "station_id") {

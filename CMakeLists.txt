@@ -22,6 +22,7 @@ add_executable(plane
   src/main.cpp
   src/camera/camera_control_module.cpp
   src/communication/serialization.cpp
+  src/communication/plane_query.cpp
   src/communication/zenoh_transport.cpp
   src/communication/communication_module.cpp
   src/core/build_info.cpp
@@ -67,12 +68,14 @@ target_link_libraries(plane PRIVATE
 # 可执行文件直接输出到 build/plane/，该目录作为可整体拷贝的独立运行目录。
 set_target_properties(plane PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plane")
 
-add_executable(gcs_sim tools/gcs_sim/main.cpp)
+add_executable(gcs_sim tools/gcs_sim/main.cpp
+  src/communication/serialization.cpp src/communication/plane_query.cpp src/communication/zenoh_transport.cpp)
 target_include_directories(gcs_sim PRIVATE src)
 target_compile_options(gcs_sim PRIVATE -Wall -Wextra)
 target_link_libraries(gcs_sim PRIVATE
   plane::common_include
   plane::nlohmann_json
+  plane::magic_enum
   fmt::fmt
   spdlog::spdlog
   zenohc::lib
@@ -81,6 +84,16 @@ target_link_libraries(gcs_sim PRIVATE
 
 include(CTest)
 if(BUILD_TESTING)
+  add_executable(vehicle_info_test tests/unit/vehicle_info_test.cpp
+    src/communication/communication_module.cpp src/communication/plane_query.cpp
+    src/communication/serialization.cpp src/communication/zenoh_transport.cpp
+    src/core/config.cpp src/core/time_utils.cpp src/state/state_store.cpp)
+  target_include_directories(vehicle_info_test PRIVATE src)
+  target_compile_options(vehicle_info_test PRIVATE -Wall -Wextra)
+  target_link_libraries(vehicle_info_test PRIVATE plane::common_include plane::deps)
+  add_test(NAME vehicle_info COMMAND vehicle_info_test)
+  set_tests_properties(vehicle_info PROPERTIES TIMEOUT 45)
+
   add_executable(zenoh_liveliness_test tests/unit/zenoh_liveliness_test.cpp src/communication/zenoh_transport.cpp)
   target_include_directories(zenoh_liveliness_test PRIVATE src)
   target_compile_options(zenoh_liveliness_test PRIVATE -Wall -Wextra)

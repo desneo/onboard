@@ -233,3 +233,27 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 未执行项：原因和风险
 失败项：日志位置、现象和初步定位
 ```
+
+## VehicleInfo 信息接口验证
+
+`vehicle_info` CTest 使用关闭组播和 gossip 的 TCP 回环会话，验证配置加载、无地面站时的启动上报、
+指定地面站上线／重复通知／重连、已有 token 的 history 发现、无周期重复上报，以及原生查询的成功、
+当前配置读取、isSim 的 true/false 布尔值、非法参数、不支持类型、错误发送方和无响应。测试不发送飞行或任务指令。
+
+部署并在一号机验证：
+
+```bash
+python3 tools/fleetctl.py test-vehicle-info --count 1
+```
+
+该命令只预检一号机，备份程序和配置，部署完整运行包和 gcs_sim，保留现有连接参数及视频地址；
+任务板 IP 未配置时写入 fleet.ini 中的该板 IP。gcs_sim 在板端独立进程中运行，验证：
+
+1. 地面站已订阅时启动机载，收到一次 VehicleInfo，观察期间没有周期重复；
+2. 地面站再次上线及恢复上线时，各收到一次当前配置的信息；
+3. 原生查询指定飞机，结果与板端配置完全一致；isSim 与现有仿真判定一致；仅查询时没有额外主动上报；
+4. 不存在的飞机明确返回无响应或超时，不支持的查询类型明确失败；
+5. 板端二进制校验一致、依赖自检成功、机载最终保持运行。
+
+不重启 SITL、不发送控制报文、不连接或处理视频流。证据保存到
+`logs/fleet/<run_id>/vehicle-info-report.json` 及对应原始日志。

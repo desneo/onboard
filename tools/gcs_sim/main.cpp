@@ -12,8 +12,10 @@
 #include <thread>
 #include <utility>
 #include <vector>
-#include <zenoh/api.hxx>
 
+#include "communication/plane_query.h"
+#include "communication/serialization.h"
+#include "communication/zenoh_transport.h"
 #include "message.h"
 
 namespace {
@@ -38,6 +40,10 @@ struct Options {
     int listen_seconds = 3;
     int ack_timeout_ms = 2000;
     bool help = false;
+    std::string query_type;
+    int query_timeout_ms = 2000;
+    bool announce_presence = true;
+    plane::communication::ZenohEndpoints endpoints;
     std::vector<Action> actions;
     std::string target_track_id;
     float takeoff_height_m = 10.0F;
@@ -84,6 +90,14 @@ void print_usage() {
         "  --task-code <code>       任务类型，兼容项 (默认: anti-uav)\n"
         "  --task-action <action>   任务动作 Start/Stop，兼容项\n"
         "\n"
+        "信息查询与连接:\n"
+        "  --query <MessageType>    原生查询指定飞机，当前支持 VehicleInfo\n"
+        "  --query-timeout-ms <ms>  查询超时（默认 2000）\n"
+        "  --no-presence            不声明地面站存活标记（仅查询场景）\n"
+        "  --zenoh-config <path>    Zenoh 配置文件\n"
+        "  --connect <endpoint>     远端端点，多个用逗号分隔\n"
+        "  --listen <endpoint>      本地监听端点\n"
+        "\n"
         "其他:\n"
         "  --listen-seconds <s>     发送后监听时长 (默认: 3)\n"
         "  --ack-timeout-ms <ms>    等待 Ack 超时 (默认: 2000)\n"
@@ -126,6 +140,18 @@ Options parse_options(int argc, char** argv) {
         }
         if (arg == "--plane-id" && i + 1 < argc) {
             options.plane_id = argv[++i];
+        } else if (arg == "--query" && i + 1 < argc) {
+            options.query_type = argv[++i];
+        } else if (arg == "--query-timeout-ms" && i + 1 < argc) {
+            options.query_timeout_ms = std::stoi(argv[++i]);
+        } else if (arg == "--no-presence") {
+            options.announce_presence = false;
+        } else if (arg == "--zenoh-config" && i + 1 < argc) {
+            options.endpoints.config_file = argv[++i];
+        } else if (arg == "--connect" && i + 1 < argc) {
+            options.endpoints.connect = argv[++i];
+        } else if (arg == "--listen" && i + 1 < argc) {
+            options.endpoints.listen = argv[++i];
         } else if (arg == "--sender-id" && i + 1 < argc) {
             options.sender_id = argv[++i];
         } else if (arg == "--send-peer-state" && i + 1 < argc) {
@@ -206,11 +232,16 @@ std::string build_wire(const std::string& sender_id, const std::string& message_
     return envelope.dump();
 }
 
-std::string send_typed(const zenoh::Session& session, const Options& options, const std::string& type,
+void send_wire(plane::communication::ZenohTransport& session, const std::string& topic, const std::string& wire) {
+    std::string error;
+    if (!session.put(topic, wire, error)) throw std::runtime_error(error);
+}
+
+std::string send_typed(plane::communication::ZenohTransport& session, const Options& options, const std::string& type,
                        const std::string& payload, std::uint64_t sequence) {
     const std::string message_id = options.sender_id + "-" + std::to_string(sequence);
     const std::string topic = "sendToPlane/" + options.plane_id;
-    session.put(zenoh::KeyExpr(topic), zenoh::Bytes(build_wire(options.sender_id, message_id, type, payload)));
+    send_wire(session, topic, build_wire(options.sender_id, message_id, type, payload));
     SPDLOG_INFO("已发送 {}: messageId={}", type, message_id);
     return message_id;
 }
@@ -229,18 +260,41 @@ int main(int argc, char** argv) {
     std::set<std::string> acked_ids;
     std::atomic<std::uint64_t> sequence{100};
 
-    zenoh::Session session = zenoh::Session::open(zenoh::Config::create_default());
+    plane::communication::ZenohTransport session;
+    std::string error;
+    if (!session.open(options.endpoints, error)) {
+        SPDLOG_ERROR("{}", error);
+        return 2;
+    }
 
     std::atomic<std::uint64_t> vehicle_state_count{0};
     std::atomic<std::uint64_t> task_state_count{0};
+    std::atomic<std::uint64_t> vehicle_info_count{0};
 
-    auto on_sample = [&](zenoh::Sample& sample) {
+    struct CloseSession {
+        plane::communication::ZenohTransport& session;
+        ~CloseSession() { session.close(); }
+    } close_session{session};
+
+    auto on_sample = [&](const std::string& wire) {
         Envelope envelope;
-        if (!parse_envelope(sample.get_payload().as_string(), envelope)) {
+        if (!parse_envelope(wire, envelope)) {
             SPDLOG_WARN("收到无法解析的报文");
             return;
         }
         if (envelope.sender_id == options.sender_id) {
+            return;
+        }
+        if (envelope.type == "VehicleInfo") {
+            plane::model::VehicleInfo info;
+            std::string decode_error;
+            if (plane::communication::from_payload(envelope.payload, info, decode_error) &&
+                envelope.sender_id == info.planeId && info.planeId == options.plane_id) {
+                vehicle_info_count.fetch_add(1);
+                SPDLOG_INFO("收到 VehicleInfo: {}", envelope.payload);
+            } else {
+                SPDLOG_WARN("VehicleInfo 无效或非目标飞机: {}", decode_error);
+            }
             return;
         }
         if (envelope.type == "VehicleState") {
@@ -279,15 +333,36 @@ int main(int argc, char** argv) {
             const nlohmann::json payload{{"ackId", envelope.message_id}};
             const std::string message_id = options.sender_id + "-ack-" + std::to_string(++sequence);
             const std::string topic = "sendToPlane/" + envelope.sender_id;
-            session.put(zenoh::KeyExpr(topic),
-                        zenoh::Bytes(build_wire(options.sender_id, message_id, "Ack", payload.dump())));
+            send_wire(session, topic, build_wire(options.sender_id, message_id, "Ack", payload.dump()));
         }
     };
 
-    zenoh::Subscriber<void> station_subscriber =
-        session.declare_subscriber(zenoh::KeyExpr(std::string(plane::model::topic_sendToStation)), on_sample, []() {});
-    zenoh::Subscriber<void> all_subscriber =
-        session.declare_subscriber(zenoh::KeyExpr(std::string(plane::model::topic_sendToAll)), on_sample, []() {});
+    if (!session.subscribe(std::string(plane::model::topic_sendToStation), on_sample, error) ||
+        !session.subscribe(std::string(plane::model::topic_sendToAll), on_sample, error)) {
+        SPDLOG_ERROR("{}", error);
+        return 2;
+    }
+    // 必须先建立上行订阅，再宣告地面站可接收 VehicleInfo。
+    if (options.announce_presence &&
+        !session.declare_liveliness_token(plane::communication::station_liveliness_key(options.sender_id), error)) {
+        SPDLOG_ERROR("{}", error);
+        return 2;
+    }
+    SPDLOG_INFO("地面站订阅已就绪: stationId={}", options.sender_id);
+    if (!options.query_type.empty()) {
+        plane::model::MessageType type;
+        plane::model::Message reply;
+        if (!plane::communication::message_type_from_string(options.query_type, type)) {
+            SPDLOG_ERROR("不支持的查询类型: {}", options.query_type);
+            return 2;
+        }
+        if (!plane::communication::queryPlane(session, options.plane_id, type, reply, error,
+                                              options.query_timeout_ms)) {
+            SPDLOG_ERROR("查询失败: {}", error);
+            return 2;
+        }
+        SPDLOG_INFO("查询成功 VehicleInfo: {}", reply.payload);
+    }
 
     bool all_acked = true;
     std::size_t command_index = 0;
@@ -337,8 +412,8 @@ int main(int argc, char** argv) {
                 {"velocity_m_s", 10.0F},
                 {"direction_deg", 90.0F}}.dump();
             const std::string message_id = options.gcs_target_id + "-" + std::to_string(++sequence);
-            session.put(zenoh::KeyExpr("sendToPlane/" + options.plane_id),
-                        zenoh::Bytes(build_wire(options.sender_id, message_id, "GcsTarget", payload)));
+            send_wire(session, "sendToPlane/" + options.plane_id,
+                      build_wire(options.sender_id, message_id, "GcsTarget", payload));
         }
         SPDLOG_INFO("已发送 GcsTarget: trackId={}, count={}", options.gcs_target_id, options.gcs_target_repeat);
     }
@@ -355,8 +430,8 @@ int main(int argc, char** argv) {
         const std::string wire_key = (key == "safe_height_m") ? "safeHeight_m" : key;
         payload[wire_key] = numeric;
         const std::string message_id = options.sender_id + "-param-" + std::to_string(++sequence);
-        session.put(zenoh::KeyExpr("sendToPlane/" + options.plane_id),
-                    zenoh::Bytes(build_wire(options.sender_id, message_id, "SystemParam", payload.dump())));
+        send_wire(session, "sendToPlane/" + options.plane_id,
+                  build_wire(options.sender_id, message_id, "SystemParam", payload.dump()));
     }
     if (!options.send_params.empty()) {
         SPDLOG_INFO("已发送 SystemParam: {} 条", options.send_params.size());
@@ -371,12 +446,15 @@ int main(int argc, char** argv) {
             {"flightMode", "AUTO.MISSION"},
             {"fcLinkState", "connected"}};
         const std::string message_id = options.peer_plane_id + "-" + std::to_string(++sequence);
-        session.put(zenoh::KeyExpr("sendToPlane/" + options.plane_id),
-                    zenoh::Bytes(build_wire(options.peer_plane_id, message_id, "VehicleState", payload.dump())));
+        send_wire(session, "sendToPlane/" + options.plane_id,
+                  build_wire(options.peer_plane_id, message_id, "VehicleState", payload.dump()));
         SPDLOG_INFO("已发送友机状态: planeId={}", options.peer_plane_id);
     }
 
     std::this_thread::sleep_for(std::chrono::seconds(options.listen_seconds));
     SPDLOG_INFO("状态统计: VehicleState={}, TaskState={}", vehicle_state_count.load(), task_state_count.load());
+    SPDLOG_INFO("信息统计: VehicleInfo={}", vehicle_info_count.load());
+    // 先停止所有回调，之后再析构被回调引用的计数器。
+    session.close();
     return all_acked ? 0 : 1;
 }

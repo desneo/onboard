@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import importlib.util
 from pathlib import Path
 import sys
@@ -130,6 +131,25 @@ class FleetCtlTest(unittest.TestCase):
         self.assertIn("link_type = serial", result)
         self.assertIn("serial_device = /dev/test", result)
         self.assertNotIn("[image_input]", result)
+
+    def test_metadata_config_preserves_custom_addresses(self):
+        plane = fleetctl.load_config(ROOT / "config" / "fleet.ini").planes[0]
+        base = "[system]\nboard_ip = 10.0.0.7\n[camera]\npod_video_url = rtsp://pod/live?a=1&b=2\n"
+        template = (ROOT / "config" / "plane.conf").read_text()
+        result = fleetctl.render_presence_config(base, template, plane)
+        self.assertIn("board_ip = 10.0.0.7", result)
+        self.assertIn("pod_video_url = rtsp://pod/live?a=1&b=2", result)
+        default_result = fleetctl.render_presence_config("[system]\nboard_ip =\n", template, plane)
+        self.assertIn("board_ip = " + plane.host, default_result)
+        self.assertIn("pod_video_url =\n", default_result)
+
+    def test_vehicle_info_rejects_multiple_boards_before_remote_actions(self):
+        config = fleetctl.load_config(ROOT / "config" / "fleet.ini")
+        remote = Mock()
+        with self.assertRaises(fleetctl.FleetError):
+            fleetctl.command_test_vehicle_info(argparse.Namespace(count=2), config, remote)
+        remote.run.assert_not_called()
+        remote.rsync_to.assert_not_called()
 
     def test_presence_preflight_only_contacts_selected_boards(self):
         config = fleetctl.load_config(ROOT / "config" / "fleet.ini")

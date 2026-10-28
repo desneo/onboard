@@ -187,6 +187,8 @@ cd build/plane
 | --- | --- |
 | `system.safe_height_m` | 未指定起飞高度时使用的安全高度 |
 | `system.log_dir` | 日志目录 |
+| `system.board_ip` | VehicleInfo 中的任务板 IP；fleet 部署在未配置时填入板卡 IP |
+| `camera.pod_video_url` | VehicleInfo 中的吊舱视频流地址，未配置时为空，仅传递地址 |
 | `system.state_report_period_ms` | 状态上报周期 |
 | `communication.plane_id` / `station_id` | 本机和地面站标识 |
 | `communication.zenoh_config_file` | 可选 Zenoh 配置文件 |
@@ -224,6 +226,33 @@ UDP 飞控端口位于 `14580`～`14589`（`1458*`） 时，程序将本机视�
 | `suicide_mission.phase_timeout_ms` | 中段和检测阶段超时 |
 
 配置文件修改后重启程序生效；`SystemParam` 消息可在运行中更新安全高度。
+
+## 机载信息上报与查询
+
+共享消息数据和通信地址模板定义位于 `../common/common_include/message.h`：
+`topic_queryToPlane = "queryToPlane/{planeId}/{MessageType}"`，
+`topic_stationLiveliness = "station/liveliness/{stationId}"`。
+查询接口及实现位于本工程 `src/communication`，其他工程可以依据公共地址模板和消息定义接入。
+`VehicleInfo` 的 JSON 载荷为 `{"planeId":"uav1","boardIp":"192.168.1.100","podVideoUrl":"","isSim":true}`，
+仍放在标准 Message 信封的 payload 字符串内，type 为 VehicleInfo。
+机载启动后发送一次，地面站上线／重连时再次发送，不周期广播。
+`isSim` 为 JSON 布尔值，直接使用现有仿真判定：UDP 端口 `14580`～`14589` 时为 true，其他情况为 false。
+该字段仅加入 VehicleInfo；读取缺少该字段的旧 VehicleInfo 时按 false 处理。
+
+地面站先订阅 `sendToStation`，再声明 Zenoh 存活标记 `station/liveliness/<station_id>`。
+主动查询使用原生 `get("queryToPlane/<planeId>/VehicleInfo", "", ...)`，返回同样的 Message 信封；
+机载 CommunicationApi 直接暴露 queryPlane 接口，目前只支持 VehicleInfo。
+旧地面站要接收新信息，需支持新消息类型和地面站存活标记。
+
+使用配套工具查询（工具先订阅再声明地面站在线）：
+
+```bash
+./build/gcs_sim --plane-id uav1 --sender-id GCS --query VehicleInfo
+```
+
+可用 `--connect tcp/<host>:<port>` 指定 Zenoh 端点，`--query-timeout-ms 2000` 设置超时；
+只查询、不声明地面站上线时追加 `--no-presence`。
+查询失败、类型不支持或没有响应时，工具返回非零退出码。
 
 ## 测试
 

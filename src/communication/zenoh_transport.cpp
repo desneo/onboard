@@ -2,6 +2,9 @@
 
 #include <spdlog/spdlog.h>
 
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <utility>
@@ -65,6 +68,7 @@ struct ZenohTransport::Impl {
     std::optional<zenoh::Session> session;
     std::vector<zenoh::Subscriber<void>> subscribers;
     std::vector<zenoh::LivelinessToken> liveliness_tokens;
+    std::vector<zenoh::Queryable<void>> queryables;
     bool debug_log = false;
     std::string remote_endpoints;
 };
@@ -119,6 +123,7 @@ void ZenohTransport::close() {
     if (!impl_) {
         return;
     }
+    impl_->queryables.clear();
     impl_->liveliness_tokens.clear();
     impl_->subscribers.clear();
     impl_->session.reset();
@@ -189,6 +194,102 @@ bool ZenohTransport::declare_liveliness_token(const std::string& key_expr, std::
             return false;
         }
         impl_->liveliness_tokens.push_back(std::move(token));
+        return true;
+    } catch (const zenoh::ZException& e) {
+        error = e.what();
+        return false;
+    }
+}
+
+bool ZenohTransport::declare_queryable(const std::string& key_expr, QueryHandler handler, std::string& error) {
+    if (!impl_ || !impl_->session) {
+        error = "Session 未打开";
+        return false;
+    }
+    try {
+        auto queryable = impl_->session->declare_queryable(
+            zenoh::KeyExpr(canon_key_expr(key_expr)),
+            [handler = std::move(handler)](zenoh::Query& query) {
+                std::string reply;
+                std::string error;
+                zenoh::ZResult result = Z_OK;
+                if (handler(std::string(query.get_keyexpr().as_string_view()), reply, error)) {
+                    query.reply(query.get_keyexpr(), zenoh::Bytes(reply), zenoh::Query::ReplyOptions::create_default(),
+                                &result);
+                } else {
+                    query.reply_err(zenoh::Bytes(error), zenoh::Query::ReplyErrOptions::create_default(), &result);
+                }
+                if (result != Z_OK) {
+                    SPDLOG_WARN("查询回复发送失败: {}", result);
+                }
+            },
+            []() {});
+        impl_->queryables.push_back(std::move(queryable));
+        return true;
+    } catch (const zenoh::ZException& e) {
+        error = e.what();
+        return false;
+    }
+}
+
+bool ZenohTransport::query(const std::string& key_expr, std::string& reply, std::string& error, int timeout_ms) {
+    reply.clear();
+    error.clear();
+    if (!impl_ || !impl_->session) {
+        error = "Session 未打开";
+        return false;
+    }
+    if (timeout_ms <= 0) {
+        error = "查询超时必须大于零";
+        return false;
+    }
+    // Zenoh 回调可能晚于同步等待结束；共享状态确保超时返回后不存在悬空引用。
+    struct Result {
+        std::mutex mutex;
+        std::condition_variable changed;
+        bool done = false;
+        bool received = false;
+        std::string payload;
+        std::string error;
+    };
+    auto state = std::make_shared<Result>();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    try {
+        auto options = zenoh::Session::GetOptions::create_default();
+        options.timeout_ms = static_cast<std::uint64_t>(timeout_ms);
+        const std::string key = canon_key_expr(key_expr);
+        impl_->session->get(
+            zenoh::KeyExpr(key), "",
+            [state, key](zenoh::Reply& response) {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                if (state->received) return;
+                if (!response.is_ok()) {
+                    state->error = "查询返回错误: " + response.get_err().get_payload().as_string();
+                } else if (response.get_ok().get_keyexpr().as_string_view() != key) {
+                    state->error = "查询响应 key 不匹配";
+                } else {
+                    state->payload = response.get_ok().get_payload().as_string();
+                }
+                state->received = true;
+                state->changed.notify_all();
+            },
+            [state]() {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                state->done = true;
+                state->changed.notify_all();
+            },
+            std::move(options));
+        std::unique_lock<std::mutex> lock(state->mutex);
+        state->changed.wait_until(lock, deadline, [&]() { return state->received || state->done; });
+        if (!state->received) {
+            error = "查询无响应或超时: " + key;
+            return false;
+        }
+        if (!state->error.empty()) {
+            error = state->error;
+            return false;
+        }
+        reply = state->payload;
         return true;
     } catch (const zenoh::ZException& e) {
         error = e.what();

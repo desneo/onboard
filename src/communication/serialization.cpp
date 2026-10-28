@@ -80,6 +80,11 @@ struct MessageTypeOf<plane::model::Ack> {
 };
 
 template <>
+struct MessageTypeOf<plane::model::VehicleInfo> {
+    static constexpr plane::model::MessageType value = plane::model::MessageType::VehicleInfo;
+};
+
+template <>
 struct MessageTypeOf<plane::model::VehicleState> {
     static constexpr plane::model::MessageType value = plane::model::MessageType::VehicleState;
 };
@@ -90,6 +95,36 @@ struct MessageTypeOf<plane::model::TaskState> {
 };
 
 }  // namespace
+
+bool to_payload(const plane::model::VehicleInfo& value, std::string& out, std::string& error) {
+    try {
+        out = json{{"planeId", value.planeId},
+                   {"boardIp", value.boardIp},
+                   {"podVideoUrl", value.podVideoUrl},
+                   {"isSim", value.isSim}}
+                  .dump();
+        return true;
+    } catch (const json::exception& e) {
+        error = e.what();
+        return false;
+    }
+}
+
+bool from_payload(const std::string& payload, plane::model::VehicleInfo& out, std::string& error) {
+    try {
+        const json in = json::parse(payload);
+        plane::model::VehicleInfo value;
+        value.planeId = in.at("planeId").get<std::string>();
+        value.boardIp = in.at("boardIp").get<std::string>();
+        value.podVideoUrl = in.at("podVideoUrl").get<std::string>();
+        value.isSim = in.value("isSim", false);
+        out = std::move(value);
+        return true;
+    } catch (const json::exception& e) {
+        error = e.what();
+        return false;
+    }
+}
 
 bool to_payload(const plane::model::TaskInfo& value, std::string& out, std::string& error) {
     try {

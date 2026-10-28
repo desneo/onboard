@@ -94,6 +94,26 @@ Communication 通过 ZenohTransport 声明 `plane/liveliness/<plane_id>` 并订�
 开启 history 以发现先上线的节点。仅记录其他飞机的上下线变化；重复通知不重复打印。
 存活性判断由 Zenoh 负责，状态更新日志不作为在线心跳。所有参与此发现机制的飞机均需声明存活标记。
 
+公共 message.h 追加 VehicleInfo，不改变既有 MessageType 的枚举值。
+公共 message.h 同时声明 topic_queryToPlane 和 topic_stationLiveliness，作为其他工程接入的协议地址；
+common_include 保存共享数据模型、协议常量与接口定义，不提供查询实现，也不新增公共 QueryApi 或 query.h。
+查询接口直接声明在本工程 src/communication/communication_api.h 中；查询地址和地面站存活标记地址
+均从公共模板生成，参数校验、地址拼接和通信实现放在 src/communication/plane_query.cpp。
+旧地面站需要升级以识别新类型并声明存活标记。
+Communication 启动时、配置的地面站上线时，经工作线程向 sendToStation 发送 VehicleInfo；
+启动与 history 通知尚未发送的上报合并，同一在线状态的重复通知不重复发送。
+IP 与吊舱视频 URL 在启动时加载到主程序持有的 AppConfig，每次上报或查询直接读取 config_，不另存快照。
+VehicleInfo.isSim 为 bool，使用同一 AppConfig 中已有的 is_sim 判定值；不修改 VehicleState。
+解码旧 VehicleInfo 缺少 isSim 时默认为 false，字段存在时必须是 JSON 布尔值。
+当前不增加配置热更新入口；将来并发更新配置时必须同步读写。
+
+ZenohTransport 管理原生 queryable 的生命周期和带超时的 get；plane_query 校验响应 key、信封类型、
+发送方和载荷飞机 ID。查询接口 queryPlane(planeId, MessageType, reply, error, timeout_ms)
+目前只允许 VehicleInfo；服务端订阅 queryToPlane/<plane_id>/*，对其他类型返回原生错误响应。
+查询不经控制消息处理路径，不产生 Ack 或任务事件。停止时先释放 queryable，再关闭 Session。
+地面站声明 station/liveliness/<station_id> 前必须先建立上行订阅；该标记用于补发机载信息，
+不改变现有基于业务报文的地面站链路超时状态。
+
 
 | 场景 | 机制 |
 | --- | --- |

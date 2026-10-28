@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "communication/communication_events.h"
+#include "communication/plane_query.h"
 #include "communication/serialization.h"
 #include "core/time_utils.h"
 
@@ -63,12 +64,34 @@ bool CommunicationModule::start() {
     {
         std::lock_guard<std::mutex> lock(presence_mutex_);
         presence_active_ = true;
+        station_online_ = false;
+        vehicle_info_pending_ = true;
     }
     if (!transport_.subscribe_liveliness(
             std::string(kLivelinessPrefix) + "*",
             [this](const std::string& key_expr, bool online) { on_peer_liveliness(key_expr, online); }, error) ||
         !transport_.declare_liveliness_token(std::string(kLivelinessPrefix) + config_.plane_id, error)) {
         report_error("飞机存活性声明失败: " + error);
+        return false;
+    }
+
+    if (!transport_.subscribe_liveliness(
+            station_liveliness_key(config_.station_id),
+            [this](const std::string&, bool online) { on_station_liveliness(online); }, error) ||
+        !transport_.declare_queryable(
+            plane_query_selector(config_.plane_id),
+            [this](const std::string& key, std::string& reply, std::string& error) {
+                if (key != plane_query_key(config_.plane_id, plane::model::MessageType::VehicleInfo)) {
+                    error = "不支持的查询类型，当前仅支持 VehicleInfo";
+                    return false;
+                }
+                plane::model::Message message;
+                if (!make_message(config_.plane_id, vehicle_info(), message, error)) return false;
+                reply = encode_envelope(message);
+                return true;
+            },
+            error)) {
+        report_error("地面站存活性或查询接口声明失败: " + error);
         return false;
     }
 
@@ -82,6 +105,8 @@ void CommunicationModule::stop() {
     {
         std::lock_guard<std::mutex> lock(presence_mutex_);
         presence_active_ = false;
+        station_online_ = false;
+        vehicle_info_pending_ = false;
         online_peers_.clear();
     }
     const bool was_running = running_.exchange(false);
@@ -108,6 +133,25 @@ bool CommunicationModule::sendToPlane(const std::string& plane_id, const Outgoin
 
 bool CommunicationModule::sendToAll(const OutgoingMessage& message) {
     return send_message(std::string(plane::model::topic_sendToAll), message);
+}
+
+bool CommunicationModule::queryPlane(const std::string& plane_id, plane::model::MessageType type,
+                                     plane::model::Message& reply, std::string& error, int timeout_ms) {
+    return plane::communication::queryPlane(transport_, plane_id, type, reply, error, timeout_ms);
+}
+
+plane::model::VehicleInfo CommunicationModule::vehicle_info() const {
+    return {config_.plane_id, config_.board_ip, config_.pod_video_url, config_.is_sim};
+}
+
+void CommunicationModule::on_station_liveliness(bool online) {
+    std::lock_guard<std::mutex> lock(presence_mutex_);
+    if (!presence_active_ || station_online_ == online) return;
+    station_online_ = online;
+    if (online) {
+        vehicle_info_pending_ = true;
+        rx_cv_.notify_one();
+    }
 }
 
 void CommunicationModule::enqueue_wire(std::string raw) {
@@ -150,11 +194,16 @@ void CommunicationModule::worker_loop() {
         {
             std::unique_lock<std::mutex> lock(rx_mutex_);
             rx_cv_.wait_for(lock, std::chrono::milliseconds(kWorkerTickMs),
-                            [this]() { return !rx_queue_.empty() || !running_; });
+                            [this]() { return !rx_queue_.empty() || vehicle_info_pending_ || !running_; });
             batch.swap(rx_queue_);
         }
         for (const auto& raw : batch) {
             on_wire_message(raw);
+        }
+        if (vehicle_info_pending_.exchange(false)) {
+            if (sendToStation(vehicle_info())) {
+                SPDLOG_INFO("已上报 VehicleInfo: planeId={}", config_.plane_id);
+            }
         }
         report_states();
         check_pending();

@@ -37,6 +37,9 @@ class CommunicationModule final : public plane::core::IModule, public Communicat
     bool sendToPlane(const std::string& plane_id, const OutgoingMessage& message) override;
     bool sendToAll(const OutgoingMessage& message) override;
 
+    bool queryPlane(const std::string& plane_id, plane::model::MessageType type, plane::model::Message& reply,
+                    std::string& error, int timeout_ms = 2000) override;
+
    private:
     struct PendingMessage {
         std::string wire;
@@ -46,6 +49,8 @@ class CommunicationModule final : public plane::core::IModule, public Communicat
     };
 
     void enqueue_wire(std::string raw);
+    plane::model::VehicleInfo vehicle_info() const;
+    void on_station_liveliness(bool online);
     void on_peer_liveliness(const std::string& key_expr, bool online);
     void worker_loop();
     void on_wire_message(const std::string& raw);
@@ -65,6 +70,8 @@ class CommunicationModule final : public plane::core::IModule, public Communicat
     ZenohTransport transport_;
     std::mutex presence_mutex_;
     bool presence_active_ = false;
+    bool station_online_ = false;
+    std::atomic<bool> vehicle_info_pending_{false};
     std::unordered_set<std::string> online_peers_;
     std::mutex rx_mutex_;
     std::condition_variable rx_cv_;

@@ -12,6 +12,7 @@ bool to_payload(const plane::model::Command& value, std::string& out, std::strin
 bool to_payload(const plane::model::SystemParam& value, std::string& out, std::string& error);
 bool to_payload(const plane::model::GcsTarget& value, std::string& out, std::string& error);
 bool to_payload(const plane::model::Alert& value, std::string& out, std::string& error);
+bool to_payload(const plane::model::VehicleInfo& value, std::string& out, std::string& error);
 bool to_payload(const plane::model::VehicleState& value, std::string& out, std::string& error);
 bool to_payload(const plane::model::TaskState& value, std::string& out, std::string& error);
 bool to_payload(const plane::model::Ack& value, std::string& out, std::string& error);
@@ -21,6 +22,7 @@ bool from_payload(const std::string& payload, plane::model::Command& out, std::s
 bool from_payload(const std::string& payload, plane::model::SystemParam& out, std::string& error);
 bool from_payload(const std::string& payload, plane::model::GcsTarget& out, std::string& error);
 bool from_payload(const std::string& payload, plane::model::Ack& out, std::string& error);
+bool from_payload(const std::string& payload, plane::model::VehicleInfo& out, std::string& error);
 bool from_payload(const std::string& payload, plane::model::VehicleState& out, std::string& error);
 
 std::string encode_envelope(const plane::model::Message& message);
