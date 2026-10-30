@@ -24,7 +24,7 @@ bool AdjustHeightNode::dispatch(std::string& error) {
     const float tolerance_m = static_cast<float>(app_config_->bt_height_adjust_tolerance_m);
     if (std::fabs(error_m) <= tolerance_m) {
         already_at_target_ = true;
-        SPDLOG_INFO("相对高度已在容差内: current={:.1f}m target={:.1f}m", state.geoPos.height,
+        SPDLOG_INFO("相对高度已在容差内: geoPos.height={:.1f} target_relative_height_m_={:.1f}", state.geoPos.height,
                     target_relative_height_m_);
         return true;
     }
@@ -35,9 +35,11 @@ bool AdjustHeightNode::dispatch(std::string& error) {
 
     plane::model::GeoPoint temporary_waypoint = state.geoPos;
     temporary_waypoint.height = target_relative_height_m_;
-    SPDLOG_INFO("通过临时航点调整相对高度: lat={:.7f} lon={:.7f} current={:.1f}m target={:.1f}m error={:.1f}m",
-                temporary_waypoint.latitude, temporary_waypoint.longitude, state.geoPos.height,
-                target_relative_height_m_, error_m);
+    SPDLOG_INFO(
+        "通过临时航点调整相对高度: latitude={:.7f} longitude={:.7f} geoPos.height={:.1f} "
+        "target_relative_height_m_={:.1f} error_m={:.1f}",
+        temporary_waypoint.latitude, temporary_waypoint.longitude, state.geoPos.height, target_relative_height_m_,
+        error_m);
     if (!flight_control_->goto_waypoint(temporary_waypoint, error)) {
         return false;
     }
@@ -70,16 +72,14 @@ BT::NodeStatus AdjustHeightNode::checkFinish() {
     }
 
     temporary_mission_active_ = false;
-    SPDLOG_INFO("临时航点高度调整完成: current={:.1f}m target={:.1f}m mode={}", state.geoPos.height,
-                target_relative_height_m_, state.flightMode);
+    SPDLOG_INFO("临时航点高度调整完成: geoPos.height={:.1f} target_relative_height_m_={:.1f} flightMode={}",
+                state.geoPos.height, target_relative_height_m_, state.flightMode);
     return BT::NodeStatus::SUCCESS;
 }
 
 std::int64_t AdjustHeightNode::node_timeout_ms() const { return app_config_->bt_height_adjust_timeout_ms; }
 
-void AdjustHeightNode::onTimeout() {
-    stop_temporary_mission();
-}
+void AdjustHeightNode::onTimeout() { stop_temporary_mission(); }
 
 void AdjustHeightNode::onHalted() {
     FlightActionNode::onHalted();

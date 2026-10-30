@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "message.h"
+#include "target/gcs_target.h"
 
 namespace plane::target {
 
@@ -12,9 +13,9 @@ class TargetStoreApi {
    public:
     virtual ~TargetStoreApi() = default;
 
-    virtual std::vector<plane::model::GcsTarget> gcs_targets() const = 0;
-    virtual bool gcs_target(const std::string& track_id, plane::model::GcsTarget& out) const = 0;
-    virtual std::vector<plane::model::GcsTarget> gcs_target_history(const std::string& track_id) const = 0;
+    virtual std::vector<GcsTarget> gcs_targets() const = 0;
+    virtual bool gcs_target(const std::string& track_id, GcsTarget& out) const = 0;
+    virtual std::vector<GcsTarget> gcs_target_history(const std::string& track_id) const = 0;
 };
 
 }  // namespace plane::target

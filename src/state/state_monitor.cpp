@@ -12,7 +12,7 @@ StateMonitor::StateMonitor(plane::core::EventBus& event_bus, const plane::core::
 
 StateMonitor::~StateMonitor() { stop(); }
 
-std::string StateMonitor::name() const { return "StateMonitor"; }
+std::string StateMonitor::name() const { return "状态监控"; }
 
 bool StateMonitor::init() { return true; }
 
@@ -61,7 +61,7 @@ void StateMonitor::on_own_state(const plane::model::VehicleState& state) {
         SPDLOG_WARN("低电压告警: {}", detail);
         send_alert(detail);
     } else if (recovered) {
-        SPDLOG_INFO("电压恢复正常: {} V", voltage);
+        SPDLOG_INFO("电压恢复正常: {} 伏", voltage);
     }
 }
 

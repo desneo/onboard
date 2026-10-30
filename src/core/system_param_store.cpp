@@ -12,7 +12,7 @@ SystemParamStore::SystemParamStore(EventBus& event_bus, const AppConfig& config)
 
 SystemParamStore::~SystemParamStore() { stop(); }
 
-std::string SystemParamStore::name() const { return "System Param"; }
+std::string SystemParamStore::name() const { return "系统参数"; }
 
 bool SystemParamStore::init() { return true; }
 
@@ -20,7 +20,7 @@ bool SystemParamStore::start() {
     event_bus_.subscribe<plane::model::SystemParam>(
         plane::communication::events::kSystemParamReceived,
         [this](const plane::model::SystemParam& param) { on_system_param(param); });
-    SPDLOG_INFO("系统参数就绪: safe_height_m={}", current().safeHeight_m);
+    SPDLOG_INFO("系统参数就绪: safeHeight_m={}", current().safeHeight_m);
     return true;
 }
 
@@ -38,7 +38,7 @@ void SystemParamStore::on_system_param(const plane::model::SystemParam& param) {
         std::lock_guard<std::mutex> lock(mutex_);
         param_ = param;
     }
-    SPDLOG_INFO("系统参数更新: safe_height_m={}", param.safeHeight_m);
+    SPDLOG_INFO("系统参数更新: safeHeight_m={}", param.safeHeight_m);
     event_bus_.publish(events::kSystemParamChanged, param);
 }
 

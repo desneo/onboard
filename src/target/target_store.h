@@ -25,18 +25,18 @@ class TargetStore final : public plane::core::IModule, public TargetStoreApi {
     void stop() override;
     void release() override;
 
-    std::vector<plane::model::GcsTarget> gcs_targets() const override;
-    bool gcs_target(const std::string& track_id, plane::model::GcsTarget& out) const override;
-    std::vector<plane::model::GcsTarget> gcs_target_history(const std::string& track_id) const override;
+    std::vector<GcsTarget> gcs_targets() const override;
+    bool gcs_target(const std::string& track_id, GcsTarget& out) const override;
+    std::vector<GcsTarget> gcs_target_history(const std::string& track_id) const override;
 
    private:
-    void on_gcs_target(const plane::model::GcsTarget& target);
+    void on_gcs_target(const GcsTarget& target);
 
     plane::core::EventBus& event_bus_;
     const plane::core::AppConfig& config_;
     mutable std::mutex mutex_;
-    std::unordered_map<std::string, plane::model::GcsTarget> gcs_latest_;
-    std::unordered_map<std::string, std::deque<plane::model::GcsTarget>> gcs_history_;
+    std::unordered_map<std::string, GcsTarget> gcs_latest_;
+    std::unordered_map<std::string, std::deque<GcsTarget>> gcs_history_;
 };
 
 }  // namespace plane::target

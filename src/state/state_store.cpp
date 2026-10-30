@@ -25,7 +25,7 @@ StateStore::StateStore(plane::core::EventBus& event_bus, const plane::core::AppC
 
 StateStore::~StateStore() { stop(); }
 
-std::string StateStore::name() const { return "UAV State Management"; }
+std::string StateStore::name() const { return "无人机状态管理"; }
 
 bool StateStore::init() { return true; }
 
@@ -112,7 +112,7 @@ void StateStore::notify_station_seen() {
             link.connected = gcs_connected_;
             link.last_seen_ms = gcs_last_seen_ms_;
         }
-        SPDLOG_INFO("地面站链路: connected=true");
+        SPDLOG_INFO("地面站链路状态: 已连接");
         event_bus_.publish(events::kGcsLinkChanged, link);
     }
 }
@@ -132,7 +132,7 @@ void StateStore::tick_loop() {
             link.last_seen_ms = gcs_last_seen_ms_;
         }
         if (became_disconnected) {
-            SPDLOG_INFO("地面站链路: connected=false");
+            SPDLOG_INFO("地面站链路状态: 已断开");
             event_bus_.publish(events::kGcsLinkChanged, link);
         }
     }

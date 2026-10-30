@@ -35,7 +35,7 @@ CommunicationModule::CommunicationModule(plane::core::EventBus& event_bus, const
 
 CommunicationModule::~CommunicationModule() { stop(); }
 
-std::string CommunicationModule::name() const { return "Communication"; }
+std::string CommunicationModule::name() const { return "通信"; }
 
 bool CommunicationModule::init() { return true; }
 
@@ -97,7 +97,7 @@ bool CommunicationModule::start() {
 
     running_ = true;
     worker_ = std::thread([this]() { worker_loop(); });
-    SPDLOG_INFO("Communication 已启动: plane_id={}, station_id={}", config_.plane_id, config_.station_id);
+    SPDLOG_INFO("通信模块已启动: plane_id={} station_id={}", config_.plane_id, config_.station_id);
     return true;
 }
 
@@ -202,7 +202,7 @@ void CommunicationModule::worker_loop() {
         }
         if (vehicle_info_pending_.exchange(false)) {
             if (sendToStation(vehicle_info())) {
-                SPDLOG_INFO("已上报 VehicleInfo: planeId={}", config_.plane_id);
+                SPDLOG_INFO("已上报飞机信息: plane_id={}", config_.plane_id);
             }
         }
         report_states();
@@ -264,7 +264,7 @@ void CommunicationModule::handle_envelope(const plane::model::Message& envelope)
             break;
         }
         case plane::model::MessageType::GcsTarget: {
-            plane::model::GcsTarget value;
+            plane::target::GcsTarget value;
             if (!from_payload(envelope.payload, value, error)) {
                 report_error("GcsTarget 解码失败: " + error);
                 return;
@@ -304,7 +304,7 @@ void CommunicationModule::handle_ack(const plane::model::Message& envelope) {
     }
     std::lock_guard<std::mutex> lock(pending_mutex_);
     if (pending_.erase(ack.ackId) > 0) {
-        SPDLOG_DEBUG("收到 Ack: {}", ack.ackId);
+        SPDLOG_DEBUG("收到确认消息: ackId={}", ack.ackId);
     }
 }
 
@@ -376,7 +376,7 @@ void CommunicationModule::check_pending() {
     for (const auto& pending : resend) {
         std::string error;
         if (transport_.put(pending.topic, pending.wire, error)) {
-            SPDLOG_WARN("可靠消息重试: topic={}, attempts={}", pending.topic, pending.attempts);
+            SPDLOG_WARN("可靠消息重试: topic={} attempts={}", pending.topic, pending.attempts);
         } else {
             report_error("重试发送失败: " + error);
         }

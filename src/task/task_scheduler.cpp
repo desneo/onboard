@@ -14,7 +14,7 @@ TaskScheduler::TaskScheduler(plane::core::EventBus& event_bus, const plane::core
 
 TaskScheduler::~TaskScheduler() { stop(); }
 
-std::string TaskScheduler::name() const { return "Task Scheduler"; }
+std::string TaskScheduler::name() const { return "任务调度器"; }
 
 bool TaskScheduler::init() { return true; }
 
@@ -81,7 +81,7 @@ void TaskScheduler::on_task_info(const plane::model::TaskInfo& task) {
         engine_->abort();
     }
     if (engine_ == nullptr) {
-        SPDLOG_WARN("执行引擎未接入，任务保持 Pending: taskId={}", task.taskId);
+        SPDLOG_WARN("执行引擎未接入，任务保持待执行: taskId={}", task.taskId);
         return;
     }
     std::string error;
@@ -125,7 +125,7 @@ void TaskScheduler::on_command(const plane::model::Command& command) {
     }
     std::string error;
     if (engine_->start_command(command, error)) {
-        SPDLOG_INFO("指令已派发: {}", command.commandId);
+        SPDLOG_INFO("指令已派发: commandId={}", command.commandId);
         return;
     }
     {
@@ -143,7 +143,7 @@ void TaskScheduler::on_engine_result(const TaskEngineResult& result) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (control_ == ControlKind::Task) {
-            SPDLOG_INFO("任务结束: taskId={}, status={}, detail={}", task_state_.taskId,
+            SPDLOG_INFO("任务结束: taskId={} status={} detail={}", task_state_.taskId,
                         std::string(magic_enum::enum_name(result.status)), result.detail);
             control_ = ControlKind::None;
             task_state_ = plane::model::TaskState{};
@@ -155,8 +155,8 @@ void TaskScheduler::on_engine_result(const TaskEngineResult& result) {
                 command_failed = true;
                 failure_detail = result.detail;
             } else {
-                SPDLOG_INFO("指令执行结束: status={}, detail={}",
-                            std::string(magic_enum::enum_name(result.status)), result.detail);
+                SPDLOG_INFO("指令执行结束: status={} detail={}", std::string(magic_enum::enum_name(result.status)),
+                            result.detail);
             }
         } else {
             SPDLOG_WARN("忽略非当前执行的引擎结果");
@@ -193,7 +193,7 @@ void TaskScheduler::send_alert(const std::string& detail) {
 }
 
 void TaskScheduler::report_error(const std::string& detail) const {
-    SPDLOG_ERROR("TaskScheduler: {}", detail);
+    SPDLOG_ERROR("任务调度器错误: {}", detail);
     TaskSchedulerError event;
     event.detail = detail;
     event_bus_.publish(events::kError, event);

@@ -9,20 +9,6 @@
 #include <type_traits>
 #include <utility>
 
-namespace magic_enum::customize {
-
-/// 协议 key 为小写连字符（anti-uav），与枚举名 AntiUav 大小写/分隔不同，需自定义名称。
-template <>
-constexpr customize_t enum_name<plane::model::TaskCode>(plane::model::TaskCode value) noexcept {
-    switch (value) {
-        case plane::model::TaskCode::AntiUav:
-            return "anti-uav";
-    }
-    return default_tag;
-}
-
-}  // namespace magic_enum::customize
-
 namespace plane::communication {
 namespace {
 
@@ -222,12 +208,13 @@ bool from_payload(const std::string& payload, plane::model::SystemParam& out, st
     }
 }
 
-bool to_payload(const plane::model::GcsTarget& value, std::string& out, std::string& error) {
+bool to_payload(const plane::target::GcsTarget& value, std::string& out, std::string& error) {
     try {
         out = json{{"trackId", value.trackId},
                    {"geoPos", to_json(value.geoPos)},
-                   {"velocity_m_s", value.velocity_m_s},
-                   {"direction_deg", value.direction_deg}}
+                   {"timestamp_ms", value.timestamp_ms},
+                   {"radial_speed_m_s", value.radial_speed_m_s},
+                   {"azimuth_deg", value.azimuth_deg}}
                   .dump();
         return true;
     } catch (const json::exception& e) {
@@ -236,13 +223,19 @@ bool to_payload(const plane::model::GcsTarget& value, std::string& out, std::str
     }
 }
 
-bool from_payload(const std::string& payload, plane::model::GcsTarget& out, std::string& error) {
+bool from_payload(const std::string& payload, plane::target::GcsTarget& out, std::string& error) {
     try {
         const json in = json::parse(payload);
         out.trackId = in.at("trackId").get<std::string>();
         geo_point_from_json(in.at("geoPos"), out.geoPos);
-        out.velocity_m_s = in.value("velocity_m_s", 0.0F);
-        out.direction_deg = in.value("direction_deg", 0.0F);
+        out.timestamp_ms = in.at("timestamp_ms").get<std::int64_t>();
+        out.radial_speed_m_s = number_or_default<float>(in, "radial_speed_m_s");
+        out.azimuth_deg = number_or_default<float>(in, "azimuth_deg");
+        if (out.trackId.empty() || out.timestamp_ms <= 0 || !std::isfinite(out.geoPos.latitude) ||
+            !std::isfinite(out.geoPos.longitude) || !std::isfinite(out.geoPos.altitude)) {
+            error = "GcsTarget 缺少有效 trackId、timestamp_ms 或地理位置";
+            return false;
+        }
         return true;
     } catch (const json::exception& e) {
         error = e.what();

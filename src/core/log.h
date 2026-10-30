@@ -16,6 +16,9 @@ struct LogOptions {
 /// 初始化全局日志；项目代码统一通过 spdlog 输出。
 void init_logging(const LogOptions& options);
 
+/// 为当前全局日志器设置项目统一格式；级别保留 spdlog 的英文标识。
+void set_project_log_pattern();
+
 /// 刷盘并释放全局日志。
 void shutdown_logging();
 

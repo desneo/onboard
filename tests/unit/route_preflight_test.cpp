@@ -59,7 +59,11 @@ class FakeFlightControl final : public plane::flight_control::FlightControlApi {
         ++velocity_calls;
         return true;
     }
-    void clear_ned_velocity() override { ++clear_calls; }
+    bool set_attitude(const plane::flight_control::AttitudeSetpoint&, std::string&) override { return false; }
+    bool get_cached_flight_control_params(plane::flight_control::FlightControlParams&, std::string&) const override {
+        return false;
+    }
+    void clear_offboard() override { ++clear_calls; }
     std::string link_state() const override { return "connected"; }
     plane::flight_control::FlightStatus flight_status() const override { return status; }
 };
@@ -101,6 +105,18 @@ void route_tree_depends_on_flight_state() {
             "已起飞的航线节点错误");
 }
 
+void anti_uav_tree_depends_on_flight_state() {
+    plane::flight_control::FlightStatus status;
+    require(plane::task::anti_uav_node_names(status) == std::vector<std::string>({"Arm", "Takeoff", "Midcourse"}),
+            "未解锁且未起飞的 AntiUav 节点错误");
+    status.armed = true;
+    require(plane::task::anti_uav_node_names(status) == std::vector<std::string>({"Takeoff", "Midcourse"}),
+            "已解锁但未起飞的 AntiUav 节点错误");
+    status.in_air = true;
+    require(plane::task::anti_uav_node_names(status) == std::vector<std::string>({"Midcourse"}),
+            "已起飞的 AntiUav 节点错误");
+}
+
 void height_adjust_uses_relative_height() {
     test_now_ms = 1000;
     plane::core::AppConfig config;
@@ -129,8 +145,7 @@ void height_adjust_uses_relative_height() {
     require(std::fabs(flight.last_waypoint.longitude - states.state.geoPos.longitude) < 0.0000001,
             "临时航点应使用当前位置经度");
     require(std::fabs(flight.last_waypoint.height - 20.0F) < 0.001F, "临时航点应使用首航点相对高度");
-    require(std::fabs(flight.last_waypoint.altitude - 105.0F) < 0.001F,
-            "构造临时航点时不得把首航点海拔当成相对高度");
+    require(std::fabs(flight.last_waypoint.altitude - 105.0F) < 0.001F, "构造临时航点时不得把首航点海拔当成相对高度");
 
     states.state.geoPos.height = 19.2F;
     states.state.geoPos.altitude = 119.2F;
@@ -209,6 +224,7 @@ std::int64_t now_ms() { return test_now_ms; }
 int main() {
     try {
         route_tree_depends_on_flight_state();
+        anti_uav_tree_depends_on_flight_state();
         height_adjust_uses_relative_height();
         height_adjust_supports_descent_and_halt();
         height_adjust_timeout_stops_temporary_mission();

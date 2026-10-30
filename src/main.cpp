@@ -36,6 +36,7 @@ void handle_stop_signal(int) { g_stop_requested = 1; }
 }  // namespace
 
 int main(int argc, char** argv) {
+    plane::core::set_project_log_pattern();
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--deps-check") {
             return plane::core::run_deps_check();
@@ -54,10 +55,10 @@ int main(int argc, char** argv) {
     }
 
     const plane::core::BuildInfo build_info = plane::core::current_build_info();
-    SPDLOG_INFO("plane 启动: version={} git={} build={}", build_info.version, build_info.git_hash,
+    SPDLOG_INFO("plane 程序启动: version={} git_hash={} build_type={}", build_info.version, build_info.git_hash,
                 build_info.build_type);
-    SPDLOG_INFO("配置: safe_height_m={} state_report_period_ms={} is_sim={}", config.system_param.safeHeight_m,
-                config.state_report_period_ms, config.is_sim);
+    SPDLOG_INFO("运行配置: safeHeight_m={} state_report_period_ms={} is_sim={}", config.system_param.safeHeight_m,
+                config.state_report_period_ms, config.is_sim ? "true" : "false");
 
     plane::core::EventBus event_bus;
     event_bus.subscribe<plane::communication::CommunicationError>(
@@ -69,8 +70,8 @@ int main(int argc, char** argv) {
     auto plugin_management = std::make_unique<plane::plugin::PluginManagement>();
     auto camera_control = std::make_unique<plane::camera::CameraControlModule>(event_bus);
     auto target_store = std::make_unique<plane::target::TargetStore>(event_bus, config);
-    auto task_engine = std::make_unique<plane::task::TaskExecutionEngine>(event_bus, config, *flight_control,
-                                                                          *state_store, *system_param_store);
+    auto task_engine = std::make_unique<plane::task::TaskExecutionEngine>(
+        event_bus, config, *flight_control, *state_store, *system_param_store, *target_store);
     auto task_scheduler = std::make_unique<plane::task::TaskScheduler>(event_bus, config, task_engine.get());
     auto communication =
         std::make_unique<plane::communication::CommunicationModule>(event_bus, config, *state_store, *task_scheduler);
@@ -88,9 +89,8 @@ int main(int argc, char** argv) {
     runtime.add_module(std::move(task_scheduler));
     runtime.add_module(std::move(communication));
     runtime.add_module(std::move(state_monitor));
-    for (auto& module : plane::core::make_placeholder_modules(
-             {"Communication", "UAV State Management", "Flight Control", "Task Scheduler", "Task Execution Engine",
-              "Camera Control", "Target Management", "StateMonitor"})) {
+    for (auto& module : plane::core::make_placeholder_modules({"通信", "无人机状态管理", "飞行控制", "任务调度器",
+                                                               "任务执行引擎", "相机控制", "目标管理", "状态监控"})) {
         runtime.add_module(std::move(module));
     }
     if (!runtime.run()) {

@@ -23,7 +23,7 @@ void request_fatal(const std::string& plugin, const std::string& reason) {
             g_fatal_reason = reason;
         }
     }
-    SPDLOG_ERROR("[fatal] plugin={} reason={}", plugin, reason);
+    SPDLOG_ERROR("致命错误: plugin={} reason={}", plugin, reason);
 }
 
 bool fatal_requested() {
@@ -41,19 +41,19 @@ void Runtime::add_module(std::unique_ptr<IModule> module) { modules_.push_back(s
 bool Runtime::run() {
     for (std::size_t i = 0; i < modules_.size(); ++i) {
         if (!modules_[i]->init()) {
-            SPDLOG_ERROR("模块 init 失败: {}", modules_[i]->name());
+            SPDLOG_ERROR("模块初始化失败: {}", modules_[i]->name());
             shutdown();
             return false;
         }
-        SPDLOG_INFO("模块 init: {}", modules_[i]->name());
+        SPDLOG_INFO("模块初始化完成: {}", modules_[i]->name());
     }
     for (auto& module : modules_) {
         if (!module->start()) {
-            SPDLOG_ERROR("模块 start 失败: {}", module->name());
+            SPDLOG_ERROR("模块启动失败: {}", module->name());
             shutdown();
             return false;
         }
-        SPDLOG_INFO("模块 start: {}", module->name());
+        SPDLOG_INFO("模块启动完成: {}", module->name());
     }
     SPDLOG_INFO("系统就绪");
     return true;

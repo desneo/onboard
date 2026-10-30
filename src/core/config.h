@@ -44,10 +44,9 @@ struct AppConfig {
 
     double alert_voltage_threshold_v = 21.0;
 
-    double suicide_detection_start_distance_m = 200.0;
-    double suicide_approach_speed_m_s = 10.0;
-    double suicide_climb_speed_m_s = 2.0;
-    int suicide_phase_timeout_ms = 300000;
+    int midcourse_init_timeout_ms = 30000;
+    double midcourse_target_invalid_grace_s = 3.0;
+    double midcourse_r_min_m = 50.0;
 };
 
 /// 从带 section 的 INI 文件加载配置；文件不存在时保留默认值并返回 false。

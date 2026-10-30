@@ -56,6 +56,16 @@ python3 tools/fleetctl.py test --count 2
 python3 tools/fleetctl.py test-presence --count 2
 ```
 
+用户手动启动 `192.168.1.40:14580` 的 PX4 SITL 后，部署一号机并验证中制导：
+
+```bash
+python3 tools/fleetctl.py test-midcourse --count 1 --target-track-id <track_id>
+```
+
+该命令不会启动或停止 SITL；完成板端自检后会提示持续向 `192.168.1.100:7790` 发送至少
+21 个时间戳严格递增的 `radar_tracks` 扫描。7790 只接收雷达数据，防守机状态由 GCS 从
+Zenoh 获取，雷达帧无需包含防守机航迹。
+
 该命令只预检和操作清单中的前两块板卡，备份旧程序及配置，验证双向正常退出、恢复上线，
 再终止二号机进程以验证异常退出及恢复。初始和结束各观察 10 秒，检查重复上下线和位置更新日志。
 报告及各阶段原始日志保存在 `logs/fleet/<run_id>/`，成功后双机保持运行。
@@ -130,8 +140,28 @@ cd build/plane
 `state_store_quiet` 验证连续状态更新仍发布内部事件并更新缓存，但不产生日志。
 部署工具按最新运行中的上下线事件验证在线状态，不再把日志条数当作收到的位置样本数。
 
+运行日志检查须确认项目人工编写的消息和业务描述均使用中文，不出现英文句子；API 名、协议名、
+类型名、枚举值、配置键、函数参数名、结构体及其字段名和第三方库原始错误等代码标识保留原文。
+检查 PX4 飞控系统参数缓存日志时，四项键必须为 `MPC_XY_VEL_MAX`、`MPC_Z_VEL_MAX_UP`、
+`MPC_Z_VEL_MAX_DN`、`MPC_ACC_HOR_MAX`，不得使用中文意译键名。
+日志级别继续使用 spdlog 的 `[info]`、`[warn]`、`[error]` 等原始英文标识。主程序和 `gcs_sim`
+应使用相同格式，线程 ID 只显示为 `[%t]`，不得带“线程”前缀，且格式中不自动输出英文函数名。
+
 
 `config_simulation` 验证 UDP 端口 `14580`～`14589` 为仿真，范围外端口和串口不判定为仿真。
+
+`radar_target_filter` 验证 JSON 容错、confirmed 过滤、严格时间戳输入、多友机全局匹配、
+50 米门限、NED 状态外推、过期状态失败关闭，以及“友机未出现在雷达帧时仍转发靶机”。
+`midcourse_algorithm_adapter` 使用真实 `libmidcourse_alg_3588.so` 验证 20 帧初始化、增量更新和逐 tick 调用；
+`midcourse_controller` 验证任务启动前已形成的 20 帧持续缓存、参数缓存读取、会话重置和错误路径；
+`attitude_conversion` 验证四元数归一化与姿态转换。
+中制导接口日志必须使用 `接口名 输入/输出` 的简洁前缀，结构体字段保持公共接口原名，经纬度固定
+保留 6 位小数，速度固定保留 2 位小数，不得恢复“中制导接口 方向=……”前缀或中文结构体字段。
+接口输入输出不得包含会话号、调用号或更新号；会话销毁日志保留调用次数和两类更新次数的累计统计。
+排查真实算法调用时，可按 `MidcoursePlanner::` 和 `TargetEstimator::` 过滤板端 `logs/plane.log`；
+同一会话内按日志时间排序后，必须能看到 `MidcoursePlanner::setConfig` → `TargetEstimator::init` →
+持续 `MidcoursePlanner::update` →（存在新帧时）`TargetEstimator::update` 的输入输出，接口失败时
+保留原始错误字符串。
 
 ```bash
 ctest --test-dir build --output-on-failure
@@ -187,7 +217,7 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 | Waypoint | 上传单航点并以 Mission Progress 判定完成 |
 | Route | 未起飞时自动解锁并起飞；开始前调整到首航点相对高度；随后按顺序执行多航点并以 Mission Progress 判定完成；飞行超过普通节点超时仍继续等待完成，新指令仍可替换航线 |
 | StopMotor | 仅接受地面站人工指令，不由任务自主触发 |
-| NED 控制 | Offboard 持续发送速度，停止任务时退出 Offboard 控制 |
+| Attitude Offboard | 先发送合法姿态／推力设定值再启动 Offboard，按 50 ms 重发；起飞完成切换覆盖 Offboard 时能够限频恢复；停止任务时停止 Offboard 并清空缓存 |
 
 实机执行 StopMotor 和撞击相关测试前必须确认安全区域和测试授权。
 
@@ -208,11 +238,27 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 | 队列上限 | 接收队列满时丢弃最旧消息，进程保持可用 |
 | 确认重试 | 可靠消息超时后按配置重试，超过次数产生明确错误 |
 
-## 8. 已移除任务流程
+## 8. 中制导验收
+
+自动化和板端联调必须共同覆盖：
+
+1. `ldd build/plane/plane` 包含 `libmidcourse_alg_3588.so`，不包含 Pluma；无 SONAME 的算法库可由 `$ORIGIN/lib` 解析。
+2. `AntiUav` 根据飞行状态选择直接 Midcourse、Takeoff → Midcourse 或 Arm → Takeoff → Midcourse。
+3. 指定 ID 时锁定该目标；未指定时只允许唯一候选，不得在多个目标间自动跳换。
+4. 机载从进程启动起持续缓存目标；任务启动前已经收到 20 帧时直接完成初始化，第 21 帧产生首次增量更新；规划器每个 50 ms tick 先于本 tick 的目标增量更新调用。
+5. 飞控连接后成功读取并缓存 `MPC_XY_VEL_MAX`、`MPC_Z_VEL_MAX_UP`、`MPC_Z_VEL_MAX_DN`、`MPC_ACC_HOR_MAX`；中制导任务路径只读取缓存，断连时缓存失效，重连后重新获取，缓存未就绪时任务失败。
+6. 算法输出的所有数值、四元数和推力经过校验，横向推力接近零，使用 body→NED 四元数转换后的 Attitude Offboard。
+7. 雷达中断超过 3 秒后任务仍运行；Task Stop、新控制内容和异常退出均停止 Offboard 并重置会话。
+8. GCS 从 Zenoh 获取防守机状态，只过滤 50 米内实际匹配到的雷达航迹；雷达帧没有友机航迹时仍转发靶机，状态缺失或过期时暂停整帧。
+
+板端验收只有在用户确认 SITL 已启动后才允许发送控制；网络、权限或仿真环境缺失时必须报告阻塞。
+报告保存在 `logs/fleet/<run_id>/midcourse-report.json`，并保留各阶段 GCS 和机载原始日志。
+
+## 9. 已移除任务流程
 
 原本依赖本地视觉检测的任务启动时必须明确返回不可用，不启动截短的任务树，也不误报完成。
 
-## 9. 目标和安全验收
+## 10. 目标和安全验收
 
 | 场景 | 通过标准 |
 | --- | --- |
@@ -222,7 +268,7 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 | 电压恢复 | 电压恢复后解除锁存，再次低电压可重新告警 |
 | 仿真低电压 | 仿真飞机不发送低电压告警 |
 
-## 10. 测试报告
+## 11. 测试报告
 
 交付时至少记录：
 

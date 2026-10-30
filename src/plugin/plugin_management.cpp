@@ -2,7 +2,7 @@
 
 namespace plane::plugin {
 
-std::string PluginManagement::name() const { return "Plugin Management"; }
+std::string PluginManagement::name() const { return "插件管理"; }
 
 bool PluginManagement::init() { return true; }
 

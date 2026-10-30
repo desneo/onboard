@@ -16,7 +16,10 @@
 #include "flight_control/flight_control_api.h"
 #include "state/state_store_api.h"
 #include "task/command_context.h"
+#include "task/nodes/midcourse_controller.h"
+#include "task/suicide_task_context.h"
 #include "task/task_execution_engine_api.h"
+#include "target/target_store_api.h"
 
 namespace plane::task {
 
@@ -25,7 +28,8 @@ class TaskExecutionEngine final : public plane::core::IModule, public TaskExecut
    public:
     TaskExecutionEngine(plane::core::EventBus& event_bus, const plane::core::AppConfig& config,
                         plane::flight_control::FlightControlApi& flight_control,
-                        plane::state::StateStoreApi& state_store, plane::core::SystemParamApi& system_param);
+                        plane::state::StateStoreApi& state_store, plane::core::SystemParamApi& system_param,
+                        plane::target::TargetStoreApi& target_store);
     ~TaskExecutionEngine() override;
 
     std::string name() const override;
@@ -40,6 +44,7 @@ class TaskExecutionEngine final : public plane::core::IModule, public TaskExecut
 
    private:
     BT::Tree build_command_tree(const std::vector<std::string>& node_names);
+    BT::Tree build_task_tree(const std::vector<std::string>& node_names);
     /// 在持锁状态下装载并启动一棵树（供任务/指令共用）。
     void launch_tree(BT::Tree tree, const std::string& tree_name, const std::string& tree_structure);
     void tick_loop();
@@ -53,6 +58,8 @@ class TaskExecutionEngine final : public plane::core::IModule, public TaskExecut
     plane::flight_control::FlightControlApi& flight_control_;
     plane::state::StateStoreApi& state_store_;
     plane::core::SystemParamApi& system_param_;
+    plane::target::TargetStoreApi& target_store_;
+    MidcourseController midcourse_controller_;
 
     std::mutex mutex_;
     BT::Tree tree_;
@@ -61,6 +68,7 @@ class TaskExecutionEngine final : public plane::core::IModule, public TaskExecut
     std::string current_node_;
     std::string current_tree_name_;
     CommandContext command_context_;
+    SuicideTaskContext task_context_;
     std::thread tick_thread_;
     std::atomic<bool> ticking_{false};
 };

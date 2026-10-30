@@ -17,7 +17,8 @@
 
 ### 任务范围
 
-本版本完全移除本地视觉处理。依赖原有视觉流程的任务在启动时返回不可用；不将截短的流程报告为任务完成。
+本版本完全移除本地视觉处理。`AntiUav` 任务恢复中制导阶段，但不恢复视觉／末制导；任务持续运行，
+直到收到 Task Stop、新控制内容或进程退出。
 
 ### 单机飞行控制
 
@@ -42,15 +43,19 @@
 - 基于 Zenoh 接收地面站任务、指令、系统参数和目标信息。
 - 周期广播本机状态，接收并缓存其他无人机的最新状态；位置更新不逐条打印，通过 Zenoh liveliness 仅记录上下线。
 - 通过 BehaviorTree 仲裁和执行单个 Task 或 Command，新控制内容替换当前内容。
+- 通过 common 公共接口直接链接预编译 `libmidcourse_alg_3588.so` 执行反无人机中制导，不使用 Pluma 动态插件加载。
+- 飞控连接建立后预读并缓存四项 PX4 飞控系统参数；中制导会话只读取通用飞控参数缓存，不在任务路径查询 PX4 参数。
+- 配套 `gcs_sim` 监听 UDP 7790，将雷达 confirmed 航迹与 Zenoh 友机状态匹配，过滤友机后发布靶机。
+- 中制导输出经过校验和四元数转换后使用 MAVSDK Attitude Offboard，并按 50 ms 重发设定值。
 - 本版本已停用图像采集、检测/MOT 和视频推流。
 - 监测实机低电压并向地面站告警。
 - 已删除检测节点及原有视觉任务流程，相关任务启动时返回不可用。
 
 当前已知限制：
 
-- 反无人机任务尚未实现单目标跟踪和末段导引撞击。
+- 反无人机任务只实现中制导，不包含末端交接确认、视觉跟踪或末段导引撞击。
 - 相机控制模块目前是 Noop，不控制真实相机或云台。
-- 友机状态已交换和缓存，但尚未参与编队、避碰或协同决策。
+- 友机状态参与 GCS 雷达航迹过滤，但尚未参与编队、避碰或其他协同决策。
 
 ## 目录概览
 
@@ -69,10 +74,14 @@ docs/                 需求、架构和测试说明
 ## 外部依赖
 
 - 公共数据模型与插件接口：`../common/common_include`
+- 中制导发布包：`../algorithm/midcourse_alg/midcourse_alg-0.1.0-aarch64`
 - 预编译第三方库：`../../../3rdparty/common`
 - 历史视觉插件和模型本版本不参与打包或运行。
 
-主要依赖包括 MAVSDK、Zenoh、BehaviorTree.CPP、eventpp、GeographicLib、spdlog、fmt、nlohmann-json 和 magic_enum。
+中制导以 imported target 直接链接发布包中的 `libmidcourse_alg_3588.so`；该库不设置 SONAME，
+运行包按原文件名分发。编译仅引用 `common_include/algorithm/midcourse_alg.h`，最终程序不得依赖
+`libpluma`。主要依赖还包括 MAVSDK、Zenoh、
+BehaviorTree.CPP、eventpp、GeographicLib、spdlog、fmt、nlohmann-json 和 magic_enum。
 
 依赖缺失时应补充对应本地库，项目不会在线下载依赖。
 
@@ -83,7 +92,8 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
-默认构建会生成可独立运行的 `build/plane/`，包含主程序及运行库；本版本不暂存图像插件、模型、检测配置或 RKNN 库。
+默认构建会生成可独立运行的 `build/plane/`，包含主程序、中制导库及运行库；本版本不暂存图像插件、
+模型、检测配置、Pluma 或 RKNN 库。
 
 已有构建目录也可以手动重新打包：
 
@@ -131,6 +141,14 @@ tail -f logs/plane.log
 
 主日志固定写入 `logs/plane.log`，重启后追加；单文件达到 50 MB 后按
 `plane.1.log`、`plane.2.log` 至 `plane.5.log` 轮转（序号越小越新，超过 5 份淘汰最旧文件）。
+项目人工编写的运行日志和业务描述均使用中文；日志级别保留 spdlog 的 `[info]`、`[warn]`、
+`[error]` 等原始英文标识，线程 ID 直接显示为数字方括号（如 `[701742]`）。API、协议、类型、枚举、
+配置键、函数参数名、结构体及其字段名和第三方库
+原始错误等代码标识保留原文。中制导日志使用 `接口名 输入/输出` 的简洁前缀，结构体字段保持公共接口
+原名；经纬度保留 6 位小数，速度保留 2 位小数。接口输入输出不重复打印会话号、调用号和更新号；
+PX4 参数使用 `MPC_XY_VEL_MAX`、`MPC_Z_VEL_MAX_UP`、`MPC_Z_VEL_MAX_DN`、`MPC_ACC_HOR_MAX` 原名；
+日志保留会话生命周期统计、20 帧初始化历史、完整配置、目标估计及每个 50 ms 规划周期的原始控制输出，
+可按日志时间顺序还原调用流程。
 多机部署同样使用此目录，不再为每次启动创建日期目录。
 `plane.stdout.log` 单独记录标准输出和错误输出，包含重复的程序日志以及第三方库、插件和启动脚本输出；
 它不参与主日志轮转，后台启动时覆盖。
@@ -212,18 +230,17 @@ cd build/plane
 | `behavior_tree.takeoff_tolerance_m` | 起飞高度判定容差 |
 | `behavior_tree.height_adjust_timeout_ms` | 航线开始前调整相对高度的超时 |
 | `behavior_tree.height_adjust_tolerance_m` | 航线开始前调整相对高度的到达容差 |
+| `midcourse.init_timeout_ms` | 等待严格递增的 20 帧雷达历史的最长时间，默认 30000 ms |
+| `midcourse.target_invalid_grace_s` | 算法内部目标预测宽限期，默认 3 秒 |
+| `midcourse.r_min_m` | 中制导距离保护，默认 50 米；与 GCS 友机匹配门限相互独立 |
 
 UDP 飞控端口位于 `14580`～`14589`（`1458*`） 时，程序将本机视为仿真飞机，并禁用低电压告警。
 
-### 安全与反无人机任务
+### 安全
 
 | 配置 | 说明 |
 | --- | --- |
 | `safety.alert_voltage_threshold_v` | 实机低电压告警阈值 |
-| `suicide_mission.detection_start_distance_m` | 切换到检测阶段的水平距离 |
-| `suicide_mission.approach_speed_m_s` | 中段逼近速度 |
-| `suicide_mission.climb_speed_m_s` | 中段垂直速度限制 |
-| `suicide_mission.phase_timeout_ms` | 中段和检测阶段超时 |
 
 配置文件修改后重启程序生效；`SystemParam` 消息可在运行中更新安全高度。
 
@@ -253,6 +270,23 @@ UDP 飞控端口位于 `14580`～`14589`（`1458*`） 时，程序将本机视�
 可用 `--connect tcp/<host>:<port>` 指定 Zenoh 端点，`--query-timeout-ms 2000` 设置超时；
 只查询、不声明地面站上线时追加 `--no-presence`。
 查询失败、类型不支持或没有响应时，工具返回非零退出码。
+
+## 雷达入口与中制导联调
+
+`gcs_sim` 默认监听 `0.0.0.0:7790`，只接收 `type=radar_tracks` 的 UDP JSON；`target_truth`
+及其他类型被忽略。防守飞机坐标不由 7790 提供，而是从 Zenoh `VehicleState` 获取。GCS 使用
+扫描时间外推友机位置，对 50 米内的 confirmed 雷达航迹做全局一对一匹配并过滤；友机没有出现在
+某次雷达扫描中不会阻塞靶机，但友机状态缺失或过期时整帧暂停转发。
+
+手动启动 `192.168.1.40:14580` 的 PX4 SITL 后，可执行：
+
+```bash
+python3 tools/fleetctl.py test-midcourse --count 1 --target-track-id <track_id>
+```
+
+工具部署到 `uav1`，监听 `192.168.1.100:7790`。机载程序从启动起持续缓存每个航迹最近 20 帧，
+中制导会话直接使用已有历史，不从任务启动时重新计数；测试继续发送第 21 帧并验证增量更新、
+Attitude Offboard、持续运行和 Task Stop 清理。目标 ID 留空时，机载只在当前候选唯一时自动锁定。
 
 ## 测试
 

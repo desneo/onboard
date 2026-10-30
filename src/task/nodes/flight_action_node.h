@@ -46,7 +46,7 @@ class FlightActionNode : public BT::StatefulActionNode {
     BT::NodeStatus onRunning() override {
         ++tick_count_;
         if (timeout_enabled() && plane::core::now_ms() - start_ms_ > node_timeout_ms()) {
-            SPDLOG_ERROR("节点 {} 超时 ({} ms)", name(), node_timeout_ms());
+            SPDLOG_ERROR("节点 {} 超时（{} 毫秒）", name(), node_timeout_ms());
             onTimeout();
             return BT::NodeStatus::FAILURE;
         }
@@ -79,15 +79,15 @@ class FlightActionNode : public BT::StatefulActionNode {
                 const std::int64_t now = plane::core::now_ms();
                 if (now - last_running_log_ms_ >= kRunningLogIntervalMs) {
                     last_running_log_ms_ = now;
-                    SPDLOG_INFO("节点 {} 运行中 (已运行 {} ms, tick={})", name(), now - start_ms_, tick_count_);
+                    SPDLOG_INFO("节点 {} 运行中（elapsed_ms={} tick_count_={}）", name(), now - start_ms_, tick_count_);
                 }
                 break;
             }
             case BT::NodeStatus::SUCCESS:
-                SPDLOG_INFO("节点 {} 执行成功 (tick={})", name(), tick_count_);
+                SPDLOG_INFO("节点 {} 执行成功（tick_count_={}）", name(), tick_count_);
                 break;
             case BT::NodeStatus::FAILURE:
-                SPDLOG_ERROR("节点 {} 执行失败 (tick={})", name(), tick_count_);
+                SPDLOG_ERROR("节点 {} 执行失败（tick_count_={}）", name(), tick_count_);
                 break;
             default:
                 break;

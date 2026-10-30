@@ -52,10 +52,9 @@ std::string canonical_key(const std::string& section, const std::string& key) {
         {"behavior_tree.height_adjust_timeout_ms", "bt_height_adjust_timeout_ms"},
         {"behavior_tree.height_adjust_tolerance_m", "bt_height_adjust_tolerance_m"},
         {"safety.alert_voltage_threshold_v", "alert_voltage_threshold_v"},
-        {"suicide_mission.detection_start_distance_m", "suicide_detection_start_distance_m"},
-        {"suicide_mission.approach_speed_m_s", "suicide_approach_speed_m_s"},
-        {"suicide_mission.climb_speed_m_s", "suicide_climb_speed_m_s"},
-        {"suicide_mission.phase_timeout_ms", "suicide_phase_timeout_ms"},
+        {"midcourse.init_timeout_ms", "midcourse_init_timeout_ms"},
+        {"midcourse.target_invalid_grace_s", "midcourse_target_invalid_grace_s"},
+        {"midcourse.r_min_m", "midcourse_r_min_m"},
     };
     const std::string qualified = section + "." + key;
     const auto it = keys.find(qualified);
@@ -100,7 +99,7 @@ bool load_config(const std::string& path, AppConfig& out) {
         }
         if (line.front() == '[') {
             if (line.size() < 3 || line.back() != ']') {
-                SPDLOG_WARN("忽略无法解析的配置 section: {}", line);
+                SPDLOG_WARN("忽略无法解析的配置节: {}", line);
                 continue;
             }
             section = trim(line.substr(1, line.size() - 2));
@@ -112,7 +111,7 @@ bool load_config(const std::string& path, AppConfig& out) {
             continue;
         }
         if (section.empty()) {
-            SPDLOG_WARN("忽略缺少 section 的配置项: {}", line);
+            SPDLOG_WARN("忽略缺少配置节的配置项: {}", line);
             continue;
         }
         const std::string raw_key = trim(line.substr(0, pos));
@@ -172,14 +171,12 @@ bool load_config(const std::string& path, AppConfig& out) {
             out.bt_height_adjust_tolerance_m = std::stod(value);
         } else if (key == "alert_voltage_threshold_v") {
             out.alert_voltage_threshold_v = std::stod(value);
-        } else if (key == "suicide_detection_start_distance_m") {
-            out.suicide_detection_start_distance_m = std::stod(value);
-        } else if (key == "suicide_approach_speed_m_s") {
-            out.suicide_approach_speed_m_s = std::stod(value);
-        } else if (key == "suicide_climb_speed_m_s") {
-            out.suicide_climb_speed_m_s = std::stod(value);
-        } else if (key == "suicide_phase_timeout_ms") {
-            out.suicide_phase_timeout_ms = std::stoi(value);
+        } else if (key == "midcourse_init_timeout_ms") {
+            out.midcourse_init_timeout_ms = std::stoi(value);
+        } else if (key == "midcourse_target_invalid_grace_s") {
+            out.midcourse_target_invalid_grace_s = std::stod(value);
+        } else if (key == "midcourse_r_min_m") {
+            out.midcourse_r_min_m = std::stod(value);
         } else {
             SPDLOG_WARN("未知配置项: {}.{}", section, raw_key);
         }

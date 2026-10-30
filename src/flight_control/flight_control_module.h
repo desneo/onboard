@@ -4,6 +4,7 @@
 #include <mavsdk/plugins/action/action.h>
 #include <mavsdk/plugins/mission/mission.h>
 #include <mavsdk/plugins/offboard/offboard.h>
+#include <mavsdk/plugins/param/param.h>
 #include <mavsdk/plugins/telemetry/telemetry.h>
 
 #include <atomic>
@@ -45,7 +46,9 @@ class FlightControlModule final : public plane::core::IModule, public FlightCont
     bool goto_waypoint(const plane::model::GeoPoint& point, std::string& error) override;
     bool execute_route(const std::vector<plane::model::GeoPoint>& points, std::string& error) override;
     bool set_ned_velocity(const plane::model::NedVelocity& velocity, std::string& error) override;
-    void clear_ned_velocity() override;
+    bool set_attitude(const AttitudeSetpoint& setpoint, std::string& error) override;
+    bool get_cached_flight_control_params(FlightControlParams& params, std::string& error) const override;
+    void clear_offboard() override;
 
     std::string link_state() const override;
     plane::flight_control::FlightStatus flight_status() const override;
@@ -82,6 +85,8 @@ class FlightControlModule final : public plane::core::IModule, public FlightCont
     void offboard_loop();
     void attach_system(const std::shared_ptr<mavsdk::System>& system);
     void detach_system();
+    void refresh_flight_control_params_cache_if_needed();
+    void invalidate_flight_control_params_cache(const std::string& reason);
     bool ensure_connected(std::string& error) const;
     bool upload_and_start_mission(const std::vector<plane::model::GeoPoint>& points, bool fly_through,
                                   std::string& error);
@@ -97,14 +102,25 @@ class FlightControlModule final : public plane::core::IModule, public FlightCont
     std::unique_ptr<mavsdk::Telemetry> telemetry_;
     std::unique_ptr<mavsdk::Mission> mission_;
     std::unique_ptr<mavsdk::Offboard> offboard_;
+    std::unique_ptr<mavsdk::Param> param_;
 
     mutable std::mutex cache_mutex_;
     TelemetryCache cache_;
     std::atomic<bool> connected_{false};
 
+    mutable std::mutex flight_control_params_mutex_;
+    FlightControlParams flight_control_params_cache_;
+    bool flight_control_params_ready_ = false;
+    std::string flight_control_params_error_ = "尚未连接飞控并读取 PX4 参数";
+    std::int64_t last_flight_control_params_attempt_ms_ = 0;
+
     std::mutex offboard_mutex_;
-    mavsdk::Offboard::VelocityNedYaw setpoint_;
+    enum class OffboardSetpointKind { None, VelocityNed, Attitude };
+    mavsdk::Offboard::VelocityNedYaw velocity_setpoint_;
+    mavsdk::Offboard::Attitude attitude_setpoint_;
+    OffboardSetpointKind offboard_setpoint_kind_ = OffboardSetpointKind::None;
     bool offboard_active_ = false;
+    std::int64_t last_offboard_start_ms_ = 0;
 
     std::thread monitor_thread_;
     std::thread state_thread_;

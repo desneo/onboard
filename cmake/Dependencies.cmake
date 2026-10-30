@@ -4,6 +4,9 @@ set(PLANE_3RDPARTY_DIR "${CMAKE_SOURCE_DIR}/../../../3rdparty/common"
     CACHE PATH "本地三方库根目录（相对 plane 工程根）")
 set(PLANE_COMMON_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/../common/common_include"
     CACHE PATH "与外部交互的公共头文件目录（相对 plane 工程根）")
+set(PLANE_MIDCOURSE_ALG_DIR
+    "${CMAKE_SOURCE_DIR}/../algorithm/midcourse_alg/midcourse_alg-0.1.0-aarch64"
+    CACHE PATH "中制导算法 aarch64 发布包目录")
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
   set(PLANE_PLATFORM_ARCH "arm64")
 else()
@@ -12,7 +15,7 @@ endif()
 set(PLANE_PLATFORM_DIR "${PLANE_PLATFORM_ARCH}/ubuntu22.04"
     CACHE STRING "三方库平台子目录（按 CPU 架构自动选择，可覆盖）")
 
-foreach(_dir "${PLANE_3RDPARTY_DIR}" "${PLANE_COMMON_INCLUDE_DIR}")
+foreach(_dir "${PLANE_3RDPARTY_DIR}" "${PLANE_COMMON_INCLUDE_DIR}" "${PLANE_MIDCOURSE_ALG_DIR}")
   if(NOT EXISTS "${_dir}")
     message(FATAL_ERROR "依赖目录不存在: ${_dir}；请按 README.md 的依赖说明补充后重试")
   endif()
@@ -57,6 +60,18 @@ add_library(plane_common_include INTERFACE)
 target_include_directories(plane_common_include INTERFACE "${PLANE_COMMON_INCLUDE_DIR}")
 target_compile_features(plane_common_include INTERFACE cxx_std_17)
 
+set(PLANE_MIDCOURSE_ALG_LIBRARY "${PLANE_MIDCOURSE_ALG_DIR}/lib/libmidcourse_alg_3588.so")
+if(NOT EXISTS "${PLANE_MIDCOURSE_ALG_LIBRARY}")
+  message(FATAL_ERROR "缺少中制导算法库: ${PLANE_MIDCOURSE_ALG_LIBRARY}")
+endif()
+add_library(plane_midcourse_alg SHARED IMPORTED GLOBAL)
+set_target_properties(plane_midcourse_alg PROPERTIES
+  IMPORTED_LOCATION "${PLANE_MIDCOURSE_ALG_LIBRARY}"
+  IMPORTED_NO_SONAME TRUE)
+# 算法发布包中的公共头只是 common 的镜像。机载侧只从 common_include
+# 引用接口，防止两套公共模型在后续升级时发生偏差。
+target_link_libraries(plane_midcourse_alg INTERFACE plane_common_include)
+
 add_library(plane_deps INTERFACE)
 target_link_libraries(plane_deps INTERFACE
   fmt::fmt
@@ -77,6 +92,7 @@ add_library(plane::behaviortree ALIAS plane_behaviortree)
 add_library(plane::eventpp ALIAS plane_eventpp)
 add_library(plane::magic_enum ALIAS plane_magic_enum)
 add_library(plane::nlohmann_json ALIAS plane_nlohmann_json)
+add_library(plane::midcourse_alg ALIAS plane_midcourse_alg)
 
 foreach(_target fmt::fmt spdlog::spdlog GeographicLib::GeographicLib MAVSDK::mavsdk
                 zenohc::lib zenohcxx::zenohc)

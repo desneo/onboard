@@ -37,8 +37,10 @@ int run_deps_check() {
     zenoh::Config zenoh_config = zenoh::Config::create_default();
     static_cast<void>(zenoh_config);
 
-    SPDLOG_INFO("deps-check: magic_enum={} nlohmann={} fmt={} spdlog={} bt={} geodesic={:.1f}m", state,
-                NLOHMANN_JSON_VERSION_MAJOR, FMT_VERSION, SPDLOG_VERSION, BT::LibraryVersionString(), distance_m);
+    SPDLOG_INFO(
+        "依赖检查通过: magic_enum_status={} nlohmann_version={} fmt_version={} spdlog_version={} "
+        "BehaviorTree_version={} geographic_distance_test_m={:.1f}",
+        state, NLOHMANN_JSON_VERSION_MAJOR, FMT_VERSION, SPDLOG_VERSION, BT::LibraryVersionString(), distance_m);
     return 0;
 }
 

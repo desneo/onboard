@@ -10,7 +10,7 @@ CameraControlModule::CameraControlModule(plane::core::EventBus& event_bus) : eve
 
 CameraControlModule::~CameraControlModule() { stop(); }
 
-std::string CameraControlModule::name() const { return "Camera Control"; }
+std::string CameraControlModule::name() const { return "相机控制"; }
 
 bool CameraControlModule::init() { return true; }
 
@@ -40,7 +40,7 @@ bool CameraControlModule::connect(std::string&) {
         status_.connected = true;
         status_.detail = "noop";
     }
-    SPDLOG_INFO("相机链路已建立 (Noop)");
+    SPDLOG_INFO("相机链路已建立（空实现）");
     event_bus_.publish(events::kStatusChanged, status());
     return true;
 }
@@ -51,7 +51,7 @@ void CameraControlModule::disconnect() {
         status_.connected = false;
         status_.detail = "noop";
     }
-    SPDLOG_INFO("相机链路已断开 (Noop)");
+    SPDLOG_INFO("相机链路已断开（空实现）");
     event_bus_.publish(events::kStatusChanged, status());
 }
 
@@ -61,7 +61,7 @@ CameraStatus CameraControlModule::status() const {
 }
 
 bool CameraControlModule::send_command(const std::string& command, std::string&) {
-    SPDLOG_INFO("相机指令 (Noop): {}", command);
+    SPDLOG_INFO("相机指令（空实现）: {}", command);
     return true;
 }
 

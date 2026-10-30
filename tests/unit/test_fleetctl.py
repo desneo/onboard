@@ -17,6 +17,39 @@ SPEC.loader.exec_module(fleetctl)
 
 
 class FleetCtlTest(unittest.TestCase):
+    def test_log_keys_keep_original_code_and_px4_names(self):
+        sources = "\n".join(
+            path.read_text(encoding="utf-8")
+            for root in (ROOT / "src", ROOT / "tools" / "gcs_sim")
+            for path in root.rglob("*")
+            if path.suffix in {".cpp", ".h"}
+        )
+        for translated_key in (
+            "最大水平速度米每秒=",
+            "最大爬升速度米每秒=",
+            "最大下降速度米每秒=",
+            "最大水平加速度米每二次方秒=",
+            "飞机ID=",
+            "地面站ID=",
+            "发送方ID=",
+            "任务ID=",
+            "航迹ID=",
+            "时间戳毫秒=",
+            "安全高度米=",
+            "滚转角度=",
+        ):
+            self.assertNotIn(translated_key, sources)
+        self.assertIn("MPC_XY_VEL_MAX={:.2f}", sources)
+        self.assertIn("MPC_Z_VEL_MAX_UP={:.2f}", sources)
+        self.assertIn("MPC_Z_VEL_MAX_DN={:.2f}", sources)
+        self.assertIn("MPC_ACC_HOR_MAX={:.2f}", sources)
+        self.assertNotIn("MidcourseLimits", sources)
+        self.assertNotIn("midcourse_limits", sources)
+        self.assertIn("FlightControlParams", sources)
+        self.assertIn("飞控系统参数已缓存", sources)
+        self.assertIn("[%^%l%$] [%t] %s:%# %v", sources)
+        self.assertNotIn("[线程%t]", sources)
+
     def test_parse_dynamic_endpoints_by_uri_and_port(self):
         output = """
         vehicle B video: rtsp://192.168.1.56:8554/two
@@ -72,10 +105,11 @@ class FleetCtlTest(unittest.TestCase):
             "[system]\nlog_dir = logs/old-run\n"
             "[image_input]\ntype = Rtsp\n[detection]\nmodel_path = old-model\n"
             "[plugins]\ndirectory = plugins\n[video_output]\ntype = Rtsp\n"
-            "[debug]\ntarget_log = true\n[safety]\nalert_voltage_threshold_v = 21\n"
+            "[debug]\ntarget_log = true\n[suicide_mission]\nphase_timeout_ms = 1000\n"
+            "[safety]\nalert_voltage_threshold_v = 21\n"
         )
         result = fleetctl.configure_plane(source, config.planes[0], "udpout://127.0.0.1:14580")
-        for section in ("image_input", "detection", "plugins", "video_output", "debug"):
+        for section in ("image_input", "detection", "plugins", "video_output", "debug", "suicide_mission"):
             self.assertNotIn(f"[{section}]", result)
         self.assertIn("[safety]\nalert_voltage_threshold_v = 21", result)
         self.assertIn("log_dir = logs\n", result)
@@ -111,11 +145,20 @@ class FleetCtlTest(unittest.TestCase):
         text = (
             "[2026-10-27 17:00:00.000] [info] 他机上线: uav2\n"
             "[2026-10-27 17:00:01.000] [info] 飞控连接建立\n"
-            "[2026-10-27 18:00:00.000] [info] plane 启动: version=0.1.0\n"
+            "[2026-10-27 18:00:00.000] [info] plane 程序启动: version=0.1.0\n"
         )
         result = fleetctl.analyze_plane(planes[0], planes, text)
         self.assertFalse(result.peer_online["uav2"])
         self.assertFalse(result.flight_connected)
+
+    def test_spdlog_error_level_is_detected(self):
+        planes = fleetctl.load_config(ROOT / "config" / "fleet.ini").planes[:1]
+        text = (
+            "[2026-10-30 18:00:00.000] [info] plane 程序启动: version=0.1.0\n"
+            "[2026-10-30 18:00:01.000] [error] 飞控连接失败\n"
+        )
+        result = fleetctl.analyze_plane(planes[0], planes, text)
+        self.assertEqual(result.errors, ["[2026-10-30 18:00:01.000] [error] 飞控连接失败"])
 
     def test_presence_deployment_preserves_board_connections(self):
         plane = fleetctl.load_config(ROOT / "config" / "fleet.ini").planes[1]
@@ -150,6 +193,20 @@ class FleetCtlTest(unittest.TestCase):
             fleetctl.command_test_vehicle_info(argparse.Namespace(count=2), config, remote)
         remote.run.assert_not_called()
         remote.rsync_to.assert_not_called()
+
+    def test_midcourse_rejects_multiple_boards_before_remote_actions(self):
+        config = fleetctl.load_config(ROOT / "config" / "fleet.ini")
+        remote = Mock()
+        with self.assertRaises(fleetctl.FleetError):
+            fleetctl.command_test_midcourse(argparse.Namespace(count=2), config, remote)
+        remote.run.assert_not_called()
+        remote.rsync_to.assert_not_called()
+
+    def test_midcourse_command_is_registered(self):
+        args = fleetctl.build_parser().parse_args(["test-midcourse", "--count", "1"])
+        self.assertEqual(args.command, "test-midcourse")
+        self.assertEqual(args.count, 1)
+        self.assertEqual(args.target_track_id, "")
 
     def test_presence_preflight_only_contacts_selected_boards(self):
         config = fleetctl.load_config(ROOT / "config" / "fleet.ini")

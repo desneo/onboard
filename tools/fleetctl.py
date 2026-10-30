@@ -660,13 +660,15 @@ def set_ini_value(text: str, section: str, key: str, value: str) -> str:
 
 
 def configure_plane(base: str, plane: Plane, flight_url: str) -> str:
-    # 旧板端配置可能仍包含已移除的图像模块，生成配置时清除这些 section。
+    # 旧板端配置可能仍包含已移除的图像模块和旧反无人机任务参数，生成配置时清除这些 section。
     lines = []
     retired = False
     for line in base.splitlines(keepends=True):
         section = re.match(r"^\s*\[([^]]+)\]", line)
         if section:
-            retired = section.group(1).strip() in {"plugins", "image_input", "detection", "video_output", "debug"}
+            retired = section.group(1).strip() in {
+                "plugins", "image_input", "detection", "video_output", "debug", "suicide_mission"
+            }
         if not retired:
             lines.append(line)
     result = "".join(lines)
@@ -778,7 +780,14 @@ def analyze_plane(plane: Plane, peers: Sequence[Plane], text: str) -> PlaneResul
     result = PlaneResult(plane_id=plane.plane_id, host=plane.host)
     # 两个日志文件可能重复或跨运行保留历史；只采信最新启动之后的状态变更。
     records = [(match.group(1), line) for line in text.splitlines() if (match := LOG_TIME_RE.match(line))]
-    latest_start = max((timestamp for timestamp, line in records if "plane 启动:" in line), default="")
+    latest_start = max(
+        (
+            timestamp
+            for timestamp, line in records
+            if "plane 程序启动:" in line or "plane 启动:" in line
+        ),
+        default="",
+    )
     current = sorted(
         ((timestamp, line) for timestamp, line in records if timestamp >= latest_start),
         key=lambda record: record[0],
@@ -794,7 +803,9 @@ def analyze_plane(plane: Plane, peers: Sequence[Plane], text: str) -> PlaneResul
     result.errors = [
         line.strip()
         for line in current_text.splitlines()
-        if "[error]" in line.lower()
+        if "[错误]" in line
+        or "[严重]" in line
+        or "[error]" in line.lower()
         or "错误:" in line
         or "error while loading shared libraries" in line
         or "检测到致命错误" in line
@@ -1127,7 +1138,8 @@ def command_test_vehicle_info(args: argparse.Namespace, config: FleetConfig, rem
     def launch_gcs(stage: str, *, query: str = "", seconds: int = 2,
                    presence: bool = True, plane_id: str | None = None) -> None:
         options = ["--plane-id", plane_id or plane.plane_id, "--sender-id", station_id,
-                   "--listen-seconds", str(seconds), "--query-timeout-ms", "1500"]
+                   "--listen-seconds", str(seconds), "--query-timeout-ms", "1500",
+                   "--no-radar-udp"]
         if query:
             options += ["--query", query]
         if not presence:
@@ -1143,8 +1155,14 @@ def command_test_vehicle_info(args: argparse.Namespace, config: FleetConfig, rem
         code, text = wait_gcs(stage)
         if code != 0:
             raise FleetError(f"{stage}: gcs_sim 返回 {code}，详见 {run_dir / ('gcs-' + stage + '.log')}")
-        pushes = [json.loads(item) for item in re.findall(r"收到 VehicleInfo: (\{[^\n]*\})", text)]
-        replies = [json.loads(item) for item in re.findall(r"查询成功 VehicleInfo: (\{[^\n]*\})", text)]
+        pushes = [
+            json.loads(item)
+            for item in re.findall(r"收到飞机信息（VehicleInfo）: (\{[^\n]*\})", text)
+        ]
+        replies = [
+            json.loads(item)
+            for item in re.findall(r"飞机信息查询成功: (\{[^\n]*\})", text)
+        ]
         if len(pushes) != push_count or any(item != expected for item in pushes):
             raise FleetError(f"{stage}: 主动上报数量或内容错误: {pushes}，期望 {push_count} 次 {expected}")
         if len(replies) != int(query) or any(item != expected for item in replies):
@@ -1199,7 +1217,7 @@ def command_test_vehicle_info(args: argparse.Namespace, config: FleetConfig, rem
             launch_gcs(stage, query="VehicleInfo")
             verify_gcs(stage, query=True, push_count=1)
             time.sleep(1)
-        launch_gcs("query-only", query="VehicleInfo", seconds=0, presence=False)
+        launch_gcs("query-only", query="VehicleInfo", seconds=1, presence=False)
         verify_gcs("query-only", query=True, push_count=0)
         launch_gcs("missing-plane", query="VehicleInfo", seconds=0, presence=False,
                    plane_id="vehicle-info-nonexistent-" + run_id)
@@ -1215,7 +1233,7 @@ def command_test_vehicle_info(args: argparse.Namespace, config: FleetConfig, rem
         text = sanitize_output(remote.run(plane, f"cat {runtime}/logs/plane.stdout.log").stdout)
         (run_dir / "plane.stdout.log").write_text(text, encoding="utf-8")
         remote.run(plane, "pgrep -x plane >/dev/null")
-        if "系统就绪" not in text or text.count("已上报 VehicleInfo:") != 3:
+        if "系统就绪" not in text or text.count("已上报飞机信息:") != 3:
             raise FleetError("机载未保持就绪，或出现多余/缺失的 VehicleInfo 上报")
         passed("机载保持运行，启动及两次地面站上线共上报 3 次")
         report["status"] = "passed"
@@ -1227,6 +1245,251 @@ def command_test_vehicle_info(args: argparse.Namespace, config: FleetConfig, rem
         report["error"] = str(exc)
         save()
         raise FleetError(f"VehicleInfo 验证失败: {exc}；证据目录: {run_dir}") from exc
+
+
+def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote: RemoteExecutor) -> int:
+    """部署一号板，连接用户手动启动的 SITL，并等待外部雷达数据完成验收。"""
+    planes = selected_planes(config, args.count)
+    if len(planes) != 1:
+        raise FleetError("test-midcourse 当前要求 --count 1")
+    plane = planes[0]
+    run_id = new_run_id()
+    task_id = "midcourse-" + run_id
+    target_id = args.target_track_id.strip()
+    run_dir = ROOT / "logs" / "fleet" / run_id
+    run_dir.mkdir(parents=True, exist_ok=False)
+    test_dir = f"/tmp/plane-midcourse-{run_id}"
+    report = {
+        "run_id": run_id,
+        "status": "running",
+        "plane": plane.plane_id,
+        "host": plane.host,
+        "task_id": task_id,
+        "target_track_id": target_id,
+        "checks": [],
+        "flight_or_task_commands_sent": False,
+    }
+
+    def save() -> None:
+        (run_dir / "midcourse-report.json").write_text(
+            json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+
+    def passed(name: str) -> None:
+        report["checks"].append({"name": name, "status": "passed"})
+        save()
+        print(f"[midcourse] 通过: {name}", flush=True)
+
+    def plane_log(stage: str) -> str:
+        path = plane.runtime_dir + "/logs/plane.stdout.log"
+        text = sanitize_output(remote.run(plane, f"cat {shlex.quote(path)} 2>/dev/null", check=False).stdout)
+        (run_dir / f"{stage}-plane.log").write_text(text, encoding="utf-8")
+        return text
+
+    def gcs_log(stage: str) -> str:
+        path = test_dir + "/gcs.log"
+        text = sanitize_output(remote.run(plane, f"cat {shlex.quote(path)} 2>/dev/null", check=False).stdout)
+        (run_dir / f"{stage}-gcs.log").write_text(text, encoding="utf-8")
+        return text
+
+    def wait_until(description: str, predicate, timeout_s: int) -> None:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            if predicate():
+                return
+            time.sleep(0.5)
+        raise FleetError(f"等待超时: {description}")
+
+    def stop_background_gcs() -> None:
+        script = (
+            f"pid_file={shlex.quote(test_dir + '/gcs.pid')}; "
+            "if [ -s \"$pid_file\" ]; then pid=$(cat \"$pid_file\"); "
+            "kill -TERM \"$pid\" 2>/dev/null || true; "
+            "for i in $(seq 1 20); do kill -0 \"$pid\" 2>/dev/null || exit 0; sleep 0.1; done; fi"
+        )
+        remote.run(plane, script, timeout=10, check=False)
+
+    save()
+    try:
+        preflight(config, planes, remote, include_simulator=False)
+        bundle = ensure_bundle()
+        gcs_binary = ROOT / "build" / "gcs_sim"
+        if not gcs_binary.is_file():
+            raise FleetError("缺少 build/gcs_sim，请先完成构建")
+
+        if config.simulator.flight_port_base is None:
+            raise FleetError("fleet.ini 未配置 simulator.flight_port_base，无法确定手动 SITL 的飞控端口")
+        flight_endpoint = f"udpout://{config.simulator.host}:{config.simulator.flight_port_base}"
+        report["flight_endpoint"] = flight_endpoint
+        stop_planes(planes, remote)
+        sync_plane(plane, bundle, flight_endpoint, run_id, remote, run_dir)
+        check_remote_dependencies(plane, remote)
+        remote.run(plane, f"mkdir -p {shlex.quote(test_dir)}")
+        remote.rsync_to(plane, gcs_binary, test_dir + "/gcs_sim")
+        deps = remote.run(
+            plane,
+            f"cd {shlex.quote(plane.runtime_dir)} && ./plane --deps-check && "
+            "ldd ./plane | grep 'libmidcourse_alg_3588.so' && ! ldd ./plane | grep -i pluma",
+        )
+        (run_dir / "deps.log").write_text(deps.stdout, encoding="utf-8")
+        passed("部署包依赖自检通过，直连 libmidcourse_alg_3588.so 且不含 Pluma")
+
+        start_plane(plane, remote)
+        wait_until(
+            f"机载接入用户手动启动的仿真飞控 {config.simulator.host}",
+            lambda: "飞控系统已接入" in plane_log("flight-wait")
+            and "飞控系统参数已缓存" in plane_log("flight-wait")
+            and remote.run(plane, "pgrep -x plane >/dev/null", check=False).returncode == 0,
+            config.verify_timeout_s,
+        )
+        passed(f"确认机载进程已接入手动 SITL {config.simulator.host} 并在连接阶段缓存飞控系统参数")
+
+        # 先只启动 GCS 雷达桥并等待本机状态，确认过滤输入已就绪后再下发任务。
+        gcs_command = shlex.join(
+            [
+                test_dir + "/gcs_sim",
+                "--plane-id",
+                plane.plane_id,
+                "--sender-id",
+                "GCS",
+                "--listen-seconds",
+                "0",
+            ]
+        )
+        inner = (
+            f"echo $$ >{shlex.quote(test_dir + '/gcs.pid')}; "
+            f"exec env LD_LIBRARY_PATH={shlex.quote(plane.runtime_dir + '/lib')} {gcs_command} "
+            f">{shlex.quote(test_dir + '/gcs.log')} 2>&1"
+        )
+        remote.run(plane, f"setsid -f bash -c {shlex.quote(inner)}")
+        wait_until(
+            "GCS 雷达桥收到本机状态",
+            lambda: f"planeId={plane.plane_id}" in gcs_log("state-wait"),
+            20,
+        )
+        state_text = gcs_log("state-ready")
+        state_matches = re.findall(
+            rf"planeId={re.escape(plane.plane_id)}[^\n]*geoPos.latitude=([-+0-9.eE]+) "
+            rf"geoPos.longitude=([-+0-9.eE]+) geoPos.height=[-+0-9.eE]+ "
+            rf"geoPos.altitude=([-+0-9.eE]+)", state_text)
+        if not state_matches or abs(float(state_matches[-1][0])) < 1.0 or abs(float(state_matches[-1][1])) < 1.0:
+            raise FleetError("仿真飞控尚未给出有效经纬度，禁止发送控制验收数据")
+        passed("GCS 雷达桥已监听 0.0.0.0:7790，友机过滤已有有效本机状态")
+
+        report["radar_destination"] = f"{plane.host}:7790"
+        save()
+        print(
+            "\n[midcourse] 板端自检通过，请现在向 " + plane.host + ":7790 持续发送雷达 UDP 数据。\n"
+            "[midcourse] 将先确认任务启动前已缓存至少 20 个严格递增扫描，再下发反无任务。\n"
+            "[midcourse] 7790 只需发送雷达航迹，防守机状态由 GCS 从 Zenoh 获取。\n"
+            + (f"[midcourse] 本次锁定靶机 track_id={target_id}。\n" if target_id else
+               "[midcourse] 本次未指定 track_id，雷达数据必须只有一个可用靶机候选。\n"),
+            flush=True,
+        )
+
+        def radar_history_ready() -> bool:
+            text = plane_log("radar-cache-wait")
+            if target_id:
+                pattern = rf"GCS 目标更新: trackId={re.escape(target_id)} timestamp_ms="
+                return len(re.findall(pattern, text)) >= 20
+            counts: dict[str, int] = {}
+            for observed_track_id in re.findall(r"GCS 目标更新: trackId=([^ ]+) timestamp_ms=", text):
+                counts[observed_track_id] = counts.get(observed_track_id, 0) + 1
+            return any(count >= 20 for count in counts.values())
+
+        wait_until("任务启动前持续缓存 20 帧雷达历史", radar_history_ready, args.radar_timeout)
+        passed("任务启动前已持续缓存至少 20 帧雷达历史")
+
+        task_args = [
+            test_dir + "/gcs_sim", "--plane-id", plane.plane_id, "--sender-id", "GCS",
+            "--anti-uav", "--task-id", task_id,
+        ]
+        if target_id:
+            task_args.extend(["--target-track-id", target_id])
+        task_args.extend(["--listen-seconds", "1", "--no-radar-udp", "--no-presence"])
+        task_command = shlex.join(task_args)
+        task_result = remote.run(
+            plane, f"env LD_LIBRARY_PATH={shlex.quote(plane.runtime_dir + '/lib')} {task_command}", timeout=15)
+        (run_dir / "start-gcs.log").write_text(task_result.stdout, encoding="utf-8")
+        report["flight_or_task_commands_sent"] = True
+        save()
+        print(
+            "\n[midcourse] 已下发反无任务，请保持雷达持续发送，以验证第 21 帧增量更新。\n"
+            "[midcourse] GCS 会过滤 50 米内匹配到友机的航迹；友机未出现在雷达帧中不会阻塞靶机转发。\n",
+            flush=True,
+        )
+
+        wait_until(
+            "外部雷达 20+1 帧到达并启动 Attitude Offboard",
+            lambda: "中制导初始化完成" in plane_log("midcourse-wait")
+            and "中制导目标估计器首次增量更新" in plane_log("midcourse-wait")
+            and "Offboard 姿态启动" in plane_log("midcourse-wait")
+            and "-> Offboard" in plane_log("midcourse-wait"),
+            args.radar_timeout,
+        )
+        text_before_stop = plane_log("midcourse-running")
+        if target_id and f"trackId={target_id}" not in text_before_stop:
+            raise FleetError(f"机载日志未收到指定靶机 {target_id}")
+        time.sleep(4)
+        if remote.run(plane, "pgrep -x plane >/dev/null", check=False).returncode != 0:
+            raise FleetError("中制导启动后机载进程退出")
+        running_text = plane_log("midcourse-sustained")
+        if "行为树结束: currentBehaviorTree=AntiUav" in running_text:
+            raise FleetError("AntiUav 在外部停止前自行结束")
+        cache_index = running_text.find("飞控系统参数已缓存")
+        session_index = running_text.find("中制导会话启动")
+        set_config_index = running_text.find("MidcoursePlanner::setConfig 输入")
+        estimator_init_index = running_text.find("TargetEstimator::init 输入")
+        planner_update_index = running_text.find("MidcoursePlanner::update 输入")
+        estimator_update_index = running_text.find("TargetEstimator::update 输入")
+        if not (0 <= cache_index < session_index):
+            raise FleetError("飞控系统参数未在中制导会话启动前完成缓存")
+        if not (0 <= set_config_index < estimator_init_index < planner_update_index < estimator_update_index):
+            raise FleetError("中制导接口调用顺序不符合 setConfig → init → planner.update → estimator.update")
+        passed("启动前 20 帧缓存、接口调用顺序、第 21 帧更新、Attitude Offboard 与持续运行验证通过")
+
+        stop_command = shlex.join(
+            [
+                test_dir + "/gcs_sim",
+                "--plane-id",
+                plane.plane_id,
+                "--sender-id",
+                "GCS",
+                "--stop-task",
+                "--task-id",
+                task_id,
+                "--listen-seconds",
+                "1",
+                "--no-radar-udp",
+                "--no-presence",
+            ]
+        )
+        stop_result = remote.run(
+            plane,
+            f"env LD_LIBRARY_PATH={shlex.quote(plane.runtime_dir + '/lib')} {stop_command}",
+            timeout=15,
+        )
+        (run_dir / "stop-gcs.log").write_text(stop_result.stdout, encoding="utf-8")
+        wait_until(
+            "任务停止并退出 Offboard",
+            lambda: "任务中止: taskId=" + task_id in plane_log("stop-wait")
+            and "Offboard 停止" in plane_log("stop-wait"),
+            15,
+        )
+        passed("匹配 taskId 的 Task Stop 已停止 Offboard 并清理会话")
+        stop_background_gcs()
+        report["status"] = "passed"
+        save()
+        print(f"[result] 中制导板端验证通过；机载与手动 SITL 保持运行。报告: {run_dir / 'midcourse-report.json'}")
+        return 0
+    except (FleetError, OSError, ValueError, configparser.Error) as exc:
+        stop_background_gcs()
+        report["status"] = "failed"
+        report["error"] = str(exc)
+        save()
+        plane_log("failure")
+        gcs_log("failure")
+        raise FleetError(f"中制导板端验证失败: {exc}；证据目录: {run_dir}") from exc
 
 
 def command_test(args: argparse.Namespace, config: FleetConfig, remote: RemoteExecutor) -> int:
@@ -1311,6 +1574,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name, help_text in (
         ("preflight", "只执行环境和连接预检"),
         ("test", "启动、同步并验证多机状态互通"),
+        ("test-midcourse", "部署一号机，连接手动 SITL 并等待外部雷达验证中制导"),
         ("test-vehicle-info", "部署一号机并验证 VehicleInfo 上报、重连和原生查询，不重启 SITL"),
         ("test-presence", "部署双机并验证上线、退出、崩溃和恢复，不重启 SITL"),
         ("verify", "复核一个已启动运行现场的多机状态互通"),
@@ -1318,6 +1582,9 @@ def build_parser() -> argparse.ArgumentParser:
     ):
         command = subparsers.add_parser(name, help=help_text)
         command.add_argument("--count", type=int, required=True, help="请求的飞机数量")
+        if name == "test-midcourse":
+            command.add_argument("--radar-timeout", type=int, default=300, help="等待外部雷达数据的秒数")
+            command.add_argument("--target-track-id", default="", help="锁定的雷达 track_id；留空时要求唯一靶机")
         if name == "verify":
             command.add_argument("--run-id", required=True, help="待复核的 fleet 运行编号")
     return parser
@@ -1332,6 +1599,8 @@ def main() -> int:
             return command_preflight(args, config, remote)
         if args.command == "test-vehicle-info":
             return command_test_vehicle_info(args, config, remote)
+        if args.command == "test-midcourse":
+            return command_test_midcourse(args, config, remote)
         if args.command == "test-presence":
             return command_test_presence(args, config, remote)
         if args.command == "test":

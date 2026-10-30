@@ -108,10 +108,9 @@ bool ZenohTransport::open(const ZenohEndpoints& endpoints, std::string& error) {
         } catch (const zenoh::ZException& e) {
             SPDLOG_WARN("Zenoh 已上线但获取对端信息失败: {}", e.what());
         }
-        SPDLOG_INFO(
-            "Zenoh 已上线: 远端端点(connect)=[{}], 本地监听(listen)=[{}], 本机 zid={}, routers=[{}], peers=[{}]",
-            endpoints_or_default(endpoints.connect), endpoints_or_default(endpoints.listen),
-            impl_->session->get_zid().to_string(), routers, peers);
+        SPDLOG_INFO("Zenoh 已上线: connect/endpoints=[{}] listen/endpoints=[{}] zid={} routers=[{}] peers=[{}]",
+                    endpoints_or_default(endpoints.connect), endpoints_or_default(endpoints.listen),
+                    impl_->session->get_zid().to_string(), routers, peers);
         return true;
     } catch (const zenoh::ZException& e) {
         error = e.what();
@@ -303,7 +302,7 @@ bool ZenohTransport::put(const std::string& key_expr, const std::string& payload
         return false;
     }
     if (impl_->debug_log) {
-        SPDLOG_INFO("[zenoh:debug] put topic={} -> 远端端点=[{}], payload={}", key_expr,
+        SPDLOG_INFO("Zenoh 调试发送: key_expr={} remote_endpoints=[{}] payload={}", key_expr,
                     endpoints_or_default(impl_->remote_endpoints), payload);
     }
     try {

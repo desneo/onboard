@@ -25,10 +25,8 @@ class PlaceholderModule final : public IModule {
 }  // namespace
 
 std::vector<std::unique_ptr<IModule>> make_placeholder_modules(const std::vector<std::string>& skip) {
-    const char* names[] = {
-        "Communication",  "UAV State Management", "StateMonitor",   "Target Management",
-        "Flight Control", "Camera Control",       "Task Scheduler", "Task Execution Engine",
-    };
+    const char* names[] = {"通信",     "无人机状态管理", "状态监控",   "目标管理",
+                           "飞行控制", "相机控制",       "任务调度器", "任务执行引擎"};
     std::vector<std::unique_ptr<IModule>> modules;
     modules.reserve(std::size(names));
     for (const char* module_name : names) {

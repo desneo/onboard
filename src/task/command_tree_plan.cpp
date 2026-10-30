@@ -37,4 +37,14 @@ std::vector<std::string> command_node_names(plane::model::CommandType type,
     return {};
 }
 
+std::vector<std::string> anti_uav_node_names(const plane::flight_control::FlightStatus& flight_status) {
+    std::vector<std::string> nodes;
+    if (!flight_status.in_air) {
+        if (!flight_status.armed) nodes.emplace_back("Arm");
+        nodes.emplace_back("Takeoff");
+    }
+    nodes.emplace_back("Midcourse");
+    return nodes;
+}
+
 }  // namespace plane::task

@@ -5,42 +5,26 @@
 namespace plane::task {
 
 bool MidcourseNode::dispatch(std::string& error) {
-    plane::model::GcsTarget target;
-    if (!controller_.resolve_target(context_->targetTrackId, target)) {
-        error = context_->targetTrackId.empty() ? "无法确定 GCS 目标（targetTrackId 为空且 GCS 目标数不为 1）"
-                                                : "GCS 目标不存在: " + context_->targetTrackId;
-        return false;
-    }
-    SPDLOG_INFO("中段制导目标: trackId={}, lat={}, lon={}, height={}", target.trackId, target.geoPos.latitude,
-                target.geoPos.longitude, target.geoPos.height);
-    return true;
+    return controller_->begin(context_->targetTrackId, error);
 }
 
 BT::NodeStatus MidcourseNode::checkFinish() {
-    plane::model::GcsTarget target;
-    if (!controller_.resolve_target(context_->targetTrackId, target)) {
-        SPDLOG_ERROR("中段制导目标不可用");
-        return BT::NodeStatus::FAILURE;
-    }
-    const double distance = controller_.horizontal_distance_m(target);
-    if (distance <= app_config_->suicide_detection_start_distance_m) {
-        SPDLOG_INFO("中段制导到达检测启动距离: {:.1f} m", distance);
-        return BT::NodeStatus::SUCCESS;
-    }
     std::string error;
-    if (!controller_.approach(target, app_config_->suicide_approach_speed_m_s, error)) {
-        SPDLOG_ERROR("中段制导速度下发失败 (距离 {:.1f} m): {}", distance, error);
+    if (controller_->tick(error) == MidcourseController::TickResult::Failure) {
+        SPDLOG_ERROR("中段制导失败: {}", error);
+        controller_->stop();
+        flight_control_->clear_offboard();
         return BT::NodeStatus::FAILURE;
     }
-    SPDLOG_DEBUG("中段制导: 距离 {:.1f} m", distance);
     return BT::NodeStatus::RUNNING;
 }
 
 void MidcourseNode::onHalted() {
     FlightActionNode::onHalted();
-    flight_control_->clear_ned_velocity();
+    controller_->stop();
+    flight_control_->clear_offboard();
 }
 
-std::int64_t MidcourseNode::node_timeout_ms() const { return app_config_->suicide_phase_timeout_ms; }
+bool MidcourseNode::timeout_enabled() const { return false; }
 
 }  // namespace plane::task

@@ -48,6 +48,12 @@ awk '/=>/ {print $3}' "${LDD_SNAPSHOT}" \
 rm -f "${PLANE_DIR}"/lib/*
 cp -a "${LIB_STAGE}/private/." "${PLANE_DIR}/lib/"
 
+# 中制导发布包不设置 SONAME，按其唯一运行库文件名原样分发。
+# 公共接口来自 common_include，不复制算法源码或 Pluma 兼容插件。
+MIDCOURSE_RELEASE_LIB="${ROOT}/../algorithm/midcourse_alg/midcourse_alg-0.1.0-aarch64/lib"
+install -m 0644 "${MIDCOURSE_RELEASE_LIB}/libmidcourse_alg_3588.so" \
+  "${PLANE_DIR}/lib/libmidcourse_alg_3588.so"
+
 rm -f "${LDD_SNAPSHOT}"
 rm -rf -- "${LIB_STAGE}"
 trap - EXIT

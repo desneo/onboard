@@ -36,6 +36,7 @@ add_executable(plane
   src/plugin/plugin_management.cpp
   src/state/state_store.cpp
   src/state/state_monitor.cpp
+  src/flight_control/attitude_conversion.cpp
   src/flight_control/flight_control_module.cpp
   src/geo/geo_tool.cpp
   src/task/task_scheduler.cpp
@@ -49,7 +50,8 @@ add_executable(plane
   src/task/nodes/rtl_node.cpp
   src/task/nodes/hover_node.cpp
   src/task/nodes/stop_motor_node.cpp
-  src/task/nodes/approach_controller.cpp
+  src/task/nodes/midcourse_algorithm_adapter.cpp
+  src/task/nodes/midcourse_controller.cpp
   src/task/nodes/midcourse_node.cpp
   src/task/task_execution_engine.cpp
   src/target/target_store.cpp
@@ -63,14 +65,17 @@ target_compile_definitions(plane PRIVATE
 )
 target_link_libraries(plane PRIVATE
   plane::common_include
+  plane::midcourse_alg
   plane::deps
 )
 # 可执行文件直接输出到 build/plane/，该目录作为可整体拷贝的独立运行目录。
 set_target_properties(plane PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plane")
 
 add_executable(gcs_sim tools/gcs_sim/main.cpp
+  tools/gcs_sim/radar_target_filter.cpp
+  src/core/log.cpp
   src/communication/serialization.cpp src/communication/plane_query.cpp src/communication/zenoh_transport.cpp)
-target_include_directories(gcs_sim PRIVATE src)
+target_include_directories(gcs_sim PRIVATE src "${CMAKE_SOURCE_DIR}")
 target_compile_options(gcs_sim PRIVATE -Wall -Wextra)
 target_link_libraries(gcs_sim PRIVATE
   plane::common_include
@@ -136,6 +141,49 @@ if(BUILD_TESTING)
     plane::nlohmann_json
   )
   add_test(NAME serialization_vehicle_state COMMAND serialization_vehicle_state_test)
+
+  add_executable(attitude_conversion_test
+    tests/unit/attitude_conversion_test.cpp
+    src/flight_control/attitude_conversion.cpp
+  )
+  target_include_directories(attitude_conversion_test PRIVATE src)
+  target_compile_options(attitude_conversion_test PRIVATE -Wall -Wextra)
+  target_link_libraries(attitude_conversion_test PRIVATE plane::common_include)
+  add_test(NAME attitude_conversion COMMAND attitude_conversion_test)
+
+  add_executable(radar_target_filter_test
+    tests/unit/radar_target_filter_test.cpp
+    tools/gcs_sim/radar_target_filter.cpp
+  )
+  target_include_directories(radar_target_filter_test PRIVATE src "${CMAKE_SOURCE_DIR}")
+  target_compile_options(radar_target_filter_test PRIVATE -Wall -Wextra)
+  target_link_libraries(radar_target_filter_test PRIVATE plane::common_include plane::nlohmann_json)
+  add_test(NAME radar_target_filter COMMAND radar_target_filter_test)
+
+  add_executable(midcourse_algorithm_adapter_test
+    tests/unit/midcourse_algorithm_adapter_test.cpp
+    src/task/nodes/midcourse_algorithm_adapter.cpp
+  )
+  target_include_directories(midcourse_algorithm_adapter_test PRIVATE src)
+  target_compile_options(midcourse_algorithm_adapter_test PRIVATE -Wall -Wextra)
+  target_link_libraries(midcourse_algorithm_adapter_test PRIVATE plane::midcourse_alg spdlog::spdlog)
+  add_test(NAME midcourse_algorithm_adapter COMMAND midcourse_algorithm_adapter_test)
+
+  add_executable(midcourse_controller_test
+    tests/unit/midcourse_controller_test.cpp
+    src/task/nodes/midcourse_algorithm_adapter.cpp
+    src/task/nodes/midcourse_controller.cpp
+    src/target/target_store.cpp
+  )
+  target_include_directories(midcourse_controller_test PRIVATE src)
+  target_compile_options(midcourse_controller_test PRIVATE -Wall -Wextra)
+  target_link_libraries(midcourse_controller_test PRIVATE
+    plane::common_include
+    plane::eventpp
+    plane::midcourse_alg
+    spdlog::spdlog
+  )
+  add_test(NAME midcourse_controller COMMAND midcourse_controller_test)
 
   add_executable(mission_node_timeout_test
     tests/unit/mission_node_timeout_test.cpp
