@@ -1,5 +1,7 @@
 #include "core/placeholder_modules.h"
 
+#include <spdlog/spdlog.h>
+
 #include <algorithm>
 #include <iterator>
 #include <string>
@@ -13,8 +15,14 @@ class PlaceholderModule final : public IModule {
     explicit PlaceholderModule(std::string name) : name_(std::move(name)) {}
 
     std::string name() const override { return name_; }
-    bool init() override { return true; }
-    bool start() override { return true; }
+    bool init() override {
+        SPDLOG_INFO("模块初始化完成: {}", name());
+        return true;
+    }
+    bool start() override {
+        SPDLOG_INFO("模块启动完成: {}", name());
+        return true;
+    }
     void stop() override {}
     void release() override {}
 

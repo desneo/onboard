@@ -50,7 +50,10 @@ FlightControlModule::~FlightControlModule() { stop(); }
 
 std::string FlightControlModule::name() const { return "飞行控制"; }
 
-bool FlightControlModule::init() { return true; }
+bool FlightControlModule::init() {
+    SPDLOG_INFO("模块初始化完成: {}", name());
+    return true;
+}
 
 std::string FlightControlModule::connection_url() const {
     if (config_.fc_link_type == "serial") {
@@ -75,6 +78,7 @@ bool FlightControlModule::start() {
     monitor_thread_ = std::thread([this]() { monitor_loop(); });
     state_thread_ = std::thread([this]() { state_loop(); });
     offboard_thread_ = std::thread([this]() { offboard_loop(); });
+    SPDLOG_INFO("模块启动完成: {}", name());
     return true;
 }
 

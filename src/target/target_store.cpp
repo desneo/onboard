@@ -22,11 +22,15 @@ TargetStore::~TargetStore() { stop(); }
 
 std::string TargetStore::name() const { return "目标管理"; }
 
-bool TargetStore::init() { return true; }
+bool TargetStore::init() {
+    SPDLOG_INFO("模块初始化完成: {}", name());
+    return true;
+}
 
 bool TargetStore::start() {
     event_bus_.subscribe<GcsTarget>(plane::communication::events::kGcsTargetReceived,
                                     [this](const GcsTarget& target) { on_gcs_target(target); });
+    SPDLOG_INFO("模块启动完成: {}", name());
     return true;
 }
 

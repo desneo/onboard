@@ -14,13 +14,17 @@ SystemParamStore::~SystemParamStore() { stop(); }
 
 std::string SystemParamStore::name() const { return "系统参数"; }
 
-bool SystemParamStore::init() { return true; }
+bool SystemParamStore::init() {
+    SPDLOG_INFO("模块初始化完成: {}", name());
+    return true;
+}
 
 bool SystemParamStore::start() {
     event_bus_.subscribe<plane::model::SystemParam>(
         plane::communication::events::kSystemParamReceived,
         [this](const plane::model::SystemParam& param) { on_system_param(param); });
     SPDLOG_INFO("系统参数就绪: safeHeight_m={}", current().safeHeight_m);
+    SPDLOG_INFO("模块启动完成: {}", name());
     return true;
 }
 

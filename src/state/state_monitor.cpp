@@ -14,7 +14,10 @@ StateMonitor::~StateMonitor() { stop(); }
 
 std::string StateMonitor::name() const { return "状态监控"; }
 
-bool StateMonitor::init() { return true; }
+bool StateMonitor::init() {
+    SPDLOG_INFO("模块初始化完成: {}", name());
+    return true;
+}
 
 bool StateMonitor::start() {
     event_bus_.subscribe<plane::model::VehicleState>(
@@ -22,6 +25,7 @@ bool StateMonitor::start() {
     if (config_.is_sim) {
         SPDLOG_INFO("仿真飞机：低电压告警已禁用");
     }
+    SPDLOG_INFO("模块启动完成: {}", name());
     return true;
 }
 

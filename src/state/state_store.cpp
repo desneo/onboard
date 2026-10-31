@@ -27,11 +27,15 @@ StateStore::~StateStore() { stop(); }
 
 std::string StateStore::name() const { return "无人机状态管理"; }
 
-bool StateStore::init() { return true; }
+bool StateStore::init() {
+    SPDLOG_INFO("模块初始化完成: {}", name());
+    return true;
+}
 
 bool StateStore::start() {
     running_ = true;
     tick_ = std::thread([this]() { tick_loop(); });
+    SPDLOG_INFO("模块启动完成: {}", name());
     return true;
 }
 

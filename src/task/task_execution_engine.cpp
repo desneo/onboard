@@ -56,10 +56,14 @@ TaskExecutionEngine::~TaskExecutionEngine() { halt_tree(); }
 
 std::string TaskExecutionEngine::name() const { return "任务执行引擎"; }
 
-bool TaskExecutionEngine::init() { return true; }
+bool TaskExecutionEngine::init() {
+    SPDLOG_INFO("模块初始化完成: {}", name());
+    return true;
+}
 
 bool TaskExecutionEngine::start() {
     midcourse_controller_.start();
+    SPDLOG_INFO("模块启动完成: {}", name());
     return true;
 }
 

@@ -37,7 +37,10 @@ CommunicationModule::~CommunicationModule() { stop(); }
 
 std::string CommunicationModule::name() const { return "通信"; }
 
-bool CommunicationModule::init() { return true; }
+bool CommunicationModule::init() {
+    SPDLOG_INFO("模块初始化完成: {}", name());
+    return true;
+}
 
 bool CommunicationModule::start() {
     ZenohEndpoints endpoints;
@@ -98,6 +101,7 @@ bool CommunicationModule::start() {
     running_ = true;
     worker_ = std::thread([this]() { worker_loop(); });
     SPDLOG_INFO("通信模块已启动: plane_id={} station_id={}", config_.plane_id, config_.station_id);
+    SPDLOG_INFO("模块启动完成: {}", name());
     return true;
 }
 

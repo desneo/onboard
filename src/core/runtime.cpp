@@ -45,7 +45,6 @@ bool Runtime::run() {
             shutdown();
             return false;
         }
-        SPDLOG_INFO("模块初始化完成: {}", modules_[i]->name());
     }
     for (auto& module : modules_) {
         if (!module->start()) {
@@ -53,7 +52,6 @@ bool Runtime::run() {
             shutdown();
             return false;
         }
-        SPDLOG_INFO("模块启动完成: {}", module->name());
     }
     SPDLOG_INFO("系统就绪");
     return true;

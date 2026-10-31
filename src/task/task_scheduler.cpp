@@ -16,7 +16,10 @@ TaskScheduler::~TaskScheduler() { stop(); }
 
 std::string TaskScheduler::name() const { return "任务调度器"; }
 
-bool TaskScheduler::init() { return true; }
+bool TaskScheduler::init() {
+    SPDLOG_INFO("模块初始化完成: {}", name());
+    return true;
+}
 
 bool TaskScheduler::start() {
     event_bus_.subscribe<plane::model::TaskInfo>(plane::communication::events::kTaskInfoReceived,
@@ -27,6 +30,7 @@ bool TaskScheduler::start() {
                                            [this](const TaskEngineResult& result) { on_engine_result(result); });
     event_bus_.subscribe<TaskProgress>(events::kExecutionProgress,
                                        [this](const TaskProgress& progress) { on_execution_progress(progress); });
+    SPDLOG_INFO("模块启动完成: {}", name());
     return true;
 }
 

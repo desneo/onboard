@@ -12,7 +12,10 @@ CameraControlModule::~CameraControlModule() { stop(); }
 
 std::string CameraControlModule::name() const { return "相机控制"; }
 
-bool CameraControlModule::init() { return true; }
+bool CameraControlModule::init() {
+    SPDLOG_INFO("模块初始化完成: {}", name());
+    return true;
+}
 
 bool CameraControlModule::start() {
     stopped_ = false;
@@ -21,6 +24,7 @@ bool CameraControlModule::start() {
         SPDLOG_ERROR("相机链路自动建联失败: {}", error);
         return false;
     }
+    SPDLOG_INFO("模块启动完成: {}", name());
     return true;
 }
 
