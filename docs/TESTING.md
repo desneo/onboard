@@ -17,7 +17,7 @@
 
 ### 2.1 平台与设备
 #### px4 sitl环境
-1）192.168.1.40 zsh/1，登录后到 `/home/zsh/code/PX4-Autopilot/scenarios/02_rocket_two_axis_pod` 执行
+1）192.168.1.56 zsh/1，登录后到 `/home/zsh/code/PX4-Autopilot/scenarios/02_rocket_two_axis_pod` 执行
     先停止，再启动全新的环境
     ./start.sh 脚本启动测试仿真环境，默认3架， -n 参数用于指定启动的飞机架次；
     ./stop.sh停止仿真环境
@@ -56,7 +56,7 @@ python3 tools/fleetctl.py test --count 2
 python3 tools/fleetctl.py test-presence --count 2
 ```
 
-用户手动启动 `192.168.1.40:14580` 的 PX4 SITL 后，部署一号机并验证中制导：
+用户手动启动 `192.168.1.56:14580` 的 PX4 SITL 后，部署一号机并验证中制导：
 
 ```bash
 python3 tools/fleetctl.py test-midcourse --count 1 --target-track-id <track_id>

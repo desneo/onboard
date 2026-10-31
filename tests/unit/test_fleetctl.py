@@ -74,14 +74,14 @@ class FleetCtlTest(unittest.TestCase):
         """
         ports = fleetctl.validate_flight_listeners(14580, 2, listeners)
         result = fleetctl.parse_endpoints(
-            "udpout://192.168.1.40:14280 udpout://192.168.1.40:14281",
-            "192.168.1.40",
+            "udpout://192.168.1.56:14280 udpout://192.168.1.56:14281",
+            "192.168.1.56",
             2,
             ports,
         )
         self.assertEqual(
             result.flight_urls,
-            ("udpout://192.168.1.40:14580", "udpout://192.168.1.40:14581"),
+            ("udpout://192.168.1.56:14580", "udpout://192.168.1.56:14581"),
         )
 
     def test_configured_flight_ports_must_be_listening(self):
