@@ -1,0 +1,9 @@
+// 保留 Zenoh 默认的 peer 模式、组播发现和 gossip。
+// 限制单次主动建链的等待时间；连接失败后仍按默认策略重试。
+{
+  transport: {
+    unicast: {
+      open_timeout: 2000,
+    },
+  },
+}

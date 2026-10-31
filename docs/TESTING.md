@@ -22,6 +22,8 @@
     ./start.sh 脚本启动测试仿真环境，默认3架， -n 参数用于指定启动的飞机架次；
     ./stop.sh停止仿真环境
 2）start脚本执行后会输出几架飞机使用的飞机url、吊舱视频流和吊舱控制端口，从中解析出信息来修改飞机中对应的配置文件
+3）SITL 测试统一使用 `config/fleet.ini` 的 `simulator.host`（当前为 `192.168.1.56`），不得沿用板端旧 IP。
+    对现有 `14580`～`14589` 的 SITL UDP 连接保留端口并校正主机，启动后验证实际飞控连接和遥测。
 
 #### 测试环境
 1）每架机载对应一块板子
@@ -50,11 +52,14 @@ python3 tools/fleetctl.py preflight --count 2
 python3 tools/fleetctl.py test --count 2
 ```
 
-只部署双机并验证上下线及日志降频，不重启 SITL、不修改板端现有连接参数：
+只部署双机并验证上下线及日志降频，不重启 SITL；已有 SITL UDP 地址校正到清单中的仿真主机，保留端口及其他现场参数：
 
 ```bash
 python3 tools/fleetctl.py test-presence --count 2
 ```
+
+需要清空双机已有固定连接地址并使用随包的 2 秒建链超时配置时，增加 `--auto-discovery`；
+SITL UDP 端口仍保留板端现有值，主机统一使用 `192.168.1.56`。
 
 用户手动启动 `192.168.1.56:14580` 的 PX4 SITL 后，部署一号机并验证中制导：
 
@@ -139,6 +144,11 @@ cd build/plane
 `zenoh_liveliness` 在本机 TCP 回环网络上验证已有存活标记发现、退出下线和重连上线，不连接飞机。
 `state_store_quiet` 验证连续状态更新仍发布内部事件并更新缓存，但不产生日志。
 部署工具按最新运行中的上下线事件验证在线状态，不再把日志条数当作收到的位置样本数。
+
+默认运行包须包含 `config/zenoh.json5`，由 `plane.conf` 的 `zenoh_config_file` 加载，
+`transport/unicast/open_timeout` 为 `2000` 毫秒；`zenoh_connect` 留空，保留组播和 gossip 自动发现。
+修改该配置后，在一号机验证自动发现的 VehicleInfo 上报与查询、正常停止及恢复启动，
+记录实际停止耗时，并确认没有触发停止脚本的强制结束。
 
 运行日志检查须确认项目人工编写的消息和业务描述均使用中文，不出现英文句子；API 名、协议名、
 类型名、枚举值、配置键、函数参数名、结构体及其字段名和第三方库原始错误等代码标识保留原文。
@@ -292,7 +302,8 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 python3 tools/fleetctl.py test-vehicle-info --count 1
 ```
 
-该命令只预检一号机，备份程序和配置，部署完整运行包和 gcs_sim，保留现有连接参数及视频地址；
+该命令只预检一号机，备份程序和配置，部署完整运行包和 gcs_sim，保留现有连接参数及视频地址，
+其中 SITL UDP 主机统一校正为清单中的 `192.168.1.56` 并验证实际飞控连接；
 任务板 IP 未配置时写入 fleet.ini 中的该板 IP。gcs_sim 在板端独立进程中运行，验证：
 
 1. 地面站已订阅时启动机载，收到一次 VehicleInfo，观察期间没有周期重复；

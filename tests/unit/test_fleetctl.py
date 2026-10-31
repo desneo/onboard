@@ -168,12 +168,20 @@ class FleetCtlTest(unittest.TestCase):
             "[image_input]\ntype = Rtsp\n"
         )
         template = (ROOT / "config" / "plane.conf").read_text()
-        result = fleetctl.render_presence_config(base, template, plane)
+        result = fleetctl.render_presence_config(base, template, plane, "192.168.1.56")
         self.assertIn("plane_id = uav2", result)
         self.assertIn("zenoh_connect = tcp/127.0.0.1:7447", result)
         self.assertIn("link_type = serial", result)
         self.assertIn("serial_device = /dev/test", result)
         self.assertNotIn("[image_input]", result)
+
+    def test_presence_sitl_address_uses_inventory_host_and_preserves_port(self):
+        config = fleetctl.load_config(ROOT / "config" / "fleet.ini")
+        base = "[flight_control]\nlink_type = udp\nudp_url = udpout://192.168.1.40:14581\n"
+        template = (ROOT / "config" / "plane.conf").read_text()
+        result = fleetctl.render_presence_config(base, template, config.planes[1], config.simulator.host)
+        self.assertIn("udp_url = udpout://192.168.1.56:14581", result)
+        self.assertNotIn("192.168.1.40", result)
 
     def test_metadata_config_preserves_custom_addresses(self):
         plane = fleetctl.load_config(ROOT / "config" / "fleet.ini").planes[0]

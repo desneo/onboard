@@ -27,6 +27,7 @@ rm -rf -- "${PLANE_DIR}/plugins" "${PLANE_DIR}/models" "${PLANE_DIR}/configs" "$
 
 # 配置文件：每次从工程生成。
 install -m 0644 "${ROOT}/config/plane.conf" "${PLANE_DIR}/config/plane.conf"
+install -m 0644 "${ROOT}/config/zenoh.json5" "${PLANE_DIR}/config/zenoh.json5"
 
 # 先快照依赖解析结果，再清除旧包残留。主程序打包后使用 $ORIGIN/lib；如果先清理，
 # 增量打包时会暂时丢失原包中的私有库路径，导致无法重新收集。

@@ -209,12 +209,19 @@ cd build/plane
 | `camera.pod_video_url` | VehicleInfo 中的吊舱视频流地址，未配置时为空，仅传递地址 |
 | `system.state_report_period_ms` | 状态上报周期 |
 | `communication.plane_id` / `station_id` | 本机和地面站标识 |
-| `communication.zenoh_config_file` | 可选 Zenoh 配置文件 |
-| `communication.zenoh_connect` / `zenoh_listen` | Zenoh 连接或监听端点 |
+| `communication.zenoh_config_file` | Zenoh 原生配置文件，默认 `config/zenoh.json5` |
+| `communication.zenoh_connect` / `zenoh_listen` | Zenoh 连接或监听端点，默认留空使用自动发现 |
 | `communication.ack_timeout_ms` / `ack_max_retries` | 可靠消息确认超时和重试次数 |
 | `communication.rx_queue_max` | 通信接收队列容量，满时丢弃最旧消息 |
 | `communication.gcs_link_timeout_ms` | 地面站链路超时阈值 |
 | `communication.debug_log` | 是否记录 Zenoh 消息目标端点 |
+
+默认 Zenoh 配置保留 peer 模式、组播发现和 gossip，不指定固定连接地址。
+`config/zenoh.json5` 将 `transport/unicast/open_timeout` 设为 `2000` 毫秒，限制每次主动建链的等待时间；
+连接失败后仍按默认策略重试。该值不修改已建立连接的在线判定或业务消息确认超时。
+从运行目录根部启动时加载此文件；清空 `zenoh_config_file` 则使用 Zenoh 库的默认配置。
+SITL 测试统一使用 `config/fleet.ini` 的 `simulator.host`（当前为 `192.168.1.56`）；
+测试部署会校正板端旧的 SITL IP，保留现有 `14580`～`14589` 的 UDP 端口，并验证实际飞控连接和遥测。
 
 ### 飞控与任务
 

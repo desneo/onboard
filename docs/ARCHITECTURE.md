@@ -246,6 +246,11 @@ Communication 对外提供 `sendToStation`、`sendToPlane` 和 `sendToAll` 三�
 - `git log` 中的 commit message 必须使用中文描述。
 - 描述应明确说明本次变更内容，避免只写“修改”“更新”“修复”等无具体对象的词语。
 - 未经用户明确要求，不主动提交、推送、合并或改写 Git 历史。
+- onboard 每次向主仓库 `origin` 成功 push 后，必须立即将完整代码同步 push 到
+  `https://github.com/desneo/onboard`，保持完整目录结构、对应分支和提交历史，并同步本次推送涉及的标签；
+  不得仅上传变更文件或补丁。
+- GitHub 同步属于该次推送的必要后续步骤，无需重复确认。同步失败时必须明确报告原因和未完成状态，
+  不得将主仓库推送成功报告为全部推送完成。
 - 不回退、不覆盖任务范围外的用户改动。
 
 示例：

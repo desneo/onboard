@@ -677,7 +677,7 @@ def configure_plane(base: str, plane: Plane, flight_url: str) -> str:
         ("system", "board_ip", plane.host),
         ("communication", "plane_id", plane.plane_id),
         ("communication", "station_id", "GCS"),
-        ("communication", "zenoh_config_file", ""),
+        ("communication", "zenoh_config_file", "config/zenoh.json5"),
         ("communication", "zenoh_connect", ""),
         ("communication", "zenoh_listen", ""),
         ("flight_control", "link_type", "udp"),
@@ -924,8 +924,8 @@ def command_preflight(args: argparse.Namespace, config: FleetConfig, remote: Rem
     return 0
 
 
-def render_presence_config(base: str, template_text: str, plane: Plane) -> str:
-    """保留板端现有连接参数，只分发当前版本支持的配置项。"""
+def render_presence_config(base: str, template_text: str, plane: Plane, simulator_host: str | None = None) -> str:
+    """保留现场参数，SITL 地址使用清单中的仿真主机，只分发当前版本支持的配置项。"""
     current = configparser.ConfigParser(interpolation=None)
     current.read_string(base)
     template = configparser.ConfigParser(interpolation=None)
@@ -938,6 +938,15 @@ def render_presence_config(base: str, template_text: str, plane: Plane) -> str:
     result = set_ini_value(result, "system", "log_dir", "logs")
     if not current.get("system", "board_ip", fallback="").strip():
         result = set_ini_value(result, "system", "board_ip", plane.host)
+    link_type = current.get(
+        "flight_control", "link_type", fallback=template.get("flight_control", "link_type", fallback="udp")
+    )
+    udp_url = current.get(
+        "flight_control", "udp_url", fallback=template.get("flight_control", "udp_url", fallback="")
+    )
+    port = endpoint_port(udp_url)
+    if simulator_host and link_type == "udp" and port is not None and 14580 <= port <= 14589:
+        result = set_ini_value(result, "flight_control", "udp_url", f"udpout://{simulator_host}:{port}")
     return set_ini_value(result, "communication", "plane_id", plane.plane_id)
 
 
@@ -1010,6 +1019,8 @@ def command_test_presence(args: argparse.Namespace, config: FleetConfig, remote:
             result = analyze_plane(observer, planes, text)
             if result.errors or not all(result.peer_online.values()):
                 raise FleetError(f"{stage}: {observer.plane_id} 存在错误或未感知友机在线: {result.errors}")
+            if not result.flight_connected:
+                raise FleetError(f"{stage}: {observer.plane_id} 尚未建立飞控连接")
         passed(f"{stage}: 双机稳定运行 {seconds}s，仅打印上下线，无位置更新日志")
 
     def restart_cycle(victim: Plane, observer: Plane, *, abrupt: bool) -> None:
@@ -1049,7 +1060,11 @@ def command_test_presence(args: argparse.Namespace, config: FleetConfig, remote:
             existing = remote.run(plane, f"cat {shlex.quote(plane.runtime_dir + '/config/plane.conf')}").stdout
             (run_dir / f"{plane.plane_id}.previous.conf").write_text(existing, encoding="utf-8")
             local_config = run_dir / f"{plane.plane_id}.plane.conf"
-            local_config.write_text(render_presence_config(existing, template, plane), encoding="utf-8")
+            text = render_presence_config(existing, template, plane, config.simulator.host)
+            if args.auto_discovery:
+                text = set_ini_value(text, "communication", "zenoh_config_file", "config/zenoh.json5")
+                text = set_ini_value(text, "communication", "zenoh_connect", "")
+            local_config.write_text(text, encoding="utf-8")
             rendered[plane.plane_id] = local_config
         for plane in planes:
             backup = plane.runtime_dir + ".backup-presence-" + run_id
@@ -1174,7 +1189,7 @@ def command_test_vehicle_info(args: argparse.Namespace, config: FleetConfig, rem
         existing = remote.run(plane, f"cat {runtime}/config/plane.conf").stdout
         (run_dir / "previous.conf").write_text(existing, encoding="utf-8")
         template = (bundle / "config/plane.conf").read_text(encoding="utf-8")
-        rendered = render_presence_config(existing, template, plane)
+        rendered = render_presence_config(existing, template, plane, config.simulator.host)
         local_config = run_dir / "plane.conf"
         local_config.write_text(rendered, encoding="utf-8")
         parser = configparser.ConfigParser(interpolation=None)
@@ -1235,6 +1250,8 @@ def command_test_vehicle_info(args: argparse.Namespace, config: FleetConfig, rem
         remote.run(plane, "pgrep -x plane >/dev/null")
         if "系统就绪" not in text or text.count("已上报飞机信息:") != 3:
             raise FleetError("机载未保持就绪，或出现多余/缺失的 VehicleInfo 上报")
+        if is_sim and "飞控系统已接入" not in text:
+            raise FleetError("SITL 飞控连接未建立")
         passed("机载保持运行，启动及两次地面站上线共上报 3 次")
         report["status"] = "passed"
         save()
@@ -1585,6 +1602,9 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "test-midcourse":
             command.add_argument("--radar-timeout", type=int, default=300, help="等待外部雷达数据的秒数")
             command.add_argument("--target-track-id", default="", help="锁定的雷达 track_id；留空时要求唯一靶机")
+        if name == "test-presence":
+            command.add_argument("--auto-discovery", action="store_true",
+                                 help="清空固定连接地址，使用随包 Zenoh 配置和自动发现")
         if name == "verify":
             command.add_argument("--run-id", required=True, help="待复核的 fleet 运行编号")
     return parser
