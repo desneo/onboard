@@ -29,7 +29,6 @@ add_executable(plane
   src/core/config.cpp
   src/core/deps_check.cpp
   src/core/log.cpp
-  src/core/placeholder_modules.cpp
   src/core/runtime.cpp
   src/core/system_param_store.cpp
   src/core/time_utils.cpp

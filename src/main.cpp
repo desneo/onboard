@@ -15,7 +15,6 @@
 #include "core/deps_check.h"
 #include "core/event_bus.h"
 #include "core/log.h"
-#include "core/placeholder_modules.h"
 #include "core/runtime.h"
 #include "core/system_param_store.h"
 #include "flight_control/flight_control_events.h"
@@ -89,10 +88,6 @@ int main(int argc, char** argv) {
     runtime.add_module(std::move(task_scheduler));
     runtime.add_module(std::move(communication));
     runtime.add_module(std::move(state_monitor));
-    for (auto& module : plane::core::make_placeholder_modules({"通信", "无人机状态管理", "飞行控制", "任务调度器",
-                                                               "任务执行引擎", "相机控制", "目标管理", "状态监控"})) {
-        runtime.add_module(std::move(module));
-    }
     if (!runtime.run()) {
         plane::core::shutdown_logging();
         return 1;
