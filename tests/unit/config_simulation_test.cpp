@@ -23,12 +23,15 @@ int main() {
         bool expected;
     };
     const Case cases[] = {
+        {"udp", "udpout://127.0.0.1:14280", true},
+        {"udp", "udpin://:14289", true},
+        {"udp", "udpout://127.0.0.1:14279", false},
+        {"udp", "udpout://127.0.0.1:14290", false},
         {"udp", "udpout://127.0.0.1:14580", true},
         {"udp", "udpout://127.0.0.1:14583", true},
         {"udp", "udpin://:14589", true},
         {"udp", "udpout://127.0.0.1:14579", false},
         {"udp", "udpout://127.0.0.1:14590", false},
-        {"udp", "udpout://127.0.0.1:14280", false},
         {"serial", "udpout://127.0.0.1:14580", false},
         {"udp", "udpout://127.0.0.1:invalid", false},
     };

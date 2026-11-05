@@ -61,7 +61,7 @@ std::string canonical_key(const std::string& section, const std::string& key) {
     return it == keys.end() ? qualified : it->second;
 }
 
-/// 仿真飞机判定：udp 链路且 fc_udp_url 端口处于 14580-14589（1458*）。
+/// 仿真飞机判定：udp 链路且 fc_udp_url 使用场景 02 的 14280-14289 或旧 SITL 的 14580-14589。
 bool detect_is_simulation(const AppConfig& config) {
     if (config.fc_link_type != "udp") {
         return false;
@@ -72,7 +72,7 @@ bool detect_is_simulation(const AppConfig& config) {
     }
     try {
         const int port = std::stoi(config.fc_udp_url.substr(sep + 1));
-        return port >= 14580 && port <= 14589;
+        return (port >= 14280 && port <= 14289) || (port >= 14580 && port <= 14589);
     } catch (const std::invalid_argument&) {
         return false;
     } catch (const std::out_of_range&) {

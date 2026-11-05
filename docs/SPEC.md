@@ -26,7 +26,7 @@
 - CPU 架构：x86_64、ARM64；
 - 首要硬件平台：RK3588；
 - 第一版本飞控：PX4；
-- 飞控使用 UDP 且端口位于 `14580`～`14589`（`1458*`） 时判定为仿真飞机，判定结果通过 `VehicleInfo.isSim` 上报。
+- 飞控使用 UDP 且端口位于场景 02 的 `14280`～`14289` 或旧 SITL 的 `14580`～`14589`（`1458*`） 时判定为仿真飞机，判定结果通过 `VehicleInfo.isSim` 上报。
 
 运行主日志默认直接写入 `logs/plane.log`，不按日期创建子目录；重启后追加。
 单文件达到 50 MB 后按序号轮转，历史文件为 `plane.1.log` 至 `plane.5.log`，超过保留数量淘汰最旧文件。
@@ -38,6 +38,7 @@
 - 必须支持通过 UDP 或串口连接 PX4。
 - 必须监测飞控连接建立、异常和恢复，并向业务模块提供当前链路状态。
 - 飞控异常不得导致业务模块直接依赖 MAVSDK 或 PX4 细节。
+- 场景 02 与旧 SITL 判定为仿真时，必须持续提供 MAVSDK `GroundStation` 心跳，以满足 PX4 的 GCS 预检；其他连接保持 `CompanionComputer` 身份。
 
 ### 3.2 飞机状态
 
@@ -150,7 +151,9 @@
 
 配套 GCS 雷达入口默认监听 UDP `0.0.0.0:7790`，只处理 `radar_tracks`：
 
-- 忽略 schema 版本差异和未知字段，只发布 `state=confirmed` 的航迹；`target_truth` 不参与业务处理；
+- 雷达 UDP 对外只有 `type=radar_tracks`、`schema_version=1` 一种协议报文，每个扫描周期发送一个完整数据报；
+- `tracks` 为空、仅含 `state=coasting` 或同时含 `confirmed`/`coasting` 都是合法扫描；只发布 `state=confirmed` 的航迹；
+- 忽略 schema 版本差异和未知字段，其他 `type` 不参与业务处理；
 - 7790 只承载雷达扫描，不要求包含防守飞机航迹；友机坐标来自 Zenoh `VehicleState`；
 - 友机状态按发送方缓存 3 秒，按 NED 速度外推到扫描时间，使用三维距离做全局一对一匹配；
 - 50 米内实际匹配到的友机航迹被过滤，未匹配的 confirmed 航迹作为靶机发布；

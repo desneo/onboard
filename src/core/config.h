@@ -33,7 +33,7 @@ struct AppConfig {
     int fc_heartbeat_timeout_ms = 5000;
     double fc_route_speed_m_s = 5.0;
 
-    /// 是否仿真飞机：udp 链路且 fc_udp_url 端口处于 14580-14589 时置为 true，同时用于 VehicleInfo.isSim。
+    /// 是否仿真飞机：udp 链路且 fc_udp_url 端口处于场景 02 的 14280-14289 或旧 SITL 的 14580-14589 时置为 true，同时用于 VehicleInfo.isSim。
     bool is_sim = false;
 
     int bt_tick_interval_ms = 50;

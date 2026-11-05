@@ -43,7 +43,7 @@
 - 基于 Zenoh 接收地面站任务、指令、系统参数和目标信息。
 - 周期广播本机状态，接收并缓存其他无人机的最新状态；位置更新不逐条打印，通过 Zenoh liveliness 仅记录上下线。
 - 通过 BehaviorTree 仲裁和执行单个 Task 或 Command，新控制内容替换当前内容。
-- 通过 common 公共接口直接链接预编译 `libmidcourse_alg_3588.so` 执行反无人机中制导，不使用 Pluma 动态插件加载。
+- 通过 common 公共接口直接链接预编译 `libmidcourse_alg.so` 执行反无人机中制导，不使用 Pluma 动态插件加载。
 - 飞控连接建立后预读并缓存四项 PX4 飞控系统参数；中制导会话只读取通用飞控参数缓存，不在任务路径查询 PX4 参数。
 - 配套 `gcs_sim` 监听 UDP 7790，将雷达 confirmed 航迹与 Zenoh 友机状态匹配，过滤友机后发布靶机。
 - 中制导输出经过校验和四元数转换后使用 MAVSDK Attitude Offboard，并按 50 ms 重发设定值。
@@ -74,12 +74,12 @@ docs/                 需求、架构和测试说明
 ## 外部依赖
 
 - 公共数据模型与插件接口：`../common/common_include`
-- 中制导发布包：`../algorithm/midcourse_alg/midcourse_alg-0.1.0-aarch64`
+- 中制导 AArch64 动态库：`../algorithm/midcourse_alg/build/libmidcourse_alg.so`
 - 预编译第三方库：`../../../3rdparty/common`
 - 历史视觉插件和模型本版本不参与打包或运行。
 
-中制导以 imported target 直接链接发布包中的 `libmidcourse_alg_3588.so`；该库不设置 SONAME，
-运行包按原文件名分发。编译仅引用 `common_include/algorithm/midcourse_alg.h`，最终程序不得依赖
+中制导以 imported target 直接链接 `libmidcourse_alg.so`，运行包按其 SONAME 分发。
+编译仅引用 `common_include/algorithm/midcourse_alg.h`，最终程序不得依赖
 `libpluma`。主要依赖还包括 MAVSDK、Zenoh、
 BehaviorTree.CPP、eventpp、GeographicLib、spdlog、fmt、nlohmann-json 和 magic_enum。
 
@@ -241,7 +241,7 @@ SITL 测试统一使用 `config/fleet.ini` 的 `simulator.host`（当前为 `192
 | `midcourse.target_invalid_grace_s` | 算法内部目标预测宽限期，默认 3 秒 |
 | `midcourse.r_min_m` | 中制导距离保护，默认 50 米；与 GCS 友机匹配门限相互独立 |
 
-UDP 飞控端口位于 `14580`～`14589`（`1458*`） 时，程序将本机视为仿真飞机，并禁用低电压告警。
+UDP 飞控端口位于场景 02 的 `14280`～`14289` 或旧 SITL 的 `14580`～`14589`（`1458*`） 时，程序将本机视为仿真飞机，并禁用低电压告警。仿真连接以 MAVSDK `GroundStation` 身份持续发送 GCS 心跳，满足 PX4 的 GCS 预检；串口和其他 UDP 连接仍以 `CompanionComputer` 身份接入真实飞控。
 
 ### 安全
 
@@ -260,7 +260,7 @@ UDP 飞控端口位于 `14580`～`14589`（`1458*`） 时，程序将本机视�
 `VehicleInfo` 的 JSON 载荷为 `{"planeId":"uav1","boardIp":"192.168.1.100","podVideoUrl":"","isSim":true}`，
 仍放在标准 Message 信封的 payload 字符串内，type 为 VehicleInfo。
 机载启动后发送一次，地面站上线／重连时再次发送，不周期广播。
-`isSim` 为 JSON 布尔值，直接使用现有仿真判定：UDP 端口 `14580`～`14589` 时为 true，其他情况为 false。
+`isSim` 为 JSON 布尔值，直接使用现有仿真判定：UDP 端口位于 `14280`～`14289` 或 `14580`～`14589` 时为 true，其他情况为 false。
 该字段仅加入 VehicleInfo；读取缺少该字段的旧 VehicleInfo 时按 false 处理。
 
 地面站先订阅 `sendToStation`，再声明 Zenoh 存活标记 `station/liveliness/<station_id>`。
@@ -278,12 +278,21 @@ UDP 飞控端口位于 `14580`～`14589`（`1458*`） 时，程序将本机视�
 只查询、不声明地面站上线时追加 `--no-presence`。
 查询失败、类型不支持或没有响应时，工具返回非零退出码。
 
+自动化控制场景可追加 `--control-settle-ms <ms>`：工具在建立 Zenoh 上行订阅与地面站
+存活标记后，先等待指定时长使路由匹配完成，再发送 Task 或 Command。默认不等待；该参数
+只影响控制报文的发送时机，不增加重发或改变 Ack 语义。
+
 ## 雷达入口与中制导联调
 
-`gcs_sim` 默认监听 `0.0.0.0:7790`，只接收 `type=radar_tracks` 的 UDP JSON；`target_truth`
-及其他类型被忽略。防守飞机坐标不由 7790 提供，而是从 Zenoh `VehicleState` 获取。GCS 使用
-扫描时间外推友机位置，对 50 米内的 confirmed 雷达航迹做全局一对一匹配并过滤；友机没有出现在
-某次雷达扫描中不会阻塞靶机，但友机状态缺失或过期时整帧暂停转发。
+`gcs_sim` 默认监听 `0.0.0.0:7790`。雷达对外只有 `type=radar_tracks`、`schema_version=1` 一种
+UDP JSON 报文，每个扫描周期对应一个完整数据报；`tracks` 可以为空，也可以同时包含 `confirmed`
+和 `coasting`。空扫描和保持航迹会被正常接收，但只有 `confirmed` 航迹参与友机过滤并发布为
+`GcsTarget`。防守飞机坐标不由 7790 提供，而是从 Zenoh `VehicleState` 获取。GCS 使用扫描时间
+外推友机位置，对 50 米内的 confirmed 雷达航迹做全局一对一匹配并过滤；友机没有出现在某次
+雷达扫描中不会阻塞靶机，但友机状态缺失或过期时整帧暂停转发。
+
+运行时每 5 秒至多输出一次雷达接收统计，分别记录 UDP 数据报、有效 `radar_tracks` 扫描、
+无靶机输出扫描和已发布靶机数量，用于区分网络未到达、空/保持扫描和 confirmed 靶机发布。
 
 手动启动 `192.168.1.56:14580` 的 PX4 SITL 后，可执行：
 

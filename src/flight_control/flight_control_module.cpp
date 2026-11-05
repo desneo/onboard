@@ -63,7 +63,13 @@ std::string FlightControlModule::connection_url() const {
 }
 
 bool FlightControlModule::start() {
-    mavsdk_ = std::make_unique<mavsdk::Mavsdk>(mavsdk::Mavsdk::Configuration{mavsdk::ComponentType::CompanionComputer});
+    // PX4 SITL 将 MAVSDK 的 GroundStation 心跳作为通过 GCS 预检的依据。真实机仍以
+    // CompanionComputer 身份接入，避免仿真专用身份进入实机链路。
+    const mavsdk::ComponentType component_type =
+        config_.is_sim ? mavsdk::ComponentType::GroundStation : mavsdk::ComponentType::CompanionComputer;
+    mavsdk_ = std::make_unique<mavsdk::Mavsdk>(mavsdk::Mavsdk::Configuration{component_type});
+    SPDLOG_INFO("飞控会话身份: {}{}", config_.is_sim ? "GroundStation" : "CompanionComputer",
+                config_.is_sim ? "（仿真提供 GCS 心跳）" : "（实机机载计算机）");
     mavsdk_->set_heartbeat_timeout_s(static_cast<double>(config_.fc_heartbeat_timeout_ms) / 1000.0);
 
     const std::string url = connection_url();

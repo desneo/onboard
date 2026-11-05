@@ -1346,10 +1346,10 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
         deps = remote.run(
             plane,
             f"cd {shlex.quote(plane.runtime_dir)} && ./plane --deps-check && "
-            "ldd ./plane | grep 'libmidcourse_alg_3588.so' && ! ldd ./plane | grep -i pluma",
+            "ldd ./plane | grep 'libmidcourse_alg.so' && ! ldd ./plane | grep -i pluma",
         )
         (run_dir / "deps.log").write_text(deps.stdout, encoding="utf-8")
-        passed("部署包依赖自检通过，直连 libmidcourse_alg_3588.so 且不含 Pluma")
+        passed("部署包依赖自检通过，直连 libmidcourse_alg.so 且不含 Pluma")
 
         start_plane(plane, remote)
         wait_until(
@@ -1441,7 +1441,7 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
             lambda: "中制导初始化完成" in plane_log("midcourse-wait")
             and "中制导目标估计器首次增量更新" in plane_log("midcourse-wait")
             and "Offboard 姿态启动" in plane_log("midcourse-wait")
-            and "-> Offboard" in plane_log("midcourse-wait"),
+            and "value=Offboard" in plane_log("midcourse-wait"),
             args.radar_timeout,
         )
         text_before_stop = plane_log("midcourse-running")

@@ -56,7 +56,7 @@ Radar UDP :7790 ── gcs_sim ──┘
 
 Perception、检测节点、视觉目标接口和视频推流已完全移除，不保留 DisabledPerception。
 相机控制模块保留，用于吊舱指令与状态，不传递图像帧。中制导通过 common 中的唯一公共接口
-直接链接 `libmidcourse_alg_3588.so`，不通过 Plugin Management 或 Pluma 加载。构建及运行不依赖
+直接链接 `libmidcourse_alg.so`，不通过 Plugin Management 或 Pluma 加载。构建及运行不依赖
 OpenCV、RGA、Pluma 或 RKNN。
 通用 Plugin Management 模块保留在 `src/plugin`，当前为空实现，仅接入模块生命周期，供后续插件扩展。
 `AntiUav` 只编排 Arm／Takeoff／Midcourse，不包含视觉或末制导；独立飞行指令保持可用。
@@ -174,7 +174,7 @@ Communication 对外提供 `sendToStation`、`sendToPlane` 和 `sendToAll` 三�
 | --- | --- |
 | `../common/common_include` | 跨工程报文、地理类型和插件接口 |
 | `../../../3rdparty/common` | 本地预编译第三方库 |
-| `../algorithm/midcourse_alg/midcourse_alg-0.1.0-aarch64` | 中制导 AArch64 预编译动态库；随包公共头仅用于提供方校验，消费方引用 common |
+| `../algorithm/midcourse_alg/build/libmidcourse_alg.so` | 中制导 AArch64 预编译动态库；消费方公共接口引用 common |
 
 禁止使用 `find /`、全盘 `rg` 或类似方式扫描工程外目录。需要确认公共定义时直接读取上述准确路径；若检索意外命中其他外部路径，应停止并说明。
 
@@ -227,7 +227,7 @@ Communication 对外提供 `sendToStation`、`sendToPlane` 和 `sendToAll` 三�
 - 三方库统一来自 `../../../3rdparty/common`，不得擅自联网下载或换用其他来源。
 - 缺少依赖时应报告准确名称和路径，请求用户补充，不在项目内重新实现。
 - CMake 依赖传播应正确选择 `PRIVATE`、`PUBLIC` 或 `INTERFACE`。
-- 中制导必须使用 imported target 直接链接发布包的 `libmidcourse_alg_3588.so`，按无 SONAME 库原名打包并由 `$ORIGIN/lib` 加载；不得使用 Pluma 或 `libpluma`。
+- 中制导必须使用 imported target 直接链接 `libmidcourse_alg.so`，按其 SONAME 打包并由 `$ORIGIN/lib` 加载；不得使用 Pluma 或 `libpluma`。
 - 构建不得引入已经移除的图像处理或媒体运行库。
 - 枚举与字符串转换统一使用项目已有的 `magic_enum`，不重复实现映射工具。
 
@@ -290,7 +290,7 @@ Communication 对外提供 `sendToStation`、`sendToPlane` 和 `sendToAll` 三�
 | 感知帧模型 | 消费最新帧，不积压旧帧 |
 | 地理计算 | 统一封装 GeographicLib |
 | GCS 目标历史 | 每个目标保留最近 20 条 |
-| 中制导集成 | 引用 `common_include/algorithm/midcourse_alg.h`，直连无 SONAME 的 `libmidcourse_alg_3588.so`，不使用 Pluma |
+| 中制导集成 | 引用 `common_include/algorithm/midcourse_alg.h`，直连带 SONAME 的 `libmidcourse_alg.so`，不使用 Pluma |
 | 中制导输出 | Attitude Offboard；首帧先发设定值再启动，50 ms 重发；遥测发现模式被覆盖时限频重启 Offboard |
 | 雷达友机过滤 | 友机状态来自 Zenoh；只过滤门限内实际匹配航迹，友机未出现在雷达帧中不阻塞靶机 |
 
