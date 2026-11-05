@@ -241,7 +241,10 @@ SITL 测试统一使用 `config/fleet.ini` 的 `simulator.host`（当前为 `192
 | `midcourse.target_invalid_grace_s` | 算法内部目标预测宽限期，默认 3 秒 |
 | `midcourse.r_min_m` | 中制导距离保护，默认 50 米；与 GCS 友机匹配门限相互独立 |
 
-UDP 飞控端口位于场景 02 的 `14280`～`14289` 或旧 SITL 的 `14580`～`14589`（`1458*`） 时，程序将本机视为仿真飞机，并禁用低电压告警。仿真连接以 MAVSDK `GroundStation` 身份持续发送 GCS 心跳，满足 PX4 的 GCS 预检；串口和其他 UDP 连接仍以 `CompanionComputer` 身份接入真实飞控。
+UDP 飞控端口位于场景 02 的 PX4 远端端口 `14030`～`14039`、本地端口
+`14280`～`14289`，或旧 SITL 的 `14580`～`14589`（`1458*`）时，程序将本机视为仿真飞机，
+并禁用低电压告警。仿真连接以 MAVSDK `GroundStation` 身份持续发送 GCS 心跳，满足 PX4 的
+GCS 预检；串口和其他 UDP 连接仍以 `CompanionComputer` 身份接入真实飞控。
 
 ### 安全
 
@@ -260,7 +263,8 @@ UDP 飞控端口位于场景 02 的 `14280`～`14289` 或旧 SITL 的 `14580`～
 `VehicleInfo` 的 JSON 载荷为 `{"planeId":"uav1","boardIp":"192.168.1.100","podVideoUrl":"","isSim":true}`，
 仍放在标准 Message 信封的 payload 字符串内，type 为 VehicleInfo。
 机载启动后发送一次，地面站上线／重连时再次发送，不周期广播。
-`isSim` 为 JSON 布尔值，直接使用现有仿真判定：UDP 端口位于 `14280`～`14289` 或 `14580`～`14589` 时为 true，其他情况为 false。
+`isSim` 为 JSON 布尔值，直接使用现有仿真判定：UDP 端口位于 `14030`～`14039`、
+`14280`～`14289` 或 `14580`～`14589` 时为 true，其他情况为 false。
 该字段仅加入 VehicleInfo；读取缺少该字段的旧 VehicleInfo 时按 false 处理。
 
 地面站先订阅 `sendToStation`，再声明 Zenoh 存活标记 `station/liveliness/<station_id>`。
