@@ -315,6 +315,9 @@ int main(int argc, char** argv) {
     std::atomic<std::uint64_t> vehicle_state_count{0};
     std::atomic<std::uint64_t> task_state_count{0};
     std::atomic<std::uint64_t> vehicle_info_count{0};
+    std::atomic<std::uint64_t> radar_datagram_count{0};
+    std::atomic<std::uint64_t> radar_valid_scan_count{0};
+    std::atomic<std::uint64_t> radar_no_target_scan_count{0};
     std::atomic<std::uint64_t> radar_target_count{0};
     plane::gcs_sim::RadarFilterConfig radar_filter_config;
     radar_filter_config.friendly_match_max_distance_m = options.friendly_match_max_distance_m;
@@ -458,6 +461,15 @@ int main(int argc, char** argv) {
         radar_thread = std::thread([&]() {
             std::vector<char> buffer(65536);
             std::int64_t last_warning_ms = 0;
+            std::int64_t last_statistics_ms = 0;
+            const auto log_statistics_if_needed = [&](std::int64_t now_ms) {
+                if (now_ms - last_statistics_ms < 5000) return;
+                last_statistics_ms = now_ms;
+                SPDLOG_INFO(
+                    "雷达接收统计: UDP数据报={} radar_tracks有效扫描={} 无靶机输出扫描={} 已发布靶机={}",
+                    radar_datagram_count.load(), radar_valid_scan_count.load(), radar_no_target_scan_count.load(),
+                    radar_target_count.load());
+            };
             while (radar_running && g_stop_requested == 0) {
                 const ssize_t received = ::recvfrom(radar_socket, buffer.data(), buffer.size(), 0, nullptr, nullptr);
                 if (received < 0) {
@@ -465,12 +477,14 @@ int main(int argc, char** argv) {
                     SPDLOG_ERROR("接收雷达 UDP 失败: {}", std::strerror(errno));
                     break;
                 }
+                radar_datagram_count.fetch_add(1);
                 std::vector<plane::target::GcsTarget> targets;
                 std::string filter_error;
                 const std::string payload(buffer.data(), static_cast<std::size_t>(received));
                 if (!radar_filter.process_scan(payload, unix_now_ms(), targets, filter_error)) {
                     if (filter_error.rfind("忽略非 radar_tracks 报文", 0) == 0) {
                         SPDLOG_DEBUG("{}", filter_error);
+                        log_statistics_if_needed(unix_now_ms());
                         continue;
                     }
                     const std::int64_t now = unix_now_ms();
@@ -478,7 +492,12 @@ int main(int argc, char** argv) {
                         last_warning_ms = now;
                         SPDLOG_WARN("雷达扫描暂停转发: {}", filter_error);
                     }
+                    log_statistics_if_needed(now);
                     continue;
+                }
+                radar_valid_scan_count.fetch_add(1);
+                if (targets.empty()) {
+                    radar_no_target_scan_count.fetch_add(1);
                 }
                 for (const auto& target : targets) {
                     std::string target_payload;
@@ -496,6 +515,7 @@ int main(int argc, char** argv) {
                         SPDLOG_ERROR("雷达靶机数据发送失败: {}", exception.what());
                     }
                 }
+                log_statistics_if_needed(unix_now_ms());
                 SPDLOG_DEBUG("雷达扫描处理完成: targets.size={}", targets.size());
             }
         });
@@ -626,7 +646,9 @@ int main(int argc, char** argv) {
     SPDLOG_INFO("状态统计: vehicle_state_count={} task_state_count={}", vehicle_state_count.load(),
                 task_state_count.load());
     SPDLOG_INFO("信息统计: vehicle_info_count={}", vehicle_info_count.load());
-    SPDLOG_INFO("雷达统计: radar_target_count={}", radar_target_count.load());
+    SPDLOG_INFO("雷达统计: UDP数据报={} radar_tracks有效扫描={} 无靶机输出扫描={} 已发布靶机={}",
+                radar_datagram_count.load(), radar_valid_scan_count.load(), radar_no_target_scan_count.load(),
+                radar_target_count.load());
     // 先停止所有回调，之后再析构被回调引用的计数器。
     session.close();
     return all_acked ? 0 : 1;

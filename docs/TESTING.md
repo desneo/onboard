@@ -69,7 +69,9 @@ python3 tools/fleetctl.py test-midcourse --count 1 --target-track-id <track_id>
 
 该命令不会启动或停止 SITL；完成板端自检后会提示持续向 `192.168.1.100:7790` 发送至少
 21 个时间戳严格递增的 `radar_tracks` 扫描。7790 只接收雷达数据，防守机状态由 GCS 从
-Zenoh 获取，雷达帧无需包含防守机航迹。
+Zenoh 获取，雷达帧无需包含防守机航迹。空扫描和 `coasting` 航迹会被合法接收但不发布为
+`GcsTarget`；测试所需的 20+1 帧必须包含指定 `track_id` 的 `confirmed` 航迹。运行日志中的
+雷达接收统计用于区分 UDP 未到达、合法但无靶机输出的扫描和已发布靶机。
 
 该命令只预检和操作清单中的前两块板卡，备份旧程序及配置，验证双向正常退出、恢复上线，
 再终止二号机进程以验证异常退出及恢复。初始和结束各观察 10 秒，检查重复上下线和位置更新日志。
@@ -160,9 +162,9 @@ cd build/plane
 
 `config_simulation` 验证 UDP 端口 `14580`～`14589` 为仿真，范围外端口和串口不判定为仿真。
 
-`radar_target_filter` 验证 JSON 容错、confirmed 过滤、严格时间戳输入、多友机全局匹配、
+`radar_target_filter` 验证 JSON 容错、空扫描、coasting 忽略、confirmed 过滤、严格时间戳输入、多友机全局匹配、
 50 米门限、NED 状态外推、过期状态失败关闭，以及“友机未出现在雷达帧时仍转发靶机”。
-`midcourse_algorithm_adapter` 使用真实 `libmidcourse_alg_3588.so` 验证 20 帧初始化、增量更新和逐 tick 调用；
+`midcourse_algorithm_adapter` 使用真实 `libmidcourse_alg.so` 验证 20 帧初始化、增量更新和逐 tick 调用；
 `midcourse_controller` 验证任务启动前已形成的 20 帧持续缓存、参数缓存读取、会话重置和错误路径；
 `attitude_conversion` 验证四元数归一化与姿态转换。
 中制导接口日志必须使用 `接口名 输入/输出` 的简洁前缀，结构体字段保持公共接口原名，经纬度固定
@@ -252,7 +254,7 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 
 自动化和板端联调必须共同覆盖：
 
-1. `ldd build/plane/plane` 包含 `libmidcourse_alg_3588.so`，不包含 Pluma；无 SONAME 的算法库可由 `$ORIGIN/lib` 解析。
+1. `ldd build/plane/plane` 包含 `libmidcourse_alg.so`，不包含 Pluma；算法库可由 `$ORIGIN/lib` 解析。
 2. `AntiUav` 根据飞行状态选择直接 Midcourse、Takeoff → Midcourse 或 Arm → Takeoff → Midcourse。
 3. 指定 ID 时锁定该目标；未指定时只允许唯一候选，不得在多个目标间自动跳换。
 4. 机载从进程启动起持续缓存目标；任务启动前已经收到 20 帧时直接完成初始化，第 21 帧产生首次增量更新；规划器每个 50 ms tick 先于本 tick 的目标增量更新调用。

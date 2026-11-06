@@ -150,7 +150,9 @@
 
 配套 GCS 雷达入口默认监听 UDP `0.0.0.0:7790`，只处理 `radar_tracks`：
 
-- 忽略 schema 版本差异和未知字段，只发布 `state=confirmed` 的航迹；`target_truth` 不参与业务处理；
+- 雷达 UDP 对外只有 `type=radar_tracks`、`schema_version=1` 一种协议报文，每个扫描周期发送一个完整数据报；
+- `tracks` 为空、仅含 `state=coasting` 或同时含 `confirmed`/`coasting` 都是合法扫描；只发布 `state=confirmed` 的航迹；
+- 忽略 schema 版本差异和未知字段，其他 `type` 不参与业务处理；
 - 7790 只承载雷达扫描，不要求包含防守飞机航迹；友机坐标来自 Zenoh `VehicleState`；
 - 友机状态按发送方缓存 3 秒，按 NED 速度外推到扫描时间，使用三维距离做全局一对一匹配；
 - 50 米内实际匹配到的友机航迹被过滤，未匹配的 confirmed 航迹作为靶机发布；

@@ -79,6 +79,13 @@ int main() {
     assert(global.process_scan(double_encoded, kTime, output, error));
     assert(output.size() == 2);
 
+    // radar_tracks 是唯一 UDP 报文类型；空扫描和保持航迹都是合法扫描，
+    // 但只有 confirmed 航迹可以生成 GcsTarget。
+    assert(global.process_scan(scan(kTime, {}), kTime, output, error));
+    assert(output.empty());
+    assert(global.process_scan(scan(kTime, {track("coasting", 100.0, "coasting")}), kTime, output, error));
+    assert(output.empty());
+
     RadarTargetFilter projected(RadarFilterConfig{2.0, 3000});
     assert(projected.update_friendly("uav1", friendly("uav1", 0.0, 10.0), kTime, error));
     assert(projected.process_scan(scan(kTime + 1000, {track("projected-self", 10.0), track("target", 100.0)}),
@@ -103,5 +110,9 @@ int main() {
 
     RadarTargetFilter malformed;
     assert(!malformed.process_scan("{bad json", kTime, output, error));
+    assert(!malformed.process_scan(
+        nlohmann::json{{"type", "radar_status"}, {"timestamp_ms", kTime}, {"tracks", nlohmann::json::array()}}
+            .dump(),
+        kTime, output, error));
     return 0;
 }
