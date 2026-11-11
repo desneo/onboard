@@ -83,15 +83,16 @@ int main() {
     run_session();  // 新会话必须能完整重置算法状态。
 
     const std::string logs = log_output.str();
-    assert(logs.find("TargetEstimator::init 输入") != std::string::npos);
-    assert(logs.find("ned_ref={latitude=30.000000,longitude=120.000000,height=0.00,altitude=100.00}") !=
+    // 输入/输出 info 日志已关闭，断言这些日志不再打印。
+    assert(logs.find("TargetEstimator::init 输入") == std::string::npos);
+    assert(logs.find("ned_ref={latitude=30.000000,longitude=120.000000,height=0.00,altitude=100.00}") ==
            std::string::npos);
-    assert(logs.find("measurement={geo={latitude=30.010000,longitude=120.000000") != std::string::npos);
-    assert(logs.find("MidcoursePlanner::setConfig 输入") != std::string::npos);
-    assert(logs.find("config={max_horizontal_speed_m_s=15.00,max_climb_speed_m_s=5.00") != std::string::npos);
-    assert(logs.find("MidcoursePlanner::update 输入") != std::string::npos);
-    assert(logs.find("vn_m_s=0.00,ve_m_s=0.00,vd_m_s=0.00") != std::string::npos);
-    assert(logs.find("MidcoursePlanner::update 输出") != std::string::npos);
+    assert(logs.find("measurement={geo={latitude=30.010000,longitude=120.000000") == std::string::npos);
+    assert(logs.find("MidcoursePlanner::setConfig 输入") == std::string::npos);
+    assert(logs.find("config={max_horizontal_speed_m_s=15.00,max_climb_speed_m_s=5.00") == std::string::npos);
+    assert(logs.find("MidcoursePlanner::update 输入") == std::string::npos);
+    assert(logs.find("vn_m_s=0.00,ve_m_s=0.00,vd_m_s=0.00") == std::string::npos);
+    assert(logs.find("MidcoursePlanner::update 输出") == std::string::npos);
     assert(logs.find("中制导会话创建: session=") != std::string::npos);
     assert(logs.find("中制导会话销毁: session=") != std::string::npos);
     assert(logs.find("calls=") != std::string::npos);
