@@ -27,8 +27,10 @@ class FakeFlightControl final : public plane::flight_control::FlightControlApi {
     bool cached_flight_params_available = true;
     mutable int cached_flight_params_gets = 0;
     int attitude_calls = 0;
+    int velocity_calls = 0;
     int clear_calls = 0;
     plane::flight_control::AttitudeSetpoint last_attitude;
+    plane::model::NedVelocity last_velocity;
 
     bool arm(std::string&) override { return true; }
     bool disarm(std::string&) override { return true; }
@@ -39,7 +41,11 @@ class FakeFlightControl final : public plane::flight_control::FlightControlApi {
     bool stop_motor(std::string&) override { return true; }
     bool goto_waypoint(const plane::model::GeoPoint&, std::string&) override { return true; }
     bool execute_route(const std::vector<plane::model::GeoPoint>&, std::string&) override { return true; }
-    bool set_ned_velocity(const plane::model::NedVelocity&, std::string&) override { return true; }
+    bool set_ned_velocity(const plane::model::NedVelocity& value, std::string&) override {
+        last_velocity = value;
+        ++velocity_calls;
+        return true;
+    }
     bool set_attitude(const plane::flight_control::AttitudeSetpoint& value, std::string&) override {
         last_attitude = value;
         ++attitude_calls;
@@ -118,19 +124,19 @@ int main() {
         require(controller.begin("target", error), "中制导会话启动失败");
         require(controller.tick(error) == plane::task::MidcourseController::TickResult::Running,
                 "使用会话启动前持续缓存的 20 帧初始化失败: " + error);
-        require(flight.cached_flight_params_gets == 1 && flight.attitude_calls == 1,
-                "未使用飞控参数缓存或未下发首个 Attitude");
+        require(flight.cached_flight_params_gets == 1 && flight.velocity_calls == 1,
+                "未使用飞控参数缓存或未下发首个 NED 速度");
 
         events.publish(plane::communication::events::kGcsTargetReceived, target("target", 20));
         require(controller.tick(error) == plane::task::MidcourseController::TickResult::Running,
                 "第 21 帧更新失败: " + error);
-        require(flight.attitude_calls == 2, "第 21 帧后未继续下发 Attitude");
+        require(flight.velocity_calls == 2, "第 21 帧后未继续下发 NED 速度");
 
         for (int tick = 0; tick < 65; ++tick) {
             require(controller.tick(error) == plane::task::MidcourseController::TickResult::Running,
                     "雷达中断超过 3 秒后任务不应失败: " + error);
         }
-        require(flight.attitude_calls == 67, "雷达中断期间未逐 tick 执行规划和 Attitude");
+        require(flight.velocity_calls == 67, "雷达中断期间未逐 tick 执行规划和 NED 速度");
 
         controller.stop();
         require(controller.begin("target", error), "重复会话启动失败");

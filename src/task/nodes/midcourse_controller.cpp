@@ -3,6 +3,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -124,13 +125,15 @@ struct MidcourseController::Impl {
                 return false;
             }
             MidcourseAlgorithmConfig algorithm_config;
-            algorithm_config.max_horizontal_speed_m_s = flight_params.mpc_xy_vel_max;
-            algorithm_config.max_climb_speed_m_s = flight_params.mpc_z_vel_max_up;
-            algorithm_config.max_descent_speed_m_s = flight_params.mpc_z_vel_max_dn;
-            algorithm_config.max_acceleration_m_s2 = flight_params.mpc_acc_hor_max;
+            algorithm_config.max_horizontal_speed_m_s = 60.0;//flight_params.mpc_xy_vel_max;
+            algorithm_config.max_climb_speed_m_s = 20.0;//flight_params.mpc_z_vel_max_up;
+            algorithm_config.max_descent_speed_m_s = 20.0;//flight_params.mpc_z_vel_max_dn;
+            algorithm_config.max_acceleration_m_s2 = 20.0;//flight_params.mpc_acc_hor_max;
             algorithm_config.update_dt_s = static_cast<double>(config.bt_tick_interval_ms) / 1000.0;
-            algorithm_config.target_invalid_grace_s = config.midcourse_target_invalid_grace_s;
+            algorithm_config.target_invalid_grace_s = 3.0;// config.midcourse_target_invalid_grace_s;
             algorithm_config.r_min_m = config.midcourse_r_min_m;
+            algorithm_config.output_mode = MidcourseOutputMode::VelocityAcceleration;
+            algorithm_config.yaw_mode = 0;  // 速度档期望航向对齐速度指令方向
             if (!algorithm->set_config(algorithm_config, error)) {
                 error = "中制导 setConfig 失败: " + error;
                 return false;
@@ -281,12 +284,25 @@ MidcourseController::TickResult MidcourseController::tick(std::string& error) {
         error = "中制导 update 失败: " + error;
         return TickResult::Failure;
     }
-    plane::flight_control::AttitudeSetpoint setpoint;
-    setpoint.quat_body_to_ned = output.quat_body_to_ned;
-    setpoint.thrust_body = output.thrust_body;
-    if (!impl_->flight_control.set_attitude(setpoint, error)) {
-        error = "中制导飞控指令执行失败: " + error;
-        return TickResult::Failure;
+    if (output.mode == MidcourseOutputMode::VelocityAcceleration) {
+        plane::model::NedVelocity velocity;
+        velocity.north_m_s = output.vn_m_s;
+        velocity.east_m_s = output.ve_m_s;
+        velocity.down_m_s = output.vd_m_s;
+        // 算法给期望航向则下发（弧度转度），否则保持当前航向
+        velocity.yaw_deg = output.has_yaw ? output.yaw_rad * 180.0 / M_PI : own.yaw_deg;
+        if (!impl_->flight_control.set_ned_velocity(velocity, error)) {
+            error = "中制导飞控指令执行失败: " + error;
+            return TickResult::Failure;
+        }
+    } else {
+        plane::flight_control::AttitudeSetpoint setpoint;
+        setpoint.quat_body_to_ned = output.quat_body_to_ned;
+        setpoint.thrust_body = output.thrust_body;
+        if (!impl_->flight_control.set_attitude(setpoint, error)) {
+            error = "中制导飞控指令执行失败: " + error;
+            return TickResult::Failure;
+        }
     }
     if (!impl_->flush_pending_targets_locked(error)) {
         return TickResult::Failure;
