@@ -49,7 +49,6 @@ add_executable(plane
   src/task/nodes/rtl_node.cpp
   src/task/nodes/hover_node.cpp
   src/task/nodes/stop_motor_node.cpp
-  src/task/nodes/midcourse_algorithm_adapter.cpp
   src/task/nodes/midcourse_controller.cpp
   src/task/nodes/midcourse_node.cpp
   src/task/task_execution_engine.cpp
@@ -159,18 +158,8 @@ if(BUILD_TESTING)
   target_link_libraries(radar_target_filter_test PRIVATE plane::common_include plane::nlohmann_json)
   add_test(NAME radar_target_filter COMMAND radar_target_filter_test)
 
-  add_executable(midcourse_algorithm_adapter_test
-    tests/unit/midcourse_algorithm_adapter_test.cpp
-    src/task/nodes/midcourse_algorithm_adapter.cpp
-  )
-  target_include_directories(midcourse_algorithm_adapter_test PRIVATE src)
-  target_compile_options(midcourse_algorithm_adapter_test PRIVATE -Wall -Wextra)
-  target_link_libraries(midcourse_algorithm_adapter_test PRIVATE plane::midcourse_alg spdlog::spdlog)
-  add_test(NAME midcourse_algorithm_adapter COMMAND midcourse_algorithm_adapter_test)
-
   add_executable(midcourse_controller_test
     tests/unit/midcourse_controller_test.cpp
-    src/task/nodes/midcourse_algorithm_adapter.cpp
     src/task/nodes/midcourse_controller.cpp
     src/target/target_store.cpp
   )

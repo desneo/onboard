@@ -2,12 +2,16 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <future>
+#include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <utility>
 
+#include "algorithm/midcourse_alg.h"
 #include "core/time_utils.h"
 #include "flight_control/attitude_conversion.h"
 #include "flight_control/flight_control_events.h"
@@ -24,6 +28,7 @@ constexpr int kOffboardIntervalMs = 50;
 constexpr int kOffboardRestartIntervalMs = 1000;
 constexpr int kWaitLogIntervalMs = 5000;
 constexpr int kFlightControlParamsRetryIntervalMs = 5000;
+constexpr double kPi = 3.14159265358979323846;
 
 template <typename Result>
 std::string result_text(Result result) {
@@ -63,7 +68,13 @@ std::string FlightControlModule::connection_url() const {
 }
 
 bool FlightControlModule::start() {
-    mavsdk_ = std::make_unique<mavsdk::Mavsdk>(mavsdk::Mavsdk::Configuration{mavsdk::ComponentType::CompanionComputer});
+    // PX4 SITL 将 MAVSDK 的 GroundStation 心跳作为通过 GCS 预检的依据。真实机仍以
+    // CompanionComputer 身份接入，避免仿真专用身份进入实机链路。
+    const mavsdk::ComponentType component_type =
+        config_.is_sim ? mavsdk::ComponentType::GroundStation : mavsdk::ComponentType::CompanionComputer;
+    mavsdk_ = std::make_unique<mavsdk::Mavsdk>(mavsdk::Mavsdk::Configuration{component_type});
+    SPDLOG_INFO("飞控会话身份: {}{}", config_.is_sim ? "GroundStation" : "CompanionComputer",
+                config_.is_sim ? "（仿真提供 GCS 心跳）" : "（实机机载计算机）");
     mavsdk_->set_heartbeat_timeout_s(static_cast<double>(config_.fc_heartbeat_timeout_ms) / 1000.0);
 
     const std::string url = connection_url();
@@ -145,7 +156,10 @@ void FlightControlModule::attach_system(const std::shared_ptr<mavsdk::System>& s
     action_ = std::make_unique<mavsdk::Action>(system_);
     telemetry_ = std::make_unique<mavsdk::Telemetry>(system_);
     mission_ = std::make_unique<mavsdk::Mission>(system_);
-    offboard_ = std::make_unique<mavsdk::Offboard>(system_);
+    {
+        std::lock_guard<std::mutex> lock(offboard_mutex_);
+        offboard_ = std::make_unique<mavsdk::Offboard>(system_);
+    }
     param_ = std::make_unique<mavsdk::Param>(system_);
 
     telemetry_->subscribe_position([this](mavsdk::Telemetry::Position value) {
@@ -228,6 +242,7 @@ void FlightControlModule::detach_system() {
         std::lock_guard<std::mutex> lock(offboard_mutex_);
         offboard_active_ = false;
         offboard_setpoint_kind_ = OffboardSetpointKind::None;
+        acceleration_setpoint_.reset();
         last_offboard_start_ms_ = 0;
         offboard_.reset();
     }
@@ -353,7 +368,7 @@ void FlightControlModule::offboard_loop() {
         std::lock_guard<std::mutex> lock(offboard_mutex_);
         if (offboard_active_ && offboard_) {
             if (offboard_setpoint_kind_ == OffboardSetpointKind::VelocityNed) {
-                offboard_->set_velocity_ned(velocity_setpoint_);
+                send_velocity_setpoint_locked();
             } else if (offboard_setpoint_kind_ == OffboardSetpointKind::Attitude) {
                 offboard_->set_attitude(attitude_setpoint_);
             }
@@ -556,22 +571,57 @@ bool FlightControlModule::upload_and_start_mission(const std::vector<plane::mode
 }
 
 bool FlightControlModule::set_ned_velocity(const plane::model::NedVelocity& velocity, std::string& error) {
-    if (!ensure_connected(error)) {
+    return set_velocity_setpoint({static_cast<float>(velocity.north_m_s), static_cast<float>(velocity.east_m_s),
+                                  static_cast<float>(velocity.down_m_s), static_cast<float>(velocity.yaw_deg)},
+                                 std::nullopt, error);
+}
+
+bool FlightControlModule::set_ned_velocity_acceleration(const plane::algorithm::VelocityAccelerationCommand& command,
+                                                        double current_yaw_deg, std::string& error) {
+    const double yaw_deg = command.yaw_rad ? *command.yaw_rad * (180.0 / kPi) : current_yaw_deg;
+    const std::array values{command.vn_m_s, command.ve_m_s, command.vd_m_s, command.an_m_s2,
+                            command.ae_m_s2, command.ad_m_s2, yaw_deg};
+    if (!std::all_of(values.begin(), values.end(), [](double value) {
+            return std::abs(value) <= std::numeric_limits<float>::max();
+        })) {
+        error = "Offboard 速度、加速度或航向超出有限浮点范围";
         return false;
     }
-    mavsdk::Offboard::VelocityNedYaw setpoint;
-    setpoint.north_m_s = static_cast<float>(velocity.north_m_s);
-    setpoint.east_m_s = static_cast<float>(velocity.east_m_s);
-    setpoint.down_m_s = static_cast<float>(velocity.down_m_s);
-    setpoint.yaw_deg = static_cast<float>(velocity.yaw_deg);
+    const mavsdk::Offboard::VelocityNedYaw velocity{static_cast<float>(command.vn_m_s),
+                                                   static_cast<float>(command.ve_m_s),
+                                                   static_cast<float>(command.vd_m_s), static_cast<float>(yaw_deg)};
+    const mavsdk::Offboard::AccelerationNed acceleration{static_cast<float>(command.an_m_s2),
+                                                         static_cast<float>(command.ae_m_s2),
+                                                         static_cast<float>(command.ad_m_s2)};
+    return set_velocity_setpoint(velocity, acceleration, error);
+}
 
+mavsdk::Offboard::Result FlightControlModule::send_velocity_setpoint_locked() {
+    if (!acceleration_setpoint_) {
+        return offboard_->set_velocity_ned(velocity_setpoint_);
+    }
+    // PX4 以 NaN 表示未指定位置。MAVSDK 使用 PositionNedYaw 中的 yaw_deg。
+    constexpr float unset_position = std::numeric_limits<float>::quiet_NaN();
+    const mavsdk::Offboard::PositionNedYaw position{unset_position, unset_position, unset_position,
+                                                   velocity_setpoint_.yaw_deg};
+    return offboard_->set_position_velocity_acceleration_ned(position, velocity_setpoint_, *acceleration_setpoint_);
+}
+
+bool FlightControlModule::set_velocity_setpoint(mavsdk::Offboard::VelocityNedYaw velocity,
+                                               std::optional<mavsdk::Offboard::AccelerationNed> acceleration,
+                                               std::string& error) {
     std::lock_guard<std::mutex> lock(offboard_mutex_);
-    velocity_setpoint_ = setpoint;
+    if (!offboard_ || !connected_) {
+        error = "飞控未连接";
+        return false;
+    }
+    velocity_setpoint_ = velocity;
+    acceleration_setpoint_ = acceleration;
     offboard_setpoint_kind_ = OffboardSetpointKind::VelocityNed;
     if (offboard_active_) {
         return true;
     }
-    const mavsdk::Offboard::Result result = offboard_->set_velocity_ned(velocity_setpoint_);
+    const mavsdk::Offboard::Result result = send_velocity_setpoint_locked();
     if (result != mavsdk::Offboard::Result::Success) {
         error = "Offboard 设定值下发失败: " + result_text(result);
         report_error(error);
@@ -586,11 +636,18 @@ bool FlightControlModule::set_ned_velocity(const plane::model::NedVelocity& velo
     }
     offboard_active_ = true;
     last_offboard_start_ms_ = now_ms();
-    SPDLOG_INFO(
-        "下发飞控指令成功: Offboard 速度启动（north_m_s={:.2f} east_m_s={:.2f} "
-        "down_m_s={:.2f} yaw_deg={:.1f}）",
-        velocity_setpoint_.north_m_s, velocity_setpoint_.east_m_s, velocity_setpoint_.down_m_s,
-        velocity_setpoint_.yaw_deg);
+    if (acceleration) {
+        SPDLOG_INFO(
+            "下发飞控指令成功: Offboard 速度及加速度启动（north_m_s={:.2f} east_m_s={:.2f} "
+            "down_m_s={:.2f} north_m_s2={:.2f} east_m_s2={:.2f} down_m_s2={:.2f} yaw_deg={:.1f}）",
+            velocity.north_m_s, velocity.east_m_s, velocity.down_m_s, acceleration->north_m_s2,
+            acceleration->east_m_s2, acceleration->down_m_s2, velocity.yaw_deg);
+    } else {
+        SPDLOG_INFO(
+            "下发飞控指令成功: Offboard 速度启动（north_m_s={:.2f} east_m_s={:.2f} "
+            "down_m_s={:.2f} yaw_deg={:.1f}）",
+            velocity.north_m_s, velocity.east_m_s, velocity.down_m_s, velocity.yaw_deg);
+    }
     return true;
 }
 
@@ -616,6 +673,10 @@ bool FlightControlModule::set_attitude(const AttitudeSetpoint& command, std::str
     }
 
     std::lock_guard<std::mutex> lock(offboard_mutex_);
+    if (!offboard_ || !connected_) {
+        error = "飞控未连接";
+        return false;
+    }
     attitude_setpoint_ = setpoint;
     offboard_setpoint_kind_ = OffboardSetpointKind::Attitude;
     const mavsdk::Offboard::Result result = offboard_->set_attitude(attitude_setpoint_);
@@ -662,12 +723,11 @@ bool FlightControlModule::get_cached_flight_control_params(FlightControlParams& 
 void FlightControlModule::clear_offboard() {
     std::lock_guard<std::mutex> lock(offboard_mutex_);
     offboard_setpoint_kind_ = OffboardSetpointKind::None;
+    acceleration_setpoint_.reset();
     last_offboard_start_ms_ = 0;
-    if (!offboard_active_) {
-        return;
-    }
+    const bool stop_required = offboard_active_ || (offboard_ && offboard_->is_active());
     offboard_active_ = false;
-    if (offboard_) {
+    if (stop_required && offboard_) {
         const auto stop_result = await_async<mavsdk::Offboard::Result>(
             [this](mavsdk::Offboard::ResultCallback cb) { offboard_->stop_async(std::move(cb)); });
         if (stop_result != mavsdk::Offboard::Result::Success) {

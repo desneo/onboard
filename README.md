@@ -43,10 +43,10 @@
 - 基于 Zenoh 接收地面站任务、指令、系统参数和目标信息。
 - 周期广播本机状态，接收并缓存其他无人机的最新状态；位置更新不逐条打印，通过 Zenoh liveliness 仅记录上下线。
 - 通过 BehaviorTree 仲裁和执行单个 Task 或 Command，新控制内容替换当前内容。
-- 通过 common 公共接口直接链接预编译 `libmidcourse_alg.so` 执行反无人机中制导，不使用 Pluma 动态插件加载。
-- 飞控连接建立后预读并缓存四项 PX4 飞控系统参数；中制导会话只读取通用飞控参数缓存，不在任务路径查询 PX4 参数。
+- 中制导控制器使用 common 公共类型直接调用 `libmidcourse_alg.so` 中的目标估计器和规划器。
+- 中制导规划限值默认来自 `[midcourse_algorithm]`；设置 `use_px4_limits = true` 后，会话使用飞控在连接阶段读取的四项 PX4 缓存值。
 - 配套 `gcs_sim` 监听 UDP 7790，将雷达 confirmed 航迹与 Zenoh 友机状态匹配，过滤友机后发布靶机。
-- 中制导输出经过校验和四元数转换后使用 MAVSDK Attitude Offboard，并按 50 ms 重发设定值。
+- 中制导默认下发 NED 速度、加速度前馈和航向，也支持 Attitude Offboard 的姿态与推力设定值。
 - 本版本已停用图像采集、检测/MOT 和视频推流。
 - 监测实机低电压并向地面站告警。
 - 已删除检测节点及原有视觉任务流程，相关任务启动时返回不可用。
@@ -144,11 +144,9 @@ tail -f logs/plane.log
 项目人工编写的运行日志和业务描述均使用中文；日志级别保留 spdlog 的 `[info]`、`[warn]`、
 `[error]` 等原始英文标识，线程 ID 直接显示为数字方括号（如 `[701742]`）。API、协议、类型、枚举、
 配置键、函数参数名、结构体及其字段名和第三方库
-原始错误等代码标识保留原文。中制导日志使用 `接口名 输入/输出` 的简洁前缀，结构体字段保持公共接口
-原名；经纬度保留 6 位小数，速度保留 2 位小数。接口输入输出不重复打印会话号、调用号和更新号；
-PX4 参数使用 `MPC_XY_VEL_MAX`、`MPC_Z_VEL_MAX_UP`、`MPC_Z_VEL_MAX_DN`、`MPC_ACC_HOR_MAX` 原名；
-日志保留会话生命周期统计、20 帧初始化历史、完整配置、目标估计及每个 50 ms 规划周期的原始控制输出，
-可按日志时间顺序还原调用流程。
+原始错误等代码标识保留原文。PX4 参数使用 `MPC_XY_VEL_MAX`、`MPC_Z_VEL_MAX_UP`、
+`MPC_Z_VEL_MAX_DN`、`MPC_ACC_HOR_MAX` 原名。中制导日志记录规划器的限值来源和实际限值、
+初始化历史帧数和周期、首次目标增量更新以及 Offboard 启动。
 多机部署同样使用此目录，不再为每次启动创建日期目录。
 `plane.stdout.log` 单独记录标准输出和错误输出，包含重复的程序日志以及第三方库、插件和启动脚本输出；
 它不参与主日志轮转，后台启动时覆盖。
@@ -238,10 +236,20 @@ SITL 测试统一使用 `config/fleet.ini` 的 `simulator.host`（当前为 `192
 | `behavior_tree.height_adjust_timeout_ms` | 航线开始前调整相对高度的超时 |
 | `behavior_tree.height_adjust_tolerance_m` | 航线开始前调整相对高度的到达容差 |
 | `midcourse.init_timeout_ms` | 等待严格递增的 20 帧雷达历史的最长时间，默认 30000 ms |
-| `midcourse.target_invalid_grace_s` | 算法内部目标预测宽限期，默认 3 秒 |
-| `midcourse.r_min_m` | 中制导距离保护，默认 50 米；与 GCS 友机匹配门限相互独立 |
+| `midcourse_algorithm.use_px4_limits` | 默认 `false`，使用 INI 的四项规划限值；`true` 使用 PX4 缓存 |
+| `midcourse_algorithm.max_horizontal_speed_m_s` | 水平速度限值，默认 60 m/s |
+| `midcourse_algorithm.max_climb_speed_m_s` / `max_descent_speed_m_s` | 爬升、下降速度限值，默认均为 20 m/s |
+| `midcourse_algorithm.cmd_accel_max_m_s2` | 指令加速度限值，默认 20 m/s² |
+| `midcourse_algorithm.target_invalid_grace_s` | 目标预测宽限期，默认 3 秒 |
+| `midcourse_algorithm.control_output_mode` | 默认 `VelocityAcceleration`，可选 `Attitude` |
+| `midcourse_algorithm.yaw_mode` / `yaw_rate_max_deg_s` | 默认 `1` 按速度方向调整期望航向，变化率上限 45 deg/s；`0` 保持当前航向 |
 
-UDP 飞控端口位于 `14580`～`14589`（`1458*`） 时，程序将本机视为仿真飞机，并禁用低电压告警。
+规划器调用周期取自 `behavior_tree.tick_interval_ms`；目标估计器周期取自雷达历史时间戳间隔的中位数。
+
+UDP 飞控端口位于场景 02 的 PX4 远端端口 `14030`～`14039`、本地端口
+`14280`～`14289`，或旧 SITL 的 `14580`～`14589`（`1458*`）时，程序将本机视为仿真飞机，
+并禁用低电压告警。仿真连接以 MAVSDK `GroundStation` 身份持续发送 GCS 心跳，满足 PX4 的
+GCS 预检；串口和其他 UDP 连接仍以 `CompanionComputer` 身份接入真实飞控。
 
 ### 安全
 
@@ -260,7 +268,8 @@ UDP 飞控端口位于 `14580`～`14589`（`1458*`） 时，程序将本机视�
 `VehicleInfo` 的 JSON 载荷为 `{"planeId":"uav1","boardIp":"192.168.1.100","podVideoUrl":"","isSim":true}`，
 仍放在标准 Message 信封的 payload 字符串内，type 为 VehicleInfo。
 机载启动后发送一次，地面站上线／重连时再次发送，不周期广播。
-`isSim` 为 JSON 布尔值，直接使用现有仿真判定：UDP 端口 `14580`～`14589` 时为 true，其他情况为 false。
+`isSim` 为 JSON 布尔值，直接使用现有仿真判定：UDP 端口位于 `14030`～`14039`、
+`14280`～`14289` 或 `14580`～`14589` 时为 true，其他情况为 false。
 该字段仅加入 VehicleInfo；读取缺少该字段的旧 VehicleInfo 时按 false 处理。
 
 地面站先订阅 `sendToStation`，再声明 Zenoh 存活标记 `station/liveliness/<station_id>`。
@@ -277,6 +286,10 @@ UDP 飞控端口位于 `14580`～`14589`（`1458*`） 时，程序将本机视�
 可用 `--connect tcp/<host>:<port>` 指定 Zenoh 端点，`--query-timeout-ms 2000` 设置超时；
 只查询、不声明地面站上线时追加 `--no-presence`。
 查询失败、类型不支持或没有响应时，工具返回非零退出码。
+
+自动化控制场景可追加 `--control-settle-ms <ms>`：工具在建立 Zenoh 上行订阅与地面站
+存活标记后，先等待指定时长使路由匹配完成，再发送 Task 或 Command。默认不等待；该参数
+只影响控制报文的发送时机，不增加重发或改变 Ack 语义。
 
 ## 雷达入口与中制导联调
 
@@ -298,7 +311,7 @@ python3 tools/fleetctl.py test-midcourse --count 1 --target-track-id <track_id>
 
 工具部署到 `uav1`，监听 `192.168.1.100:7790`。机载程序从启动起持续缓存每个航迹最近 20 帧，
 中制导会话直接使用已有历史，不从任务启动时重新计数；测试继续发送第 21 帧并验证增量更新、
-Attitude Offboard、持续运行和 Task Stop 清理。目标 ID 留空时，机载只在当前候选唯一时自动锁定。
+当前配置的 Offboard 输出、持续运行和 Task Stop 清理。目标 ID 留空时，机载只在当前候选唯一时自动锁定。
 
 ## 测试
 

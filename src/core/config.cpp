@@ -2,6 +2,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <cmath>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -21,6 +22,81 @@ std::string trim(const std::string& text) {
 
 bool parse_bool(const std::string& value) {
     return value == "1" || value == "true" || value == "True" || value == "on";
+}
+
+bool load_midcourse_algorithm_option(const std::string& key, const std::string& value, AppConfig& out) {
+    using plane::algorithm::MidCourseConfig;
+    using plane::algorithm::MidcourseControlMode;
+    static const std::unordered_map<std::string, double MidCourseConfig::*> numeric_fields = {
+        {"max_horizontal_speed_m_s", &MidCourseConfig::max_horizontal_speed_m_s},
+        {"max_climb_speed_m_s", &MidCourseConfig::max_climb_speed_m_s},
+        {"max_descent_speed_m_s", &MidCourseConfig::max_descent_speed_m_s},
+        {"cmd_accel_max_m_s2", &MidCourseConfig::cmd_accel_max_m_s2},
+        {"vehicle_mass_kg", &MidCourseConfig::vehicle_mass_kg},
+        {"max_thrust_n", &MidCourseConfig::max_thrust_n},
+        {"r_min_m", &MidCourseConfig::r_min_m},
+        {"target_invalid_grace_s", &MidCourseConfig::target_invalid_grace_s},
+        {"yaw_rate_max_deg_s", &MidCourseConfig::yaw_rate_max_deg_s},
+        {"half_fov_deg", &MidCourseConfig::half_fov_deg},
+        {"r_capture_min_m", &MidCourseConfig::r_capture_min_m},
+        {"r_capture_max_m", &MidCourseConfig::r_capture_max_m},
+        {"r_capture_nominal_m", &MidCourseConfig::r_capture_nominal_m},
+        {"capture_discount", &MidCourseConfig::capture_discount},
+        {"sigma_dot_max_deg_s", &MidCourseConfig::sigma_dot_max_deg_s},
+        {"speed_ratio", &MidCourseConfig::speed_ratio},
+        {"tol_pos_m", &MidCourseConfig::tol_pos_m},
+        {"tol_vel_m", &MidCourseConfig::tol_vel_m},
+        {"tol_accel_m_s2", &MidCourseConfig::tol_accel_m_s2},
+        {"min_altitude_m", &MidCourseConfig::min_altitude_m},
+        {"w_time", &MidCourseConfig::w_time},
+        {"w_speed", &MidCourseConfig::w_speed},
+        {"w_accel", &MidCourseConfig::w_accel},
+        {"replan_stitch_s", &MidCourseConfig::replan_stitch_s},
+        {"track_gain_k", &MidCourseConfig::track_gain_k},
+        {"track_max_corr", &MidCourseConfig::track_max_corr},
+        {"recovery_gain_k", &MidCourseConfig::recovery_gain_k},
+        {"recovery_margin_m", &MidCourseConfig::recovery_margin_m},
+        {"recovery_exit_hold_s", &MidCourseConfig::recovery_exit_hold_s},
+        {"follow_gain_k", &MidCourseConfig::follow_gain_k},
+        {"follow_filter_a", &MidCourseConfig::follow_filter_a},
+        {"follow_vel_tau_s", &MidCourseConfig::follow_vel_tau_s},
+    };
+    const auto field = numeric_fields.find(key);
+    try {
+        if (field != numeric_fields.end()) {
+            std::size_t parsed = 0;
+            const double number = std::stod(value, &parsed);
+            if (parsed == value.size() && std::isfinite(number)) {
+                out.midcourse_algorithm.*(field->second) = number;
+                return true;
+            }
+        } else if (key == "control_output_mode") {
+            if (value == "VelocityAcceleration" || value == "Attitude") {
+                out.midcourse_algorithm.control_output_mode = value == "Attitude"
+                    ? MidcourseControlMode::Attitude : MidcourseControlMode::VelocityAcceleration;
+                return true;
+            }
+        } else if (key == "yaw_mode") {
+            if (value == "0" || value == "1") {
+                out.midcourse_algorithm.yaw_mode = value == "1" ? 1 : 0;
+                return true;
+            }
+        } else if (key == "use_px4_limits" || key == "use_cost_search") {
+            if (value == "true" || value == "false") {
+                if (key == "use_px4_limits") {
+                    out.midcourse_use_px4_limits = value == "true";
+                } else {
+                    out.midcourse_algorithm.use_cost_search = value == "true";
+                }
+                return true;
+            }
+        } else {
+            return false;
+        }
+    } catch (const std::invalid_argument&) {
+    } catch (const std::out_of_range&) {
+    }
+    throw std::invalid_argument("中制导算法配置值非法: " + key + "=" + value);
 }
 
 std::string canonical_key(const std::string& section, const std::string& key) {
@@ -61,7 +137,7 @@ std::string canonical_key(const std::string& section, const std::string& key) {
     return it == keys.end() ? qualified : it->second;
 }
 
-/// 仿真飞机判定：udp 链路且 fc_udp_url 端口处于 14580-14589（1458*）。
+/// 仿真飞机判定：udp 链路且 fc_udp_url 使用场景 02 的本地／远端端口或旧 SITL 端口。
 bool detect_is_simulation(const AppConfig& config) {
     if (config.fc_link_type != "udp") {
         return false;
@@ -72,7 +148,8 @@ bool detect_is_simulation(const AppConfig& config) {
     }
     try {
         const int port = std::stoi(config.fc_udp_url.substr(sep + 1));
-        return port >= 14580 && port <= 14589;
+        return (port >= 14030 && port <= 14039) || (port >= 14280 && port <= 14289) ||
+               (port >= 14580 && port <= 14589);
     } catch (const std::invalid_argument&) {
         return false;
     } catch (const std::out_of_range&) {
@@ -115,8 +192,14 @@ bool load_config(const std::string& path, AppConfig& out) {
             continue;
         }
         const std::string raw_key = trim(line.substr(0, pos));
-        const std::string key = canonical_key(section, raw_key);
         const std::string value = trim(line.substr(pos + 1));
+        if (section == "midcourse_algorithm") {
+            if (!load_midcourse_algorithm_option(raw_key, value, out)) {
+                SPDLOG_WARN("未知配置项: {}.{}", section, raw_key);
+            }
+            continue;
+        }
+        const std::string key = canonical_key(section, raw_key);
         if (key == "safe_height_m") {
             out.system_param.safeHeight_m = std::stod(value);
         } else if (key == "log_dir") {
@@ -174,9 +257,9 @@ bool load_config(const std::string& path, AppConfig& out) {
         } else if (key == "midcourse_init_timeout_ms") {
             out.midcourse_init_timeout_ms = std::stoi(value);
         } else if (key == "midcourse_target_invalid_grace_s") {
-            out.midcourse_target_invalid_grace_s = std::stod(value);
+            load_midcourse_algorithm_option(raw_key, value, out);
         } else if (key == "midcourse_r_min_m") {
-            out.midcourse_r_min_m = std::stod(value);
+            load_midcourse_algorithm_option(raw_key, value, out);
         } else {
             SPDLOG_WARN("未知配置项: {}.{}", section, raw_key);
         }

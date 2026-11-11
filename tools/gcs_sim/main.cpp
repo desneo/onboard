@@ -58,6 +58,7 @@ struct Options {
     bool no_ack = false;
     int listen_seconds = 0;
     int ack_timeout_ms = 2000;
+    int control_settle_ms = 0;
     bool help = false;
     std::string query_type;
     int query_timeout_ms = 2000;
@@ -127,6 +128,7 @@ void print_usage() {
         "其他:\n"
         "  --listen-seconds <s>     运行时长；0 表示持续运行 (默认: 0)\n"
         "  --ack-timeout-ms <ms>    等待 Ack 超时 (默认: 2000)\n"
+        "  --control-settle-ms <ms> 控制报文发送前等待 Zenoh 路由匹配 (默认: 0)\n"
         "  --no-ack                 不回复收到的告警/Ack\n"
         "  --send-gcs-target <id>   下发地面站目标轨迹\n"
         "  --gcs-target-repeat <n>  地面站目标重复发送次数 (默认: 1)\n"
@@ -193,6 +195,8 @@ Options parse_options(int argc, char** argv) {
             options.listen_seconds = std::stoi(argv[++i]);
         } else if (arg == "--ack-timeout-ms" && i + 1 < argc) {
             options.ack_timeout_ms = std::stoi(argv[++i]);
+        } else if (arg == "--control-settle-ms" && i + 1 < argc) {
+            options.control_settle_ms = std::stoi(argv[++i]);
         } else if (arg == "--takeoff-height" && i + 1 < argc) {
             options.takeoff_height_m = std::stof(argv[++i]);
         } else if (arg == "--waypoint" && i + 1 < argc) {
@@ -415,6 +419,15 @@ int main(int argc, char** argv) {
         return 2;
     }
     SPDLOG_INFO("地面站订阅已就绪: sender_id={}", options.sender_id);
+
+    if (options.control_settle_ms < 0) {
+        SPDLOG_ERROR("control_settle_ms 不能为负数");
+        return 2;
+    }
+    if (options.control_settle_ms > 0) {
+        SPDLOG_INFO("控制会话稳定等待: control_settle_ms={}", options.control_settle_ms);
+        std::this_thread::sleep_for(std::chrono::milliseconds(options.control_settle_ms));
+    }
 
     std::atomic<bool> radar_running{false};
     int radar_socket = -1;

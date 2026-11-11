@@ -160,20 +160,16 @@ cd build/plane
 应使用相同格式，线程 ID 只显示为 `[%t]`，不得带“线程”前缀，且格式中不自动输出英文函数名。
 
 
-`config_simulation` 验证 UDP 端口 `14580`～`14589` 为仿真，范围外端口和串口不判定为仿真。
+`config_simulation` 验证场景 02 的 PX4 远端 UDP 端口 `14030`～`14039`、本地端口
+`14280`～`14289` 与旧 SITL 端口 `14580`～`14589` 为仿真，范围外端口和串口不判定为仿真。
 
 `radar_target_filter` 验证 JSON 容错、空扫描、coasting 忽略、confirmed 过滤、严格时间戳输入、多友机全局匹配、
 50 米门限、NED 状态外推、过期状态失败关闭，以及“友机未出现在雷达帧时仍转发靶机”。
-`midcourse_algorithm_adapter` 使用真实 `libmidcourse_alg.so` 验证 20 帧初始化、增量更新和逐 tick 调用；
-`midcourse_controller` 验证任务启动前已形成的 20 帧持续缓存、参数缓存读取、会话重置和错误路径；
+`midcourse_controller` 使用真实 `libmidcourse_alg.so`，验证任务启动前已形成的 20 帧历史、增量更新、
+INI／PX4 限值来源、两种输出模式、会话重置和错误路径；
 `attitude_conversion` 验证四元数归一化与姿态转换。
-中制导接口日志必须使用 `接口名 输入/输出` 的简洁前缀，结构体字段保持公共接口原名，经纬度固定
-保留 6 位小数，速度固定保留 2 位小数，不得恢复“中制导接口 方向=……”前缀或中文结构体字段。
-接口输入输出不得包含会话号、调用号或更新号；会话销毁日志保留调用次数和两类更新次数的累计统计。
-排查真实算法调用时，可按 `MidcoursePlanner::` 和 `TargetEstimator::` 过滤板端 `logs/plane.log`；
-同一会话内按日志时间排序后，必须能看到 `MidcoursePlanner::setConfig` → `TargetEstimator::init` →
-持续 `MidcoursePlanner::update` →（存在新帧时）`TargetEstimator::update` 的输入输出，接口失败时
-保留原始错误字符串。
+按板端 `logs/plane.log` 的时间顺序检查规划器配置、估计器初始化、Offboard 启动和首次增量更新。
+规划器配置日志包含限值来源和实际传入的四项限值。接口失败时保留原始错误字符串。
 
 ```bash
 ctest --test-dir build --output-on-failure
@@ -221,6 +217,7 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 | 场景 | 通过标准 |
 | --- | --- |
 | UDP 连接 | 能发现 PX4，状态变为 connected，断开和恢复可识别 |
+| 仿真 GCS 预检 | 场景 02 或旧 SITL 中启动 plane 后，PX4 不再报告 `Preflight Fail: No connection to the GCS`；日志包含 `GroundStation` 身份，随后 Arm 可被接受 |
 | 串口连接 | 使用配置的设备和波特率连接 PX4 |
 | Arm/Disarm | 指令成功且以真实 armed 状态判定完成 |
 | Takeoff | 使用指定高度；未指定时使用安全高度；达到容差后完成 |
@@ -258,8 +255,12 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 2. `AntiUav` 根据飞行状态选择直接 Midcourse、Takeoff → Midcourse 或 Arm → Takeoff → Midcourse。
 3. 指定 ID 时锁定该目标；未指定时只允许唯一候选，不得在多个目标间自动跳换。
 4. 机载从进程启动起持续缓存目标；任务启动前已经收到 20 帧时直接完成初始化，第 21 帧产生首次增量更新；规划器每个 50 ms tick 先于本 tick 的目标增量更新调用。
-5. 飞控连接后成功读取并缓存 `MPC_XY_VEL_MAX`、`MPC_Z_VEL_MAX_UP`、`MPC_Z_VEL_MAX_DN`、`MPC_ACC_HOR_MAX`；中制导任务路径只读取缓存，断连时缓存失效，重连后重新获取，缓存未就绪时任务失败。
-6. 算法输出的所有数值、四元数和推力经过校验，横向推力接近零，使用 body→NED 四元数转换后的 Attitude Offboard。
+5. `[midcourse_algorithm]` 默认使用 INI 的四项限值，飞控缓存未就绪仍可配置规划器。
+   `use_px4_limits = true` 时分别使用 `MPC_XY_VEL_MAX`、`MPC_Z_VEL_MAX_UP`、`MPC_Z_VEL_MAX_DN`、`MPC_ACC_HOR_MAX` 缓存值，
+   缓存未就绪时任务失败，断连时缓存失效，重连后重新获取。
+6. 使用 `VelocityAcceleration` 时，SITL 实际进入 Offboard。检查发往 SITL 的 `SET_POSITION_TARGET_LOCAL_NED`，
+   三轴速度和加速度均有效，跟踪时至少一帧具有非零加速度，位置字段无效，航向使用弧度。使用 `Attitude` 时，
+   校验 body→NED 四元数及推力，横向推力接近零，使用换算后的姿态和推力设定值。
 7. 雷达中断超过 3 秒后任务仍运行；Task Stop、新控制内容和异常退出均停止 Offboard 并重置会话。
 8. GCS 从 Zenoh 获取防守机状态，只过滤 50 米内实际匹配到的雷达航迹；雷达帧没有友机航迹时仍转发靶机，状态缺失或过期时暂停整帧。
 

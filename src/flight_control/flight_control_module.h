@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -46,6 +47,8 @@ class FlightControlModule final : public plane::core::IModule, public FlightCont
     bool goto_waypoint(const plane::model::GeoPoint& point, std::string& error) override;
     bool execute_route(const std::vector<plane::model::GeoPoint>& points, std::string& error) override;
     bool set_ned_velocity(const plane::model::NedVelocity& velocity, std::string& error) override;
+    bool set_ned_velocity_acceleration(const plane::algorithm::VelocityAccelerationCommand& command,
+                                       double current_yaw_deg, std::string& error) override;
     bool set_attitude(const AttitudeSetpoint& setpoint, std::string& error) override;
     bool get_cached_flight_control_params(FlightControlParams& params, std::string& error) const override;
     void clear_offboard() override;
@@ -90,6 +93,9 @@ class FlightControlModule final : public plane::core::IModule, public FlightCont
     bool ensure_connected(std::string& error) const;
     bool upload_and_start_mission(const std::vector<plane::model::GeoPoint>& points, bool fly_through,
                                   std::string& error);
+    bool set_velocity_setpoint(mavsdk::Offboard::VelocityNedYaw velocity,
+                              std::optional<mavsdk::Offboard::AccelerationNed> acceleration, std::string& error);
+    mavsdk::Offboard::Result send_velocity_setpoint_locked();
     void report_error(const std::string& detail) const;
 
     plane::core::EventBus& event_bus_;
@@ -117,6 +123,7 @@ class FlightControlModule final : public plane::core::IModule, public FlightCont
     std::mutex offboard_mutex_;
     enum class OffboardSetpointKind { None, VelocityNed, Attitude };
     mavsdk::Offboard::VelocityNedYaw velocity_setpoint_;
+    std::optional<mavsdk::Offboard::AccelerationNed> acceleration_setpoint_;
     mavsdk::Offboard::Attitude attitude_setpoint_;
     OffboardSetpointKind offboard_setpoint_kind_ = OffboardSetpointKind::None;
     bool offboard_active_ = false;

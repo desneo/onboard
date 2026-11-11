@@ -78,9 +78,15 @@ bool CommunicationModule::start() {
         return false;
     }
 
+    const std::string expected_station_liveliness = station_liveliness_key(config_.station_id);
     if (!transport_.subscribe_liveliness(
-            station_liveliness_key(config_.station_id),
-            [this](const std::string&, bool online) { on_station_liveliness(online); }, error) ||
+            expected_station_liveliness,
+            [this, expected_station_liveliness](const std::string& key_expr, bool online) {
+                if (key_expr == expected_station_liveliness) {
+                    on_station_liveliness(online);
+                }
+            },
+            error) ||
         !transport_.declare_queryable(
             plane_query_selector(config_.plane_id),
             [this](const std::string& key, std::string& reply, std::string& error) {
