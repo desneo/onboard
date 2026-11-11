@@ -68,11 +68,11 @@ OpenCV、RGA、Pluma 或 RKNN。
 | Communication | Zenoh 收发、报文序列化、确认重试和状态上报 |
 | UAV State Management | 本机、友机和地面站链路的最新状态 |
 | StateMonitor | 安全状态监测和告警 |
-| Flight Control | PX4/MAVSDK 连接、遥测、连接后参数预读缓存、飞行动作和 Attitude／NED Offboard 重发 |
+| Flight Control | PX4/MAVSDK 连接、遥测、连接后参数预读缓存、飞行动作和 NED 速度加速度／Attitude Offboard 下发 |
 | Task Scheduler | Task 与独立 Command 的唯一仲裁者 |
 | Task Execution Engine | 创建并运行任务树和指令树 |
 | Target Management | 雷达／地面站目标的最新值与最近 20 条严格递增历史 |
-| Midcourse Adapter | 隔离中制导发布包类型，直创目标估计器和规划器并保持预编译 ABI |
+| Midcourse Controller | 会话内直接持有目标估计器和规划器，使用算法公共类型配置、输入量测并读取控制指令 |
 | Camera Control | 相机链路、状态和控制能力 |
 | Geographic Tool | 地理距离和方位计算 |
 
@@ -120,7 +120,7 @@ ZenohTransport 管理原生 queryable 的生命周期和带超时的 get；plane
 | GCS/UAV 网络通信 | Zenoh，仅限 Communication 模块 |
 | 状态查询、目标查询、明确能力调用 | 同步 C++ API |
 | 状态变化、接收消息、执行进度和结果 | EventBus/eventpp 事件 |
-| 飞控动作和中制导姿态下发 | 同步调用 FlightControl 并检查结果 |
+| 飞控动作和中制导控制指令下发 | 同步调用 FlightControl 并检查结果 |
 
 同级模块不得交叉包含对方实现头文件。同步协作依赖稳定 API，事件协作使用唯一事件 ID。业务模块不得以事件“发出成功”替代需要确认结果的飞控调用。
 
@@ -195,7 +195,7 @@ Communication 对外提供 `sendToStation`、`sendToPlane` 和 `sendToAll` 三�
 
 - Runtime 按注册顺序执行 `init/start`，按逆序执行 `stop/release`。
 - Flight Control 在飞控连接建立后读取并缓存通用 PX4 飞控系统参数；断连使缓存失效，重连后后台重读。
-  中制导只是缓存读取方之一，Task 不得在行为树 tick 中访问 PX4 参数。
+  中制导默认从 `[midcourse_algorithm]` 取规划限值，`use_px4_limits = true` 时从缓存取值。
 - Target Management 独立于任务生命周期持续保留每个航迹最近 20 帧；中制导启动和停止不得清除此历史。
 - 每个模块负责自身资源创建、线程停止和资源释放，Runtime 只协调顺序。
 - 系统使用少量长期线程处理网络、飞控遥测和行为树，不采用“一个模块固定一个线程”的原则。
@@ -291,7 +291,7 @@ Communication 对外提供 `sendToStation`、`sendToPlane` 和 `sendToAll` 三�
 | 地理计算 | 统一封装 GeographicLib |
 | GCS 目标历史 | 每个目标保留最近 20 条 |
 | 中制导集成 | 引用 `common_include/algorithm/midcourse_alg.h`，直连带 SONAME 的 `libmidcourse_alg.so`，不使用 Pluma |
-| 中制导输出 | Attitude Offboard；首帧先发设定值再启动，50 ms 重发；遥测发现模式被覆盖时限频重启 Offboard |
+| 中制导输出 | 读取 `MidCourseOutput`，按指令类型使用 NED 速度和加速度前馈或 Attitude Offboard；飞控层转换单位及 MAVSDK 设定值格式，先发设定值再启动 Offboard |
 | 雷达友机过滤 | 友机状态来自 Zenoh；只过滤门限内实际匹配航迹，友机未出现在雷达帧中不阻塞靶机 |
 
 重大决策变化时应在本节补充背景、选择、替代方案和影响，不得只修改代码。

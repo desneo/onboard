@@ -1,9 +1,9 @@
 #pragma once
 
-#include <array>
 #include <string>
 #include <vector>
 
+#include "algorithm/midcourse_alg.h"
 #include "message.h"
 
 namespace plane::flight_control {
@@ -26,10 +26,7 @@ struct FlightControlParams {
 };
 
 /// 中制导 Attitude 输出；四元数为机体到 NED，推力为机体系归一化值。
-struct AttitudeSetpoint {
-    std::array<double, 4> quat_body_to_ned = {1.0, 0.0, 0.0, 0.0};
-    std::array<double, 3> thrust_body = {0.0, 0.0, 0.0};
-};
+using AttitudeSetpoint = plane::algorithm::AttitudeCommand;
 
 /// Flight Control 对外稳定能力接口（ARCHITECTURE §13）。
 class FlightControlApi {
@@ -46,6 +43,8 @@ class FlightControlApi {
     virtual bool goto_waypoint(const plane::model::GeoPoint& point, std::string& error) = 0;
     virtual bool execute_route(const std::vector<plane::model::GeoPoint>& points, std::string& error) = 0;
     virtual bool set_ned_velocity(const plane::model::NedVelocity& velocity, std::string& error) = 0;
+    virtual bool set_ned_velocity_acceleration(const plane::algorithm::VelocityAccelerationCommand& command,
+                                               double current_yaw_deg, std::string& error) = 0;
     virtual bool set_attitude(const AttitudeSetpoint& setpoint, std::string& error) = 0;
     /// 返回飞控连接建立后预先读取的 PX4 飞控系统参数；本调用不访问 PX4。
     virtual bool get_cached_flight_control_params(FlightControlParams& params, std::string& error) const = 0;

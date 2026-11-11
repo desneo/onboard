@@ -33,6 +33,8 @@ class FakeFlightControl final : public plane::flight_control::FlightControlApi {
         return dispatch_ok;
     }
     bool set_ned_velocity(const plane::model::NedVelocity&, std::string&) override { return false; }
+    bool set_ned_velocity_acceleration(const plane::algorithm::VelocityAccelerationCommand&, double,
+                                       std::string&) override { return false; }
     bool set_attitude(const plane::flight_control::AttitudeSetpoint&, std::string&) override { return false; }
     bool get_cached_flight_control_params(plane::flight_control::FlightControlParams&, std::string&) const override {
         return false;

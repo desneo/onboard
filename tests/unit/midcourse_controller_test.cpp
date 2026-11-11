@@ -2,6 +2,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <cmath>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -30,7 +31,6 @@ class FakeFlightControl final : public plane::flight_control::FlightControlApi {
     int velocity_calls = 0;
     int clear_calls = 0;
     plane::flight_control::AttitudeSetpoint last_attitude;
-    plane::model::NedVelocity last_velocity;
 
     bool arm(std::string&) override { return true; }
     bool disarm(std::string&) override { return true; }
@@ -41,8 +41,14 @@ class FakeFlightControl final : public plane::flight_control::FlightControlApi {
     bool stop_motor(std::string&) override { return true; }
     bool goto_waypoint(const plane::model::GeoPoint&, std::string&) override { return true; }
     bool execute_route(const std::vector<plane::model::GeoPoint>&, std::string&) override { return true; }
-    bool set_ned_velocity(const plane::model::NedVelocity& value, std::string&) override {
-        last_velocity = value;
+    bool set_ned_velocity(const plane::model::NedVelocity&, std::string&) override {
+        throw std::runtime_error("中制导下发速度时遗漏加速度前馈");
+    }
+    bool set_ned_velocity_acceleration(const plane::algorithm::VelocityAccelerationCommand& value,
+                                       double current_yaw_deg, std::string&) override {
+        require(std::isfinite(value.an_m_s2) && std::isfinite(value.ae_m_s2) && std::isfinite(value.ad_m_s2),
+                "中制导下发的加速度必须是有限数");
+        require(current_yaw_deg == 42.0, "未传入当前航向用于缺省航向");
         ++velocity_calls;
         return true;
     }
@@ -104,14 +110,14 @@ int main() {
         plane::core::AppConfig config;
         config.bt_tick_interval_ms = 50;
         config.midcourse_init_timeout_ms = 30000;
-        config.midcourse_target_invalid_grace_s = 3.0;
-        config.midcourse_r_min_m = 50.0;
         FakeFlightControl flight;
+        flight.cached_flight_params_available = false;
         FakeStateStore state;
         state.value.geoPos.latitude = 30.0;
         state.value.geoPos.longitude = 120.0;
         state.value.geoPos.altitude = 100.0F;
         state.value.startPos = state.value.geoPos;
+        state.value.yaw_deg = 42.0F;
         plane::target::TargetStore store(events, config);
         require(store.start(), "目标存储启动失败");
         plane::task::MidcourseController controller(events, config, flight, state, store);
@@ -124,8 +130,8 @@ int main() {
         require(controller.begin("target", error), "中制导会话启动失败");
         require(controller.tick(error) == plane::task::MidcourseController::TickResult::Running,
                 "使用会话启动前持续缓存的 20 帧初始化失败: " + error);
-        require(flight.cached_flight_params_gets == 1 && flight.velocity_calls == 1,
-                "未使用飞控参数缓存或未下发首个 NED 速度");
+        require(flight.cached_flight_params_gets == 0 && flight.velocity_calls == 1,
+                "INI 限值模式不应读取 PX4 缓存，且应下发首个速度及加速度指令");
 
         events.publish(plane::communication::events::kGcsTargetReceived, target("target", 20));
         require(controller.tick(error) == plane::task::MidcourseController::TickResult::Running,
@@ -139,10 +145,18 @@ int main() {
         require(flight.velocity_calls == 67, "雷达中断期间未逐 tick 执行规划和 NED 速度");
 
         controller.stop();
+        config.midcourse_use_px4_limits = true;
+        config.midcourse_algorithm.control_output_mode = plane::algorithm::MidcourseControlMode::Attitude;
+        flight.cached_flight_params_available = true;
         require(controller.begin("target", error), "重复会话启动失败");
         require(controller.tick(error) == plane::task::MidcourseController::TickResult::Running,
                 "重复会话未从已有 20 帧重新初始化: " + error);
-        require(flight.cached_flight_params_gets == 2, "重复会话未获取飞控参数缓存");
+        require(flight.cached_flight_params_gets == 1, "PX4 限值模式未获取飞控参数缓存");
+        require(flight.attitude_calls == 1 && flight.velocity_calls == 67, "姿态档未下发姿态指令");
+        double norm_squared = 0.0;
+        for (double value : flight.last_attitude.quat_body_to_ned) norm_squared += value * value;
+        require(std::abs(norm_squared - 1.0) < 1e-6 && std::isfinite(flight.last_attitude.thrust_body[2]),
+                "姿态档输出的四元数或推力无效");
         controller.stop();
 
         flight.cached_flight_params_available = false;

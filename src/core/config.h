@@ -2,6 +2,7 @@
 
 #include <string>
 
+#include "algorithm/midcourse_alg.h"
 #include "message.h"
 
 namespace plane::core {
@@ -46,8 +47,19 @@ struct AppConfig {
     double alert_voltage_threshold_v = 21.0;
 
     int midcourse_init_timeout_ms = 30000;
-    double midcourse_target_invalid_grace_s = 3.0;
-    double midcourse_r_min_m = 50.0;
+    bool midcourse_use_px4_limits = false;
+    plane::algorithm::MidCourseConfig midcourse_algorithm = [] {
+        plane::algorithm::MidCourseConfig config;
+        config.max_horizontal_speed_m_s = 60.0;
+        config.max_climb_speed_m_s = 20.0;
+        config.max_descent_speed_m_s = 20.0;
+        config.cmd_accel_max_m_s2 = 20.0;
+        config.target_invalid_grace_s = 3.0;
+        config.control_output_mode = plane::algorithm::MidcourseControlMode::VelocityAcceleration;
+        config.yaw_mode = 1;
+        config.enable_internal_terminal_confirmation = false;
+        return config;
+    }();
 };
 
 /// 从带 section 的 INI 文件加载配置；文件不存在时保留默认值并返回 false。

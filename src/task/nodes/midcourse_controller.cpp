@@ -3,39 +3,23 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
-#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
-#include <utility>
+#include <variant>
 #include <vector>
 
+#include "algorithm/midcourse_alg.h"
 #include "communication/communication_events.h"
 #include "core/time_utils.h"
-#include "task/nodes/midcourse_algorithm_adapter.h"
 
 namespace plane::task {
 namespace {
 
 constexpr std::size_t kRequiredHistorySize = 20;
 constexpr std::int64_t kProgressLogIntervalMs = 5000;
-
-MidcourseGeoPoint to_midcourse_geo(const plane::model::GeoPoint& value) {
-    MidcourseGeoPoint result;
-    result.latitude = value.latitude;
-    result.longitude = value.longitude;
-    result.height = value.height;
-    result.altitude = value.altitude;
-    return result;
-}
-
-MidcourseMeasurement to_measurement(const plane::target::GcsTarget& target) {
-    MidcourseMeasurement measurement;
-    measurement.geo = to_midcourse_geo(target.geoPos);
-    measurement.timestamp_ms = target.timestamp_ms;
-    return measurement;
-}
 
 double median_interval_s(const std::vector<plane::target::GcsTarget>& history) {
     std::vector<std::int64_t> intervals;
@@ -50,6 +34,12 @@ double median_interval_s(const std::vector<plane::target::GcsTarget>& history) {
 }  // namespace
 
 struct MidcourseController::Impl {
+    struct AlgorithmSession {
+        plane::algorithm::TargetEstimator estimator;
+        plane::algorithm::MidcoursePlanner planner;
+        plane::algorithm::TargetEstimate estimate;
+    };
+
     Impl(plane::core::EventBus& event_bus_value, const plane::core::AppConfig& config_value,
          plane::flight_control::FlightControlApi& flight_control_value, plane::state::StateStoreApi& state_store_value,
          plane::target::TargetStoreApi& target_store_value)
@@ -61,7 +51,7 @@ struct MidcourseController::Impl {
 
     void on_target(const plane::target::GcsTarget& target) {
         std::lock_guard<std::mutex> lock(mutex);
-        if (!active || locked_track_id.empty() || target.trackId != locked_track_id ||
+        if (!session || locked_track_id.empty() || target.trackId != locked_track_id ||
             target.timestamp_ms <= last_measurement_timestamp_ms) {
             return;
         }
@@ -73,7 +63,8 @@ struct MidcourseController::Impl {
                   [](const auto& first, const auto& second) { return first.timestamp_ms < second.timestamp_ms; });
         for (const auto& target : pending_targets) {
             if (target.timestamp_ms <= last_measurement_timestamp_ms) continue;
-            if (!algorithm->update_target(to_measurement(target), error)) {
+            const plane::algorithm::TargetMeasurement measurement{target.geoPos, target.timestamp_ms};
+            if (!session->estimator.update(measurement, session->estimate, error)) {
                 error = "目标估计器 update 失败: " + error;
                 pending_targets.clear();
                 return false;
@@ -120,27 +111,30 @@ struct MidcourseController::Impl {
             return false;
         }
         if (!planner_configured) {
-            plane::flight_control::FlightControlParams flight_params;
-            if (!flight_control.get_cached_flight_control_params(flight_params, error)) {
-                return false;
+            auto algorithm_config = config.midcourse_algorithm;
+            if (config.midcourse_use_px4_limits) {
+                plane::flight_control::FlightControlParams flight_params;
+                if (!flight_control.get_cached_flight_control_params(flight_params, error)) {
+                    return false;
+                }
+                algorithm_config.max_horizontal_speed_m_s = flight_params.mpc_xy_vel_max;
+                algorithm_config.max_climb_speed_m_s = flight_params.mpc_z_vel_max_up;
+                algorithm_config.max_descent_speed_m_s = flight_params.mpc_z_vel_max_dn;
+                algorithm_config.cmd_accel_max_m_s2 = flight_params.mpc_acc_hor_max;
             }
-            MidcourseAlgorithmConfig algorithm_config;
-            algorithm_config.max_horizontal_speed_m_s = 60.0;//flight_params.mpc_xy_vel_max;
-            algorithm_config.max_climb_speed_m_s = 20.0;//flight_params.mpc_z_vel_max_up;
-            algorithm_config.max_descent_speed_m_s = 20.0;//flight_params.mpc_z_vel_max_dn;
-            algorithm_config.max_acceleration_m_s2 = 20.0;//flight_params.mpc_acc_hor_max;
             algorithm_config.update_dt_s = static_cast<double>(config.bt_tick_interval_ms) / 1000.0;
-            algorithm_config.target_invalid_grace_s = 3.0;// config.midcourse_target_invalid_grace_s;
-            algorithm_config.r_min_m = config.midcourse_r_min_m;
-            algorithm_config.output_mode = MidcourseOutputMode::VelocityAcceleration;
-            algorithm_config.yaw_mode = 0;  // 速度档期望航向对齐速度指令方向
-            if (!algorithm->set_config(algorithm_config, error)) {
+            if (!session->planner.setConfig(algorithm_config, error)) {
                 error = "中制导 setConfig 失败: " + error;
                 return false;
             }
             planner_configured = true;
-            SPDLOG_INFO("中制导规划器配置完成: trackId={} update_dt_s={:.3f}", locked_track_id,
-                        algorithm_config.update_dt_s);
+            SPDLOG_INFO(
+                "中制导规划器配置完成: trackId={} update_dt_s={:.3f} use_px4_limits={} "
+                "max_horizontal_speed_m_s={:.2f} max_climb_speed_m_s={:.2f} "
+                "max_descent_speed_m_s={:.2f} cmd_accel_max_m_s2={:.2f}",
+                locked_track_id, algorithm_config.update_dt_s, config.midcourse_use_px4_limits,
+                algorithm_config.max_horizontal_speed_m_s, algorithm_config.max_climb_speed_m_s,
+                algorithm_config.max_descent_speed_m_s, algorithm_config.cmd_accel_max_m_s2);
         }
         const std::vector<plane::target::GcsTarget> history = target_store.gcs_target_history(locked_track_id);
         if (history.size() < kRequiredHistorySize) {
@@ -159,13 +153,13 @@ struct MidcourseController::Impl {
             error = "中制导初始化历史周期非法";
             return false;
         }
-        std::vector<MidcourseMeasurement> measurements;
+        std::vector<plane::algorithm::TargetMeasurement> measurements;
         measurements.reserve(init_history.size());
         for (const auto& target : init_history) {
-            measurements.push_back(to_measurement(target));
+            measurements.push_back({target.geoPos, target.timestamp_ms});
         }
         const plane::model::VehicleState own = state_store.own_state();
-        if (!algorithm->init_estimator(measurements, to_midcourse_geo(own.startPos), estimator_dt_s, error)) {
+        if (!session->estimator.init(measurements, own.startPos, estimator_dt_s, error)) {
             error = "目标估计器 init 失败: " + error;
             return false;
         }
@@ -184,7 +178,6 @@ struct MidcourseController::Impl {
     plane::target::TargetStoreApi& target_store;
     std::mutex mutex;
     bool subscribed = false;
-    bool active = false;
     bool planner_configured = false;
     bool initialized = false;
     bool estimator_update_logged = false;
@@ -194,7 +187,7 @@ struct MidcourseController::Impl {
     std::int64_t last_progress_log_ms = 0;
     std::int64_t last_measurement_timestamp_ms = 0;
     std::vector<plane::target::GcsTarget> pending_targets;
-    std::unique_ptr<MidcourseAlgorithmAdapter> algorithm;
+    std::optional<AlgorithmSession> session;
 };
 
 MidcourseController::MidcourseController(plane::core::EventBus& event_bus, const plane::core::AppConfig& config,
@@ -218,12 +211,10 @@ void MidcourseController::start() {
 
 bool MidcourseController::begin(const std::string& requested_track_id, std::string& error) {
     std::lock_guard<std::mutex> lock(impl_->mutex);
-    if (impl_->config.midcourse_init_timeout_ms <= 0 || impl_->config.bt_tick_interval_ms <= 0 ||
-        impl_->config.midcourse_target_invalid_grace_s < 0.0 || impl_->config.midcourse_r_min_m <= 0.0) {
+    if (impl_->config.midcourse_init_timeout_ms <= 0 || impl_->config.bt_tick_interval_ms <= 0) {
         error = "中制导配置非法";
         return false;
     }
-    impl_->active = true;
     impl_->planner_configured = false;
     impl_->initialized = false;
     impl_->estimator_update_logged = false;
@@ -233,14 +224,14 @@ bool MidcourseController::begin(const std::string& requested_track_id, std::stri
     impl_->start_ms = plane::core::now_ms();
     impl_->last_progress_log_ms = impl_->start_ms - kProgressLogIntervalMs;
     impl_->last_measurement_timestamp_ms = 0;
-    impl_->algorithm = std::make_unique<MidcourseAlgorithmAdapter>();
+    impl_->session.emplace();
     SPDLOG_INFO("中制导会话启动: requested_track_id={}", requested_track_id.empty() ? "<自动>" : requested_track_id);
     return true;
 }
 
 MidcourseController::TickResult MidcourseController::tick(std::string& error) {
     std::lock_guard<std::mutex> lock(impl_->mutex);
-    if (!impl_->active) {
+    if (!impl_->session) {
         error = "中制导会话未启动";
         return TickResult::Failure;
     }
@@ -273,36 +264,27 @@ MidcourseController::TickResult MidcourseController::tick(std::string& error) {
     }
 
     const plane::model::VehicleState own = impl_->state_store.own_state();
-    MidcourseVehicleState vehicle;
-    vehicle.geo = to_midcourse_geo(own.geoPos);
-    vehicle.start = to_midcourse_geo(own.startPos);
-    vehicle.vn_m_s = own.vn_m_s;
-    vehicle.ve_m_s = own.ve_m_s;
-    vehicle.vd_m_s = own.vd_m_s;
-    MidcourseAttitudeOutput output;
-    if (!impl_->algorithm->update(vehicle, output, error)) {
+    const plane::algorithm::MidcourseVehicleState vehicle{
+        own.geoPos, own.startPos, own.vn_m_s, own.ve_m_s, own.vd_m_s};
+    plane::algorithm::MidCourseOutput output;
+    if (!impl_->session->planner.update(vehicle, impl_->session->estimate, output, error)) {
         error = "中制导 update 失败: " + error;
         return TickResult::Failure;
     }
-    if (output.mode == MidcourseOutputMode::VelocityAcceleration) {
-        plane::model::NedVelocity velocity;
-        velocity.north_m_s = output.vn_m_s;
-        velocity.east_m_s = output.ve_m_s;
-        velocity.down_m_s = output.vd_m_s;
-        // 算法给期望航向则下发（弧度转度），否则保持当前航向
-        velocity.yaw_deg = output.has_yaw ? output.yaw_rad * 180.0 / M_PI : own.yaw_deg;
-        if (!impl_->flight_control.set_ned_velocity(velocity, error)) {
-            error = "中制导飞控指令执行失败: " + error;
-            return TickResult::Failure;
-        }
+    const auto* velocity = std::get_if<plane::algorithm::VelocityAccelerationCommand>(&output.cmd.value);
+    const auto* attitude = std::get_if<plane::algorithm::AttitudeCommand>(&output.cmd.value);
+    bool sent;
+    if (output.cmd.mode == plane::algorithm::MidcourseControlMode::VelocityAcceleration && velocity) {
+        sent = impl_->flight_control.set_ned_velocity_acceleration(*velocity, own.yaw_deg, error);
+    } else if (output.cmd.mode == plane::algorithm::MidcourseControlMode::Attitude && attitude) {
+        sent = impl_->flight_control.set_attitude(*attitude, error);
     } else {
-        plane::flight_control::AttitudeSetpoint setpoint;
-        setpoint.quat_body_to_ned = output.quat_body_to_ned;
-        setpoint.thrust_body = output.thrust_body;
-        if (!impl_->flight_control.set_attitude(setpoint, error)) {
-            error = "中制导飞控指令执行失败: " + error;
-            return TickResult::Failure;
-        }
+        error = "中制导算法输出模式与指令类型不一致";
+        return TickResult::Failure;
+    }
+    if (!sent) {
+        error = "中制导飞控指令执行失败: " + error;
+        return TickResult::Failure;
     }
     if (!impl_->flush_pending_targets_locked(error)) {
         return TickResult::Failure;
@@ -317,7 +299,6 @@ void MidcourseController::stop() {
         return;
     }
     std::lock_guard<std::mutex> lock(impl_->mutex);
-    impl_->active = false;
     impl_->planner_configured = false;
     impl_->initialized = false;
     impl_->estimator_update_logged = false;
@@ -325,7 +306,7 @@ void MidcourseController::stop() {
     impl_->locked_track_id.clear();
     impl_->pending_targets.clear();
     impl_->last_measurement_timestamp_ms = 0;
-    impl_->algorithm.reset();
+    impl_->session.reset();
 }
 
 }  // namespace plane::task

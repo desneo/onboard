@@ -50,5 +50,25 @@ int main() {
         config.is_sim = !test.expected;
         if (!plane::core::load_config(path, config) || config.is_sim != test.expected) return 3;
     }
+
+    {
+        std::ofstream file(path);
+        file << "[midcourse]\ninit_timeout_ms = 12345\ntarget_invalid_grace_s = 2.0\nr_min_m = 75.0\n"
+                "[midcourse_algorithm]\nuse_px4_limits = true\nmax_horizontal_speed_m_s = 30.0\n"
+                "max_climb_speed_m_s = 8.0\nmax_descent_speed_m_s = 4.0\ncmd_accel_max_m_s2 = 7.0\n"
+                "control_output_mode = Attitude\nyaw_mode = 0\n";
+        if (!file) return 4;
+    }
+    plane::core::AppConfig config;
+    if (!plane::core::load_config(path, config)) return 5;
+    const auto& algorithm = config.midcourse_algorithm;
+    if (config.midcourse_init_timeout_ms != 12345 || !config.midcourse_use_px4_limits ||
+        algorithm.max_horizontal_speed_m_s != 30.0 || algorithm.max_climb_speed_m_s != 8.0 ||
+        algorithm.max_descent_speed_m_s != 4.0 || algorithm.cmd_accel_max_m_s2 != 7.0 ||
+        algorithm.target_invalid_grace_s != 2.0 || algorithm.r_min_m != 75.0 ||
+        algorithm.control_output_mode != plane::algorithm::MidcourseControlMode::Attitude ||
+        algorithm.yaw_mode != 0) {
+        return 6;
+    }
     return 0;
 }

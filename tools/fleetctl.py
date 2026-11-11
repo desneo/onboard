@@ -1334,10 +1334,30 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
         if not gcs_binary.is_file():
             raise FleetError("缺少 build/gcs_sim，请先完成构建")
 
-        if config.simulator.flight_port_base is None:
+        simulator_port = config.simulator.flight_port_base
+        if simulator_port is None:
             raise FleetError("fleet.ini 未配置 simulator.flight_port_base，无法确定手动 SITL 的飞控端口")
-        flight_endpoint = f"udpout://{config.simulator.host}:{config.simulator.flight_port_base}"
+        config_text = remote_config_or_default(plane, remote, bundle / "config" / "plane.conf")
+        deployed_config = configparser.ConfigParser(interpolation=None)
+        deployed_config.read_string(config_text)
+        configured_port = endpoint_port(deployed_config.get("flight_control", "udp_url", fallback=""))
+        if (
+            deployed_config.get("flight_control", "link_type", fallback="udp") == "udp"
+            and configured_port is not None
+            and 14580 <= configured_port <= 14589
+        ):
+            simulator_port = configured_port
+        flight_endpoint = f"udpout://{config.simulator.host}:{simulator_port}"
+        mode = deployed_config.get("midcourse_algorithm", "control_output_mode", fallback="VelocityAcceleration")
+        offboard_started = {
+            "VelocityAcceleration": "Offboard 速度及加速度启动",
+            "Attitude": "Offboard 姿态启动",
+        }.get(mode)
+        if offboard_started is None:
+            raise FleetError(f"control_output_mode 无效: {mode}")
+        use_px4_limits = deployed_config.getboolean("midcourse_algorithm", "use_px4_limits", fallback=False)
         report["flight_endpoint"] = flight_endpoint
+        report["control_output_mode"] = mode
         stop_planes(planes, remote)
         sync_plane(plane, bundle, flight_endpoint, run_id, remote, run_dir)
         check_remote_dependencies(plane, remote)
@@ -1355,11 +1375,12 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
         wait_until(
             f"机载接入用户手动启动的仿真飞控 {config.simulator.host}",
             lambda: "飞控系统已接入" in plane_log("flight-wait")
-            and "飞控系统参数已缓存" in plane_log("flight-wait")
+            and "飞控连接建立" in plane_log("flight-wait")
+            and (not use_px4_limits or "飞控系统参数已缓存" in plane_log("flight-wait"))
             and remote.run(plane, "pgrep -x plane >/dev/null", check=False).returncode == 0,
             config.verify_timeout_s,
         )
-        passed(f"确认机载进程已接入手动 SITL {config.simulator.host} 并在连接阶段缓存飞控系统参数")
+        passed(f"确认机载进程已接入手动 SITL {flight_endpoint}")
 
         # 先只启动 GCS 雷达桥并等待本机状态，确认过滤输入已就绪后再下发任务。
         gcs_command = shlex.join(
@@ -1423,7 +1444,7 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
         ]
         if target_id:
             task_args.extend(["--target-track-id", target_id])
-        task_args.extend(["--listen-seconds", "1", "--no-radar-udp", "--no-presence"])
+        task_args.extend(["--listen-seconds", "1", "--no-radar-udp", "--no-presence", "--control-settle-ms", "500"])
         task_command = shlex.join(task_args)
         task_result = remote.run(
             plane, f"env LD_LIBRARY_PATH={shlex.quote(plane.runtime_dir + '/lib')} {task_command}", timeout=15)
@@ -1437,10 +1458,10 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
         )
 
         wait_until(
-            "外部雷达 20+1 帧到达并启动 Attitude Offboard",
+            f"外部雷达 20+1 帧到达并启动 {mode} Offboard",
             lambda: "中制导初始化完成" in plane_log("midcourse-wait")
             and "中制导目标估计器首次增量更新" in plane_log("midcourse-wait")
-            and "Offboard 姿态启动" in plane_log("midcourse-wait")
+            and offboard_started in plane_log("midcourse-wait")
             and "value=Offboard" in plane_log("midcourse-wait"),
             args.radar_timeout,
         )
@@ -1455,15 +1476,15 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
             raise FleetError("AntiUav 在外部停止前自行结束")
         cache_index = running_text.find("飞控系统参数已缓存")
         session_index = running_text.find("中制导会话启动")
-        set_config_index = running_text.find("MidcoursePlanner::setConfig 输入")
-        estimator_init_index = running_text.find("TargetEstimator::init 输入")
-        planner_update_index = running_text.find("MidcoursePlanner::update 输入")
-        estimator_update_index = running_text.find("TargetEstimator::update 输入")
-        if not (0 <= cache_index < session_index):
+        set_config_index = running_text.find("中制导规划器配置完成")
+        estimator_init_index = running_text.find("中制导初始化完成")
+        planner_update_index = running_text.find(offboard_started)
+        estimator_update_index = running_text.find("中制导目标估计器首次增量更新")
+        if use_px4_limits and not (0 <= cache_index < session_index):
             raise FleetError("飞控系统参数未在中制导会话启动前完成缓存")
         if not (0 <= set_config_index < estimator_init_index < planner_update_index < estimator_update_index):
             raise FleetError("中制导接口调用顺序不符合 setConfig → init → planner.update → estimator.update")
-        passed("启动前 20 帧缓存、接口调用顺序、第 21 帧更新、Attitude Offboard 与持续运行验证通过")
+        passed(f"启动前 20 帧缓存、接口调用顺序、第 21 帧更新、{mode} Offboard 与持续运行验证通过")
 
         stop_command = shlex.join(
             [
@@ -1479,6 +1500,8 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
                 "1",
                 "--no-radar-udp",
                 "--no-presence",
+                "--control-settle-ms",
+                "500",
             ]
         )
         stop_result = remote.run(
