@@ -267,6 +267,7 @@ std::string canonical_key(const std::string& section, const std::string& key) {
         {"camera.pod_model", "pod_model"},
         {"camera.pod_video_url", "pod_video_url"},
         {"camera.pod_control_url", "pod_control_url"},
+        {"camera.pod_state_report_hz", "pod_state_report_hz"},
         {"system.state_report_period_ms", "state_report_period_ms"},
         {"communication.plane_id", "plane_id"},
         {"communication.zenoh_config_file", "zenoh_config_file"},
@@ -369,6 +370,13 @@ std::string read_main_config(const std::string& path, AppConfig& out) {
             out.pod_video_url = value;
         } else if (key == "pod_control_url") {
             out.pod_control_url = value;
+        } else if (key == "pod_state_report_hz") {
+            out.pod_state_report_hz = parse_positive_int(value);
+            if (out.pod_state_report_hz <= 0) {
+                out.pod_state_report_hz = kDefaultPodStateReportHz;
+                SPDLOG_WARN("吊舱状态频率配置无效，使用默认值: pod_state_report_hz={}（输入：{}）",
+                            out.pod_state_report_hz, value);
+            }
         } else if (key == "plane_id") {
             out.plane_id = value;
         } else if (key == "zenoh_config_file") {
@@ -431,6 +439,7 @@ std::string read_main_config(const std::string& path, AppConfig& out) {
 
 bool load_config(const std::string& path, AppConfig& out, const std::vector<std::string>* local_ipv4_addresses) {
     AppConfig loaded = out;
+    loaded.pod_state_report_hz = kDefaultPodStateReportHz;
     std::string profile;
     try {
         profile = read_main_config(path, loaded);

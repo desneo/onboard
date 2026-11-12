@@ -1,10 +1,12 @@
 #include "communication/serialization.h"
 
 #include <cmath>
+#include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <utility>
+#include <variant>
 
 namespace plane::communication {
 namespace {
@@ -53,6 +55,152 @@ bool enum_from_string(const std::string& name, Enum& out) {
 
 bool is_valid_agent_id(std::string_view agent_id) {
     return !agent_id.empty() && agent_id.find_first_of("/*?#$") == std::string_view::npos;
+}
+
+bool to_payload(const plane::model::PodCommand& value, std::string& out, std::string& error) {
+    using plane::model::PodCommandType;
+    try {
+        json payload{{"type", std::string(magic_enum::enum_name(value.type))}};
+        switch (value.type) {
+            case PodCommandType::SetRate:
+                if (!std::isfinite(value.pitchRate_deg_s) || !std::isfinite(value.yawRate_deg_s)) {
+                    error = "PodCommand 角速度必须为有限数值";
+                    return false;
+                }
+                payload["pitchRate_deg_s"] = value.pitchRate_deg_s;
+                payload["yawRate_deg_s"] = value.yawRate_deg_s;
+                break;
+            case PodCommandType::SetAngles:
+                if (!std::isfinite(value.pitch_deg) || !std::isfinite(value.yaw_deg)) {
+                    error = "PodCommand 角度必须为有限数值";
+                    return false;
+                }
+                payload["pitch_deg"] = value.pitch_deg;
+                payload["yaw_deg"] = value.yaw_deg;
+                break;
+            case PodCommandType::ZeroPitch:
+            case PodCommandType::ZeroYaw:
+                break;
+            default:
+                error = "未知 PodCommandType";
+                return false;
+        }
+        out = payload.dump();
+        return true;
+    } catch (const json::exception& e) {
+        error = e.what();
+        return false;
+    }
+}
+
+bool from_payload(const std::string& payload, plane::model::PodCommand& out, std::string& error) {
+    using plane::model::PodCommandType;
+    try {
+        const json in = json::parse(payload);
+        plane::model::PodCommand value;
+        if (!enum_from_string(in.at("type").get<std::string>(), value.type)) {
+            error = "未知 PodCommandType";
+            return false;
+        }
+        auto read_number = [&](const char* key, double& number) {
+            const auto it = in.find(key);
+            if (it != in.end() && it->is_number()) {
+                number = it->get<double>();
+                if (std::isfinite(number)) {
+                    return true;
+                }
+            }
+            error = std::string("PodCommand 缺少有效数值 ") + key;
+            return false;
+        };
+        switch (value.type) {
+            case PodCommandType::SetRate:
+                if (!read_number("pitchRate_deg_s", value.pitchRate_deg_s) ||
+                    !read_number("yawRate_deg_s", value.yawRate_deg_s)) {
+                    return false;
+                }
+                break;
+            case PodCommandType::SetAngles:
+                if (!read_number("pitch_deg", value.pitch_deg) || !read_number("yaw_deg", value.yaw_deg)) {
+                    return false;
+                }
+                break;
+            case PodCommandType::ZeroPitch:
+            case PodCommandType::ZeroYaw:
+                break;
+        }
+        out = value;
+        return true;
+    } catch (const json::exception& e) {
+        error = e.what();
+        return false;
+    }
+}
+
+bool to_payload(const plane::model::PodState& value, std::string& out, std::string& error) {
+    try {
+        json fields = json::object();
+        for (const auto& [name, field] : value.fields) {
+            if (const auto* number = std::get_if<double>(&field); number && !std::isfinite(*number)) {
+                error = "PodState.fields 包含非有限数值";
+                return false;
+            }
+            std::visit([&](const auto& item) { fields[name] = item; }, field);
+        }
+        out = json{{"planeId", value.planeId},
+                   {"model", value.model},
+                   {"connected", value.connected},
+                   {"canMove", value.canMove},
+                   {"timestamp_ms", value.timestamp_ms},
+                   {"fields", std::move(fields)}}
+                  .dump();
+        return true;
+    } catch (const json::exception& e) {
+        error = e.what();
+        return false;
+    }
+}
+
+bool from_payload(const std::string& payload, plane::model::PodState& out, std::string& error) {
+    try {
+        const json in = json::parse(payload);
+        const auto& fields = in.at("fields");
+        const auto& timestamp = in.at("timestamp_ms");
+        auto fits_int64 = [](const json& number) {
+            return number.is_number_integer() &&
+                   (!number.is_number_unsigned() ||
+                    number.get<std::uint64_t>() <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()));
+        };
+        if (!fields.is_object() || !fits_int64(timestamp)) {
+            error = "PodState.fields 必须为对象且 timestamp_ms 必须为整数";
+            return false;
+        }
+        plane::model::PodState value;
+        value.planeId = in.at("planeId").get<std::string>();
+        value.model = in.at("model").get<std::string>();
+        value.connected = in.at("connected").get<bool>();
+        value.canMove = in.at("canMove").get<bool>();
+        value.timestamp_ms = timestamp.get<std::int64_t>();
+        for (auto it = fields.begin(); it != fields.end(); ++it) {
+            if (it->is_boolean()) {
+                value.fields.emplace(it.key(), it->get<bool>());
+            } else if (fits_int64(*it)) {
+                value.fields.emplace(it.key(), it->get<std::int64_t>());
+            } else if (it->is_number_float() && std::isfinite(it->get<double>())) {
+                value.fields.emplace(it.key(), it->get<double>());
+            } else if (it->is_string()) {
+                value.fields.emplace(it.key(), it->get<std::string>());
+            } else {
+                error = "PodState.fields 必须使用布尔值、整数、有限浮点数或字符串";
+                return false;
+            }
+        }
+        out = std::move(value);
+        return true;
+    } catch (const json::exception& e) {
+        error = e.what();
+        return false;
+    }
 }
 
 bool to_payload(const plane::model::AgentInfo& value, std::string& out, std::string& error) {

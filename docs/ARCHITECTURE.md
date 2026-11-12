@@ -55,7 +55,8 @@ Radar UDP :7790 ── gcs_sim ──┘
 ## 3. 模块边界
 
 Perception、检测节点、视觉目标接口和视频推流已完全移除，不保留 DisabledPerception。
-相机控制模块保留，用于吊舱指令与状态，不传递图像帧。中制导通过 common 中的唯一公共接口
+Camera Control 管理吊舱生命周期和命令调度，按 `pod_model` 选择 `PodDriver`。驱动负责型号协议，
+`PodTransport` 负责帧传输。中制导通过 common 中的唯一公共接口
 直接链接 `libmidcourse_alg.so`，不通过 Plugin Management 或 Pluma 加载。构建及运行不依赖
 OpenCV、RGA、Pluma 或 RKNN。
 通用 Plugin Management 模块保留在 `src/plugin`，当前为空实现，仅接入模块生命周期，供后续插件扩展。
@@ -103,6 +104,10 @@ ZenohTransport 管理原生 queryable 的生命周期和带超时的 get。`Comm
 `queryToAgent/{agentId}/AgentInfo` 查询，校验响应 key、消息类型、发送方和载荷中的 Agent ID。
 查询属于信息接口，回包为标准 `Message`。停止时先释放 queryable，再关闭 Session。
 成功解码 TaskInfo、Command、SystemParam 或 GcsTarget 时更新地面站链路活跃时间。
+
+`PodCommand` 使用指定飞机单播，Communication 校验报文并向 Camera 交接指令，设备 I/O 在 Camera 工作线程执行。Communication 读取 Camera 的最新快照，以独立的 `camera.pod_state_report_hz` 周期上报 `PodState`。
+
+吊舱传输工厂当前识别 `udp://<主机>:<端口>`，仿真接入为各型号注入 UDP 会话保活。RK3588 实物接入可在工厂中增加 `serial:///dev/<设备>:<波特率>` 分支，由串口实现处理拆帧、粘包和坏帧重同步。艾晟和捷联的厂商串口参数为 `230400 8N1`，中科默认 `115200`、无校验。中科实物上电自检后主动上报，串口接入按设备协议选择收发周期。
 
 
 | 场景 | 机制 |

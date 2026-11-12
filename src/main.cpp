@@ -71,13 +71,13 @@ int main(int argc, char** argv) {
     auto flight_control = std::make_unique<plane::flight_control::FlightControlModule>(event_bus, config, *state_store);
     auto system_param_store = std::make_unique<plane::core::SystemParamStore>(event_bus, config);
     auto plugin_management = std::make_unique<plane::plugin::PluginManagement>();
-    auto camera_control = std::make_unique<plane::camera::CameraControlModule>(event_bus);
+    auto camera_control = std::make_unique<plane::camera::CameraControlModule>(config);
     auto target_store = std::make_unique<plane::target::TargetStore>(event_bus, config);
     auto task_engine = std::make_unique<plane::task::TaskExecutionEngine>(
         event_bus, config, *flight_control, *state_store, *system_param_store, *target_store);
     auto task_scheduler = std::make_unique<plane::task::TaskScheduler>(event_bus, config, task_engine.get());
-    auto communication =
-        std::make_unique<plane::communication::CommunicationModule>(event_bus, config, *state_store, *task_scheduler);
+    auto communication = std::make_unique<plane::communication::CommunicationModule>(
+        event_bus, config, *state_store, *task_scheduler, camera_control.get());
     task_scheduler->set_communication(*communication);
     auto state_monitor = std::make_unique<plane::state::StateMonitor>(event_bus, config, *communication);
 

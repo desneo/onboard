@@ -30,9 +30,17 @@ target_link_libraries(plane_protocol
   PRIVATE plane::magic_enum plane::nlohmann_json spdlog::spdlog zenohc::lib zenohcxx::zenohc
 )
 
+add_library(plane_camera STATIC
+  src/camera/camera_control_module.cpp
+  src/camera/pod_driver.cpp
+  src/camera/pod_transport.cpp
+)
+target_include_directories(plane_camera PUBLIC src)
+target_compile_options(plane_camera PRIVATE -Wall -Wextra)
+target_link_libraries(plane_camera PUBLIC plane::common_include PRIVATE spdlog::spdlog)
+
 add_executable(plane
   src/main.cpp
-  src/camera/camera_control_module.cpp
   src/communication/communication_module.cpp
   src/core/build_info.cpp
   src/core/config.cpp
@@ -71,6 +79,7 @@ target_compile_definitions(plane PRIVATE
   PLANE_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
 )
 target_link_libraries(plane PRIVATE
+  plane_camera
   plane_protocol
   plane::midcourse_alg
   plane::deps
@@ -112,13 +121,18 @@ if(BUILD_TESTING)
 
   add_executable(camera_target_test
     tests/unit/camera_target_test.cpp
-    src/camera/camera_control_module.cpp
+    src/core/time_utils.cpp
     src/target/target_store.cpp
   )
   target_include_directories(camera_target_test PRIVATE src)
   target_compile_options(camera_target_test PRIVATE -Wall -Wextra)
-  target_link_libraries(camera_target_test PRIVATE plane::common_include plane::eventpp spdlog::spdlog)
+  target_link_libraries(camera_target_test PRIVATE plane_camera plane::eventpp spdlog::spdlog)
   add_test(NAME camera_target COMMAND camera_target_test)
+
+  add_executable(pod_driver_test tests/unit/pod_driver_test.cpp)
+  target_compile_options(pod_driver_test PRIVATE -Wall -Wextra)
+  target_link_libraries(pod_driver_test PRIVATE plane_camera)
+  add_test(NAME pod_driver COMMAND pod_driver_test)
 
   add_executable(serialization_vehicle_state_test tests/unit/serialization_vehicle_state_test.cpp)
   target_compile_options(serialization_vehicle_state_test PRIVATE -Wall -Wextra)

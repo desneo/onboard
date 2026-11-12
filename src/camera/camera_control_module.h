@@ -1,18 +1,26 @@
 #pragma once
 
+#include <chrono>
+#include <condition_variable>
+#include <deque>
+#include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <thread>
 
 #include "camera/camera_control_api.h"
-#include "core/event_bus.h"
+#include "core/config.h"
 #include "core/module.h"
 
 namespace plane::camera {
 
-/// 第一版 Noop 实现：仅维护链路状态与日志；相机 SDK 接入时替换内部实现。
+class PodDriver;
+
 class CameraControlModule final : public plane::core::IModule, public CameraControlApi {
    public:
-    explicit CameraControlModule(plane::core::EventBus& event_bus);
+    explicit CameraControlModule(const core::AppConfig& config);
+    CameraControlModule(const core::AppConfig& config, std::unique_ptr<PodDriver> driver);
     ~CameraControlModule() override;
 
     std::string name() const override;
@@ -21,16 +29,27 @@ class CameraControlModule final : public plane::core::IModule, public CameraCont
     void stop() override;
     void release() override;
 
-    bool connect(std::string& error) override;
-    void disconnect() override;
-    CameraStatus status() const override;
-    bool send_command(const std::string& command, std::string& error) override;
+    void submit_command(const model::PodCommand& command, std::chrono::steady_clock::time_point received_at) override;
+    std::optional<model::PodState> pod_state() const override;
 
    private:
-    plane::core::EventBus& event_bus_;
+    struct ReceivedCommand {
+        model::PodCommand command;
+        std::chrono::steady_clock::time_point received_at;
+    };
+
+    void worker_loop();
+    void set_control_error(std::string error);
+
+    const core::AppConfig& config_;
+    std::unique_ptr<PodDriver> driver_;
     mutable std::mutex mutex_;
-    CameraStatus status_;
-    bool stopped_ = false;
+    std::condition_variable wake_;
+    std::optional<model::PodState> state_;
+    std::string control_error_;
+    std::deque<ReceivedCommand> commands_;
+    bool running_ = false;
+    std::thread worker_;
 };
 
 }  // namespace plane::camera

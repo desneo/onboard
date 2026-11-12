@@ -2,6 +2,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -10,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "camera/camera_control_api.h"
 #include "communication/communication_events.h"
 #include "communication/plane_query.h"
 #include "communication/serialization.h"
@@ -22,6 +24,7 @@ using plane::core::now_ms;
 namespace {
 
 constexpr int kWorkerTickMs = 50;
+constexpr std::size_t kRecentPodCommandLimit = 1024;
 
 bool is_reliable(plane::model::MessageType type) {
     return type == plane::model::MessageType::Alert || type == plane::model::MessageType::Ack;
@@ -55,6 +58,11 @@ struct MessageTypeOf<plane::model::TaskState> {
     static constexpr auto value = plane::model::MessageType::TaskState;
 };
 
+template <>
+struct MessageTypeOf<plane::model::PodState> {
+    static constexpr auto value = plane::model::MessageType::PodState;
+};
+
 bool make_message(const std::string& sender_id, const OutgoingMessage& value, plane::model::Message& out,
                   std::string& error) {
     static std::atomic<std::uint64_t> counter{0};
@@ -76,8 +84,10 @@ bool make_message(const std::string& sender_id, const OutgoingMessage& value, pl
 
 CommunicationModule::CommunicationModule(plane::core::EventBus& event_bus, const plane::core::AppConfig& config,
                                          plane::state::StateStoreApi& state_store,
-                                         plane::task::TaskStateProvider& task_state_provider)
-    : event_bus_(event_bus), config_(config), state_store_(state_store), task_state_provider_(task_state_provider) {}
+                                         plane::task::TaskStateProvider& task_state_provider,
+                                         plane::camera::CameraControlApi* camera)
+    : event_bus_(event_bus), config_(config), state_store_(state_store), task_state_provider_(task_state_provider),
+      camera_(camera) {}
 
 CommunicationModule::~CommunicationModule() { stop(); }
 
@@ -105,12 +115,13 @@ bool CommunicationModule::start() {
         report_error("Zenoh 打开失败: " + error);
         return false;
     }
-    const auto rx_handler = [this](const std::string& payload) { enqueue_wire(payload); };
-    if (!transport_.subscribe("sendToPlane/" + config_.plane_id, rx_handler, error)) {
+    if (!transport_.subscribe("sendToPlane/" + config_.plane_id,
+                              [this](const std::string& payload) { enqueue_wire(payload, true); }, error)) {
         report_error("订阅 sendToPlane 失败: " + error);
         return false;
     }
-    if (!transport_.subscribe(std::string(plane::model::topic_sendToAll), rx_handler, error)) {
+    if (!transport_.subscribe(std::string(plane::model::topic_sendToAll),
+                              [this](const std::string& payload) { enqueue_wire(payload, false); }, error)) {
         report_error("订阅 sendToAll 失败: " + error);
         return false;
     }
@@ -169,6 +180,11 @@ void CommunicationModule::stop() {
         }
     }
     transport_.close();
+    {
+        std::lock_guard<std::mutex> lock(rx_mutex_);
+        rx_queue_.clear();
+    }
+    recent_pod_commands_.clear();
     std::lock_guard<std::mutex> lock(pending_mutex_);
     pending_.clear();
 }
@@ -208,7 +224,8 @@ bool CommunicationModule::update_agent_liveliness(const std::string& key_expr, b
     return true;
 }
 
-void CommunicationModule::enqueue_wire(std::string raw) {
+void CommunicationModule::enqueue_wire(std::string raw, bool unicast) {
+    const auto received_at = std::chrono::steady_clock::now();
     {
         std::lock_guard<std::mutex> lock(rx_mutex_);
         const auto limit = static_cast<std::size_t>(config_.comm_rx_queue_max);
@@ -216,7 +233,7 @@ void CommunicationModule::enqueue_wire(std::string raw) {
             rx_queue_.pop_front();
             SPDLOG_WARN("通信接收队列已满，丢弃最旧消息");
         }
-        rx_queue_.push_back(std::move(raw));
+        rx_queue_.push_back({std::move(raw), unicast, received_at});
     }
     rx_cv_.notify_one();
 }
@@ -240,16 +257,22 @@ void CommunicationModule::on_peer_liveliness(const std::string& key_expr, bool o
 }
 
 void CommunicationModule::worker_loop() {
+    using Clock = std::chrono::steady_clock;
+    const auto worker_period = std::chrono::milliseconds(kWorkerTickMs);
+    const auto pod_period = std::chrono::microseconds(1000000 / std::clamp(config_.pod_state_report_hz, 1, 1000000));
+    auto next_pod_report = Clock::now();
     while (running_) {
-        std::deque<std::string> batch;
+        std::deque<IncomingMessage> batch;
         {
             std::unique_lock<std::mutex> lock(rx_mutex_);
-            rx_cv_.wait_for(lock, std::chrono::milliseconds(kWorkerTickMs),
-                            [this]() { return !rx_queue_.empty() || agent_info_pending_ || !running_; });
+            const auto worker_deadline = Clock::now() + worker_period;
+            const auto deadline = camera_ ? std::min(worker_deadline, next_pod_report) : worker_deadline;
+            rx_cv_.wait_until(lock, deadline,
+                              [this]() { return !rx_queue_.empty() || agent_info_pending_ || !running_; });
             batch.swap(rx_queue_);
         }
-        for (const auto& raw : batch) {
-            on_wire_message(raw);
+        for (const auto& incoming : batch) {
+            on_wire_message(incoming);
         }
         if (agent_info_pending_.exchange(false)) {
             if (sendToAll(agent_info())) {
@@ -257,14 +280,21 @@ void CommunicationModule::worker_loop() {
             }
         }
         report_states();
+        const auto now = Clock::now();
+        if (camera_ && now >= next_pod_report) {
+            next_pod_report = now + pod_period;
+            if (auto state = camera_->pod_state()) {
+                sendToStation(*state);
+            }
+        }
         check_pending();
     }
 }
 
-void CommunicationModule::on_wire_message(const std::string& raw) {
+void CommunicationModule::on_wire_message(const IncomingMessage& incoming) {
     plane::model::Message envelope;
     std::string error;
-    if (!decode_envelope(raw, envelope, error)) {
+    if (!decode_envelope(incoming.wire, envelope, error)) {
         report_error("报文解析失败: " + error);
         return;
     }
@@ -272,7 +302,45 @@ void CommunicationModule::on_wire_message(const std::string& raw) {
         envelope.type != plane::model::MessageType::Command) {
         return;
     }
+    if (envelope.type == plane::model::MessageType::PodCommand) {
+        handle_pod_command(envelope, incoming);
+        return;
+    }
     handle_envelope(envelope);
+}
+
+void CommunicationModule::handle_pod_command(const plane::model::Message& envelope, const IncomingMessage& incoming) {
+    if (!incoming.unicast || !running_) {
+        return;
+    }
+    if (!is_valid_agent_id(envelope.senderId) || envelope.messageId.empty()) {
+        report_error("PodCommand 的 senderId 或 messageId 无效");
+        return;
+    }
+    plane::model::PodCommand command;
+    std::string error;
+    if (!from_payload(envelope.payload, command, error)) {
+        report_error("PodCommand 解码失败: " + error);
+        return;
+    }
+    state_store_.notify_station_seen();
+    if (command.type == plane::model::PodCommandType::SetRate) {
+        if (camera_) {
+            camera_->submit_command(command, incoming.received_at);
+        }
+        return;
+    }
+    const auto id = std::make_pair(envelope.senderId, envelope.messageId);
+    if (std::find(recent_pod_commands_.begin(), recent_pod_commands_.end(), id) == recent_pod_commands_.end()) {
+        if (recent_pod_commands_.size() == kRecentPodCommandLimit) {
+            recent_pod_commands_.pop_front();
+        }
+        recent_pod_commands_.push_back(id);
+        if (camera_) {
+            camera_->submit_command(command, incoming.received_at);
+        }
+    }
+    send_ack(envelope.messageId);
 }
 
 void CommunicationModule::handle_envelope(const plane::model::Message& envelope) {

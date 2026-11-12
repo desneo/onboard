@@ -4,9 +4,11 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <csignal>
 #include <cstdint>
@@ -15,6 +17,7 @@
 #include <nlohmann/json.hpp>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -39,16 +42,20 @@ std::int64_t unix_now_ms() {
         .count();
 }
 
-/// 一次待发送的控制内容：基础指令或任务，按命令行出现顺序执行。
+/// 一次待发送的控制内容，按命令行出现顺序执行。
 enum class ActionKind {
     Command,
     Task,
+    PodCommand,
 };
 
 struct Action {
     ActionKind kind = ActionKind::Command;
     std::string type;         ///< CommandType 或 TaskCode
     std::string task_action;  ///< TaskAction，仅 Task 使用
+    plane::model::PodCommand pod{};
+    std::chrono::milliseconds pod_rate_duration{0};
+    bool pod_release = true;
 };
 
 struct Options {
@@ -112,6 +119,13 @@ void print_usage() {
         "  --waypoint <lat,lon,height[,altitude]>  添加航点，可重复指定\n"
         "  --command-type <type>    直接指定指令类型 (Arm/Disarm/Takeoff/Land/RTL/...)\n"
         "\n"
+        "吊舱控制 (PodCommand):\n"
+        "  --pod-rate <pitch,yaw,ms>          按住持续转动 (度/秒)，结束时发双零松手\n"
+        "  --pod-rate-timeout <pitch,yaw,ms>  按住持续转动 (度/秒)，结束时停发以验证超时停车\n"
+        "  --pod-zero-pitch                   俯仰归零\n"
+        "  --pod-zero-yaw                     偏航归零\n"
+        "  --pod-angles <pitch,yaw>           指定机械俯仰角、偏航角 (度)\n"
+        "\n"
         "任务 (按出现顺序发往 sendToPlane/<plane-id>):\n"
         "  --anti-uav               下发反无人机中制导任务 (TaskAction=Start)\n"
         "  --stop-task              终止当前任务 (TaskAction=Stop)\n"
@@ -148,6 +162,7 @@ void print_usage() {
         "  gcs_sim --plane-id uav1 --arm\n"
         "  gcs_sim --plane-id uav1 --takeoff --takeoff-height 20\n"
         "  gcs_sim --plane-id uav1 --sender-id GCS --waypoint 32.2,119.1,40 --command-type Route\n"
+        "  gcs_sim --plane-id uav1 --no-radar-udp --pod-rate 8,-5,1500 --listen-seconds 3\n"
         "  gcs_sim --plane-id uav1 --anti-uav --target-track-id t-1\n"
         "  gcs_sim --plane-id uav1 --arm --takeoff --takeoff-height 20 --anti-uav\n";
     spdlog::info("{}", usage);
@@ -167,6 +182,48 @@ bool parse_envelope(const std::string& wire, Envelope& out) {
         return false;
     }
     return !out.message_id.empty() && !out.type.empty();
+}
+
+Action parse_pod_action(const std::string& option, const std::string& value) {
+    const bool rate = option != "--pod-angles";
+    std::stringstream stream(value);
+    std::vector<std::string> fields;
+    std::string field;
+    while (std::getline(stream, field, ',')) {
+        fields.push_back(field);
+    }
+    if (fields.size() != (rate ? 3U : 2U) || value.back() == ',') {
+        throw std::invalid_argument(option + (rate ? " 格式应为 pitch,yaw,ms" : " 格式应为 pitch,yaw"));
+    }
+    const auto parse_number = [&](const std::string& text) {
+        std::size_t end = 0;
+        const double number = std::stod(text, &end);
+        if (end != text.size() || !std::isfinite(number)) {
+            throw std::invalid_argument(option + " 的角度或角速度必须为有限数值");
+        }
+        return number;
+    };
+    const double pitch = parse_number(fields[0]);
+    const double yaw = parse_number(fields[1]);
+
+    Action action{ActionKind::PodCommand, {}, {}};
+    if (rate) {
+        std::size_t end = 0;
+        const int duration_ms = std::stoi(fields[2], &end);
+        if (end != fields[2].size() || duration_ms <= 0) {
+            throw std::invalid_argument(option + " 的持续时间必须为正整数毫秒");
+        }
+        action.pod.type = plane::model::PodCommandType::SetRate;
+        action.pod.pitchRate_deg_s = pitch;
+        action.pod.yawRate_deg_s = yaw;
+        action.pod_rate_duration = std::chrono::milliseconds(duration_ms);
+        action.pod_release = option == "--pod-rate";
+    } else {
+        action.pod.type = plane::model::PodCommandType::SetAngles;
+        action.pod.pitch_deg = pitch;
+        action.pod.yaw_deg = yaw;
+    }
+    return action;
 }
 
 Options parse_options(int argc, char** argv) {
@@ -245,6 +302,14 @@ Options parse_options(int argc, char** argv) {
             options.actions.push_back({ActionKind::Command, "StopMotor", {}});
         } else if (arg == "--command-type" && i + 1 < argc) {
             options.actions.push_back({ActionKind::Command, argv[++i], {}});
+        } else if (arg == "--pod-zero-pitch" || arg == "--pod-zero-yaw") {
+            Action action{ActionKind::PodCommand, {}, {}};
+            action.pod.type = arg == "--pod-zero-pitch" ? plane::model::PodCommandType::ZeroPitch
+                                                       : plane::model::PodCommandType::ZeroYaw;
+            options.actions.push_back(action);
+        } else if (arg == "--pod-angles" || arg == "--pod-rate" || arg == "--pod-rate-timeout") {
+            if (i + 1 >= argc) throw std::invalid_argument(arg + " 缺少参数");
+            options.actions.push_back(parse_pod_action(arg, argv[++i]));
         } else if (arg == "--anti-uav") {
             options.actions.push_back({ActionKind::Task, pending_task_code, "Start"});
         } else if (arg == "--stop-task") {
@@ -322,7 +387,13 @@ std::string send_typed(plane::communication::ZenohTransport& session, const Opti
 
 int main(int argc, char** argv) {
     plane::core::set_project_log_pattern();
-    const Options options = parse_options(argc, argv);
+    Options options;
+    try {
+        options = parse_options(argc, argv);
+    } catch (const std::exception& exception) {
+        SPDLOG_ERROR("参数无效: {}", exception.what());
+        return 2;
+    }
     if (options.help) {
         print_usage();
         return 0;
@@ -346,6 +417,7 @@ int main(int argc, char** argv) {
 
     std::atomic<std::uint64_t> vehicle_state_count{0};
     std::atomic<std::uint64_t> task_state_count{0};
+    std::atomic<std::uint64_t> pod_state_count{0};
     std::atomic<std::uint64_t> agent_info_count{0};
     std::atomic<std::uint64_t> radar_datagram_count{0};
     std::atomic<std::uint64_t> radar_valid_scan_count{0};
@@ -412,6 +484,19 @@ int main(int argc, char** argv) {
                             payload.value("status", std::string{}), payload.value("currentNode", std::string{}));
             }
             task_state_count.fetch_add(1);
+            return;
+        }
+        if (envelope.type == "PodState") {
+            if (from_broadcast || envelope.sender_id != options.plane_id) return;
+            plane::model::PodState state;
+            std::string decode_error;
+            if (!plane::communication::from_payload(envelope.payload, state, decode_error) ||
+                state.planeId != envelope.sender_id) {
+                SPDLOG_WARN("PodState 无效: senderId={} {}", envelope.sender_id, decode_error);
+                return;
+            }
+            pod_state_count.fetch_add(1);
+            SPDLOG_INFO("收到 PodState: {}", envelope.payload);
             return;
         }
         if (envelope.type == "Ack") {
@@ -627,10 +712,63 @@ int main(int argc, char** argv) {
         SPDLOG_INFO("AgentInfo 查询成功: {}", reply.payload);
     }
 
+    std::signal(SIGINT, handle_stop_signal);
+    std::signal(SIGTERM, handle_stop_signal);
+    const std::string pod_id_prefix = options.sender_id + "-pod-" + std::to_string(unix_now_ms()) + "-" +
+                                      std::to_string(::getpid()) + "-";
+    const auto send_pod = [&](const plane::model::PodCommand& command) {
+        std::string payload;
+        std::string error;
+        if (!plane::communication::to_payload(command, payload, error)) {
+            throw std::runtime_error(error);
+        }
+        const std::string id = pod_id_prefix + std::to_string(++sequence);
+        send_wire(session, "sendToPlane/" + options.plane_id,
+                  plane::communication::encode_envelope(
+                      {options.sender_id, id, plane::model::MessageType::PodCommand, std::move(payload)}));
+        return id;
+    };
+
     bool all_acked = true;
     std::size_t command_index = 0;
     std::size_t task_index = 0;
     for (const auto& action : options.actions) {
+        if (g_stop_requested != 0) break;
+        if (action.kind == ActionKind::PodCommand) {
+            try {
+                if (action.pod.type == plane::model::PodCommandType::SetRate) {
+                    SPDLOG_INFO("开始发送吊舱速度: pitchRate_deg_s={} yawRate_deg_s={}", action.pod.pitchRate_deg_s,
+                                action.pod.yawRate_deg_s);
+                    auto next = std::chrono::steady_clock::now();
+                    const auto end = next + action.pod_rate_duration;
+                    do {
+                        send_pod(action.pod);
+                        next += std::chrono::milliseconds(100);
+                        if (next <= std::chrono::steady_clock::now()) {
+                            next = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+                        }
+                        std::this_thread::sleep_until(std::min(end, next));
+                    } while (g_stop_requested == 0 && std::chrono::steady_clock::now() < end);
+                    if (action.pod_release) {
+                        send_pod(plane::model::PodCommand{plane::model::PodCommandType::SetRate});
+                        SPDLOG_INFO("已发送吊舱松手双零速度");
+                    } else {
+                        SPDLOG_INFO("吊舱速度已停发，等待机载超时停车");
+                    }
+                } else {
+                    const std::string message_id = send_pod(action.pod);
+                    std::unique_lock<std::mutex> lock(mutex);
+                    const bool acked = cv.wait_for(lock, std::chrono::milliseconds(options.ack_timeout_ms),
+                                                   [&]() { return acked_ids.count(message_id) > 0; });
+                    SPDLOG_INFO("PodCommand 接收确认: messageId={} {}", message_id, acked ? "成功" : "超时");
+                    all_acked = all_acked && acked;
+                }
+            } catch (const std::exception& exception) {
+                SPDLOG_ERROR("吊舱指令发送失败: {}", exception.what());
+                all_acked = false;
+            }
+            continue;
+        }
         std::string type;
         std::string payload;
         if (action.kind == ActionKind::Command) {
@@ -714,8 +852,6 @@ int main(int argc, char** argv) {
         SPDLOG_INFO("已发送友机状态: planeId={}", options.peer_plane_id);
     }
 
-    std::signal(SIGINT, handle_stop_signal);
-    std::signal(SIGTERM, handle_stop_signal);
     const auto listen_start = std::chrono::steady_clock::now();
     while (g_stop_requested == 0) {
         if (agent_info_pending.exchange(false)) publish_agent_info();
@@ -728,6 +864,7 @@ int main(int argc, char** argv) {
     radar_cleanup.stop();
     SPDLOG_INFO("状态统计: vehicle_state_count={} task_state_count={}", vehicle_state_count.load(),
                 task_state_count.load());
+    SPDLOG_INFO("收到 PodState 共 {} 条", pod_state_count.load());
     SPDLOG_INFO("信息统计: agent_info_count={}", agent_info_count.load());
     SPDLOG_INFO("雷达统计: UDP数据报={} radar_tracks有效扫描={} 无靶机输出扫描={} 已发布靶机={}",
                 radar_datagram_count.load(), radar_valid_scan_count.load(), radar_no_target_scan_count.load(),

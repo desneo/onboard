@@ -30,7 +30,7 @@
 
 ### 相机／吊舱控制
 
-保留相机控制接口，用于发送吊舱指令及获取状态，不进行图像采集、处理或视频转发。当前实现仍为 Noop，未接入具体吊舱协议。
+机载通过 UDP 接入艾晟 ASD-2、中科 D80 和捷联 A2416A 仿真吊舱。艾晟和中科支持双轴连续转动、单轴归零和指定机械角，固定光轴的捷联支持状态上报。机载向 `sendToStation` 发布 `PodState`，默认 5 Hz，`fields` 提供中文展示键和值。视频流地址随 `AgentInfo` 发布。
 
 ### 地面站与机间通信
 
@@ -54,7 +54,7 @@
 当前已知限制：
 
 - 反无人机任务只实现中制导，不包含末端交接确认、视觉跟踪或末段导引撞击。
-- 相机控制模块目前是 Noop，不控制真实相机或云台。
+- 吊舱控制链路支持仿真 UDP。实体吊舱使用的 RK3588 串口接入由 `PodTransport` 扩展。
 - 友机状态参与 GCS 雷达航迹过滤，但尚未参与编队、避碰或其他协同决策。
 
 ## 目录概览
@@ -234,6 +234,7 @@ pod_control_url = udp://192.168.1.56:8001
 | `system.log_dir` | 日志目录 |
 | `system.board_ip` | `AgentInfo.boardIp`，fleet 部署在未配置时填入板卡 IP |
 | `camera.pod_model` / `pod_control_url` | 单机直配的吊舱型号和控制地址 |
+| `camera.pod_state_report_hz` | `PodState` 上报频率，默认 5 Hz，单机直配和机群预置共用 |
 | `camera.pod_video_url` | `AgentInfo.videoUrl`，未配置时为空 |
 | `system.state_report_period_ms` | 状态上报周期 |
 | `communication.plane_id` | 本机标识 |

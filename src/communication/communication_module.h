@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -9,6 +10,7 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 #include "communication/communication_api.h"
 #include "communication/zenoh_transport.h"
@@ -18,13 +20,18 @@
 #include "state/state_store_api.h"
 #include "task/task_state_provider.h"
 
+namespace plane::camera {
+class CameraControlApi;
+}
+
 namespace plane::communication {
 
 /// 通信模块：Zenoh 收发、信封编解码、事件分发、Ack 与可靠重试。
 class CommunicationModule final : public plane::core::IModule, public CommunicationApi {
    public:
     CommunicationModule(plane::core::EventBus& event_bus, const plane::core::AppConfig& config,
-                        plane::state::StateStoreApi& state_store, plane::task::TaskStateProvider& task_state_provider);
+                        plane::state::StateStoreApi& state_store, plane::task::TaskStateProvider& task_state_provider,
+                        plane::camera::CameraControlApi* camera = nullptr);
     ~CommunicationModule() override;
 
     std::string name() const override;
@@ -48,13 +55,20 @@ class CommunicationModule final : public plane::core::IModule, public Communicat
         int attempts = 0;
     };
 
-    void enqueue_wire(std::string raw);
+    struct IncomingMessage {
+        std::string wire;
+        bool unicast;
+        std::chrono::steady_clock::time_point received_at;
+    };
+
+    void enqueue_wire(std::string raw, bool unicast);
     plane::model::AgentInfo agent_info() const;
     bool update_agent_liveliness(const std::string& key_expr, bool online);
     void on_peer_liveliness(const std::string& key_expr, bool online);
     void worker_loop();
-    void on_wire_message(const std::string& raw);
+    void on_wire_message(const IncomingMessage& incoming);
     void handle_envelope(const plane::model::Message& envelope);
+    void handle_pod_command(const plane::model::Message& envelope, const IncomingMessage& incoming);
     void handle_ack(const plane::model::Message& envelope);
     void report_states();
     void check_pending();
@@ -66,6 +80,7 @@ class CommunicationModule final : public plane::core::IModule, public Communicat
     const plane::core::AppConfig& config_;
     plane::state::StateStoreApi& state_store_;
     plane::task::TaskStateProvider& task_state_provider_;
+    plane::camera::CameraControlApi* camera_;
     std::int64_t last_report_ms_ = 0;
     ZenohTransport transport_;
     std::mutex presence_mutex_;
@@ -74,7 +89,8 @@ class CommunicationModule final : public plane::core::IModule, public Communicat
     std::atomic<bool> agent_info_pending_{false};
     std::mutex rx_mutex_;
     std::condition_variable rx_cv_;
-    std::deque<std::string> rx_queue_;
+    std::deque<IncomingMessage> rx_queue_;
+    std::deque<std::pair<std::string, std::string>> recent_pod_commands_;
     std::mutex pending_mutex_;
     std::unordered_map<std::string, PendingMessage> pending_;
     std::thread worker_;

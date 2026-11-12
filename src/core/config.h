@@ -8,6 +8,8 @@
 
 namespace plane::core {
 
+inline constexpr int kDefaultPodStateReportHz = 5;
+
 /// 运行配置；第一版系统参数与 SystemParam 对齐（ARCHITECTURE §7）。
 struct AppConfig {
     plane::model::SystemParam system_param;
@@ -18,6 +20,7 @@ struct AppConfig {
     std::string pod_model;
     std::string pod_video_url;
     std::string pod_control_url;
+    int pod_state_report_hz = kDefaultPodStateReportHz;
 
     std::string plane_id = "uav1";
     std::string zenoh_config_file;

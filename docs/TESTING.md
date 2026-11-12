@@ -151,7 +151,7 @@ cd build/plane
 - 源码不得引用 Perception、DetectionResult、VisionTarget 或 OpenCV 图像帧类型。
 - 编译参数、链接命令及主程序的动态依赖不得包含 OpenCV、RGA、Pluma 或 RKNN。
 - 启动脚本不要求模型或图像插件；保留自动修复执行权限。
-- 相机控制仍可通过现有接口发送指令和查询状态；具体吊舱联调另行验证。
+- 吊舱控制包和遥测包通过 UDP 传输，验收见相机／吊舱控制章节。
 
 ### 4.2 核心回归
 
@@ -223,7 +223,16 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 
 ## 5. 相机／吊舱控制
 
-保留指令发送、状态查询和链路状态接口，不做图像处理。当前为 Noop 实现，不能将其单元验证等同于真实吊舱接入成功。
+运行 `ctest --test-dir build --output-on-failure` 检查吊舱编解码、断流停转、北向报文、默认上报频率和配置回退。
+
+板端验收在 `192.168.1.56` 的场景 02 按 `--aircraft-model` 分别选择 `rocket_jielian_a2416a`、`rocket_aisheng_seeker` 和 `rocket_zhongke_d80`。按 `interfaces.tsv` 核对飞控和吊舱 UDP 端口，部署到 `uav1` 并确认收到 `fcLinkState=connected` 的实际位置遥测。
+
+```bash
+./build/gcs_sim --plane-id uav1 --no-radar-udp --control-settle-ms 700 --listen-seconds 4 --pod-angles 10,15
+```
+
+再分别使用 `--pod-zero-pitch`、`--pod-zero-yaw`、`--pod-rate 8,-5,1500` 和 `--pod-rate-timeout -8,5,1500`。
+验收以 `PodState` 的实测角度和速度确认到位、另一轴保持及停止。使用 `gcs_sim` 日志时间核对默认约 5 Hz 的发布频率。捷联反馈应显示 `canMove=false`，并省略机械框架角。
 
 ## 6. 飞控与指令验收
 

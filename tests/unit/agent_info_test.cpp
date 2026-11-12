@@ -4,15 +4,19 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
+#include "camera/camera_control_api.h"
 #include "communication/communication_events.h"
 #include "communication/communication_module.h"
 #include "communication/plane_query.h"
@@ -42,6 +46,30 @@ int available_port() {
 struct Tasks : plane::task::TaskStateProvider {
     plane::model::TaskState current_task_state() const override { return {}; }
 };
+
+class TestCamera final : public plane::camera::CameraControlApi {
+   public:
+    TestCamera(std::mutex& mutex, std::condition_variable& changed, plane::model::PodState state)
+        : mutex_(mutex), changed_(changed), state_(std::move(state)) {}
+
+    void submit_command(const plane::model::PodCommand& command,
+                        std::chrono::steady_clock::time_point received_at) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        commands.push_back(command);
+        received_times.push_back(received_at);
+        changed_.notify_all();
+    }
+
+    std::optional<plane::model::PodState> pod_state() const override { return state_; }
+
+    std::vector<plane::model::PodCommand> commands;
+    std::vector<std::chrono::steady_clock::time_point> received_times;
+
+   private:
+    std::mutex& mutex_;
+    std::condition_variable& changed_;
+    const plane::model::PodState state_;
+};
 }  // namespace
 
 int main() {
@@ -50,6 +78,9 @@ int main() {
     using plane::model::AgentType;
     using plane::model::Message;
     using plane::model::MessageType;
+    using plane::model::PodCommand;
+    using plane::model::PodCommandType;
+    using plane::model::PodState;
     static_assert(static_cast<int>(MessageType::VehicleState) == 7, "既有类型序号改变");
     static_assert(static_cast<int>(MessageType::AgentInfo) == 8, "AgentInfo 序号错误");
     char path[] = "/tmp/plane-agent-info-XXXXXX";
@@ -82,6 +113,7 @@ int main() {
                 config.pod_video_url == "rtsp://pod/live?a=1&b=2" && config.is_sim,
             "metadata config mismatch");
     config.state_report_period_ms = 100;
+    config.pod_state_report_hz = 4;
     config.zenoh_config_file = zenoh_config;
 
     std::string error;
@@ -92,8 +124,22 @@ int main() {
     std::unordered_map<std::string, std::size_t> station_pushes;
     std::vector<std::string> message_ids;
     std::vector<std::string> ack_ids;
-    bool command_received = false;
-    bool task_received = false;
+    std::vector<PodState> pod_states;
+    std::vector<std::chrono::steady_clock::time_point> pod_report_times;
+    int command_count = 0;
+    int task_count = 0;
+    bool expected_flight_command_received = false;
+    bool expected_task_received = false;
+    const PodState expected_pod_state{config.plane_id,
+                                      "zhongke_d80",
+                                      true,
+                                      true,
+                                      123456,
+                                      {{"机械俯仰角（°）", -4.5},
+                                       {"限位", false},
+                                       {"状态", std::string("待机")},
+                                       {"通道", std::int64_t{1}}}};
+    TestCamera camera(mutex, changed, expected_pod_state);
     ZenohTransport observer;
     ZenohEndpoints endpoints;
     endpoints.config_file = zenoh_config;
@@ -105,10 +151,18 @@ int main() {
                     plane::model::Message envelope;
                     std::string error;
                     plane::model::Ack ack;
-                    if (!decode_envelope(wire, envelope, error) || envelope.type != MessageType::Ack ||
-                        !from_payload(envelope.payload, ack, error)) return;
+                    PodState pod_state;
+                    if (!decode_envelope(wire, envelope, error) || envelope.senderId != config.plane_id) return;
                     std::lock_guard<std::mutex> lock(mutex);
-                    ack_ids.push_back(ack.ackId);
+                    if (envelope.type == MessageType::Ack && from_payload(envelope.payload, ack, error)) {
+                        ack_ids.push_back(ack.ackId);
+                    } else if (envelope.type == MessageType::PodState &&
+                               from_payload(envelope.payload, pod_state, error)) {
+                        pod_states.push_back(std::move(pod_state));
+                        pod_report_times.push_back(std::chrono::steady_clock::now());
+                    } else {
+                        return;
+                    }
                     changed.notify_all();
                 },
                 error),
@@ -153,25 +207,33 @@ int main() {
     });
     bus.subscribe<plane::model::Command>(events::kCommandReceived, [&](const plane::model::Command& command) {
         std::lock_guard<std::mutex> lock(mutex);
-        command_received = command.commandId == "control-1" && command.type == plane::model::CommandType::Hover;
+        expected_flight_command_received = command.commandId == "control-1" &&
+                                           command.type == plane::model::CommandType::Hover;
+        ++command_count;
     });
     bus.subscribe<plane::model::TaskInfo>(events::kTaskInfoReceived, [&](const plane::model::TaskInfo& task) {
         std::lock_guard<std::mutex> lock(mutex);
-        task_received = task.taskId == "task-1" && task.taskAction == plane::model::TaskAction::Stop;
+        expected_task_received = task.taskId == "task-1" && task.taskAction == plane::model::TaskAction::Stop;
+        ++task_count;
     });
     plane::state::StateStore store(bus, config);
     Tasks tasks;
-    plane::communication::CommunicationModule module(bus, config, store, tasks);
+    plane::communication::CommunicationModule module(bus, config, store, tasks, &camera);
     require(module.init() && module.start(), "communication start failed");
     wait_count(1);  // 没有 GCS token 时，启动仍主动上报。
     quiet(1);
 
     const std::string command_topic = "sendToPlane/" + config.plane_id;
     auto send_and_wait_for_ack = [&](const plane::model::Message& message) {
+        std::size_t previous_count;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            previous_count = ack_ids.size();
+        }
         require(observer.put(command_topic, encode_envelope(message), error), error);
         std::unique_lock<std::mutex> lock(mutex);
         require(changed.wait_for(lock, std::chrono::seconds(4), [&]() {
-                    return !ack_ids.empty() && ack_ids.back() == message.messageId;
+                    return ack_ids.size() > previous_count && ack_ids.back() == message.messageId;
                 }),
                 "control Ack missing on sendToStation");
     };
@@ -181,9 +243,71 @@ int main() {
                            R"({"taskId":"task-1","taskCode":"AntiUav","taskAction":"Stop"})"});
     {
         std::lock_guard<std::mutex> lock(mutex);
-        require(command_received && task_received, "valid control messages from different senders not delivered");
+        require(expected_flight_command_received && expected_task_received && command_count == 1 && task_count == 1,
+                "不同发送方的合法飞行指令或任务没有送达");
     }
     require(store.gcs_link().connected, "valid controls did not update station activity");
+
+    PodCommand decoded_pod_command;
+    require(!from_payload(R"({"type":"SetRate","pitchRate_deg_s":true,"yawRate_deg_s":0})", decoded_pod_command,
+                          error),
+            "接受布尔值作为吊舱角速度");
+    require(!from_payload(R"({"type":"SetAngles","pitch_deg":3})", decoded_pod_command, error),
+            "接受缺少偏航角的吊舱指令");
+    require(!from_payload(R"({"type":"SetRate","pitchRate_deg_s":1e999,"yawRate_deg_s":0})", decoded_pod_command,
+                          error),
+            "接受超出表示范围的吊舱角速度");
+
+    const Message zero_pitch{"pod-station", "zero-pitch", MessageType::PodCommand, R"({"type":"ZeroPitch"})"};
+    const Message zero_yaw{"pod-station", "zero-yaw", MessageType::PodCommand, R"({"type":"ZeroYaw"})"};
+    require(observer.put("sendToAll", encode_envelope(zero_pitch), error), error);
+    require(observer.put("sendToPlane/other-plane", encode_envelope(zero_yaw), error), error);
+    require(observer.put(command_topic,
+                         encode_envelope({"pod-station", "bad-angle", MessageType::PodCommand,
+                                          R"({"type":"SetAngles","pitch_deg":3})"}), error),
+            error);
+    send_and_wait_for_ack(zero_pitch);
+    send_and_wait_for_ack(zero_pitch);
+    send_and_wait_for_ack({"another-pod-station", zero_pitch.messageId, MessageType::PodCommand, zero_pitch.payload});
+    send_and_wait_for_ack(zero_yaw);
+
+    auto publish_rate = [&](const std::string& id, double pitch, double yaw) {
+        Message message{"pod-station", id, MessageType::PodCommand, {}};
+        require(to_payload(PodCommand{PodCommandType::SetRate, pitch, yaw}, message.payload, error), error);
+        require(observer.put(command_topic, encode_envelope(message), error), error);
+    };
+    const auto before_rate = std::chrono::steady_clock::now();
+    publish_rate("rate", 2.5, -3.5);
+    publish_rate("stop", 0.0, 0.0);
+    send_and_wait_for_ack({"pod-station", "angles", MessageType::PodCommand,
+                           R"({"type":"SetAngles","pitch_deg":-12.0,"yaw_deg":20.0})"});
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        require(changed.wait_for(lock, std::chrono::seconds(4), [&]() { return pod_states.size() >= 3; }),
+                "缺少周期吊舱状态");
+        require(camera.commands.size() == 6 && camera.commands[0].type == PodCommandType::ZeroPitch &&
+                    camera.commands[1].type == PodCommandType::ZeroPitch &&
+                    camera.commands[2].type == PodCommandType::ZeroYaw &&
+                    camera.commands[3].type == PodCommandType::SetRate && camera.commands[3].pitchRate_deg_s == 2.5 &&
+                    camera.commands[3].yawRate_deg_s == -3.5 && camera.commands[4].type == PodCommandType::SetRate &&
+                    camera.commands[4].pitchRate_deg_s == 0.0 && camera.commands[4].yawRate_deg_s == 0.0 &&
+                    camera.commands[5].type == PodCommandType::SetAngles && camera.commands[5].pitch_deg == -12.0 &&
+                    camera.commands[5].yaw_deg == 20.0 && camera.received_times[3] >= before_rate &&
+                    camera.received_times[4] >= camera.received_times[3],
+                "吊舱指令单播、解码、去重或顺序有误");
+        require(ack_ids == std::vector<std::string>{"command-message", "task-message", "zero-pitch", "zero-pitch",
+                                                     "zero-pitch", "zero-yaw", "angles"},
+                "吊舱指令回执有误");
+        require(command_count == 1 && task_count == 1, "吊舱操作误入飞行指令或任务流程");
+        require(pod_states.back().planeId == expected_pod_state.planeId &&
+                    pod_states.back().model == expected_pod_state.model && pod_states.back().connected &&
+                    pod_states.back().canMove && pod_states.back().timestamp_ms == expected_pod_state.timestamp_ms &&
+                    pod_states.back().fields == expected_pod_state.fields,
+                "吊舱状态及中文键或 JSON 标量类型有误");
+        const auto report_span = pod_report_times[2] - pod_report_times[0];
+        require(report_span >= std::chrono::milliseconds(420) && report_span <= std::chrono::milliseconds(700),
+                "吊舱状态上报与 4 Hz 配置不符");
+    }
 
     Message reply;
     require(queryAgent(observer, config.plane_id, reply, error), error);
@@ -305,9 +429,22 @@ int main() {
     }
     // GCS 先在线再启动飞机：history 发现与启动待发送合并。
     module.stop();
+    config.pod_state_report_hz = plane::core::kDefaultPodStateReportHz;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        pod_report_times.clear();
+    }
     require(module.start(), "机载重启失败");
     wait_count(6);
     quiet(6);
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        require(changed.wait_for(lock, std::chrono::seconds(4), [&]() { return pod_report_times.size() >= 3; }),
+                "缺少默认频率的吊舱状态");
+        const auto report_span = pod_report_times[2] - pod_report_times[0];
+        require(report_span >= std::chrono::milliseconds(330) && report_span <= std::chrono::milliseconds(480),
+                "吊舱状态上报与默认 5 Hz 不符");
+    }
     module.stop();
     station_a.close();
     station_b.close();

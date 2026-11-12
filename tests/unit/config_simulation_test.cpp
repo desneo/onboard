@@ -81,7 +81,7 @@ int main() {
         file << "[deployment]\nprofile = " << cleanup.profile_path
              << "\n[system]\nboard_ip = 192.168.1.10\n[communication]\nplane_id = direct\n"
                 "[camera]\npod_model = direct\npod_video_url = rtsp://direct/live\n"
-                "pod_control_url = udp://direct:8000\n";
+                "pod_control_url = udp://direct:8000\npod_state_report_hz = 8\n";
         if (!file) return 7;
     }
     const std::string uav1 =
@@ -103,7 +103,7 @@ int main() {
         config.board_ip != "192.168.1.100" || config.fc_link_type != "udp" ||
         config.fc_udp_url != "udpout://192.168.1.56:14280" || !config.is_sim ||
         config.pod_model != "jielian_a2416a" || config.pod_video_url != "rtsp://192.168.1.56:8554/jielian_a2416a" ||
-        config.pod_control_url != "udp://192.168.1.56:8001") {
+        config.pod_control_url != "udp://192.168.1.56:8001" || config.pod_state_report_hz != 8) {
         return 9;
     }
     const std::vector<std::string> second{"192.168.1.101"};
@@ -146,8 +146,17 @@ int main() {
         if (!file) return 15;
     }
     if (!plane::core::load_config(path, config, &first) || config.plane_id != "direct" ||
-        config.fc_udp_url != "udp://:14540" || config.is_sim) {
+        config.fc_udp_url != "udp://:14540" || config.is_sim || config.pod_state_report_hz != 5) {
         return 16;
+    }
+    for (const auto* invalid : {"0", "-1", "5.5", "8Hz", "", "9999999999999999999"}) {
+        {
+            std::ofstream file(path);
+            file << "[camera]\npod_state_report_hz = " << invalid << '\n';
+            if (!file) return 17;
+        }
+        config.pod_state_report_hz = 8;
+        if (!plane::core::load_config(path, config) || config.pod_state_report_hz != 5) return 18;
     }
     return 0;
 }
