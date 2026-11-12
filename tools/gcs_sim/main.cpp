@@ -53,7 +53,8 @@ struct Action {
 
 struct Options {
     std::string plane_id = "uav1";
-    std::string sender_id = "GCS";
+    std::string sender_id = "gcs-sim";
+    std::string board_ip;
     std::string peer_plane_id;
     bool no_ack = false;
     int listen_seconds = 0;
@@ -61,6 +62,7 @@ struct Options {
     int control_settle_ms = 0;
     bool help = false;
     std::string query_type;
+    std::string query_agent_id;
     int query_timeout_ms = 2000;
     bool announce_presence = true;
     plane::communication::ZenohEndpoints endpoints;
@@ -94,7 +96,8 @@ void print_usage() {
         "\n"
         "目标与标识:\n"
         "  --plane-id <id>          目标飞机 id (默认: uav1)\n"
-        "  --sender-id <id>         本机(GCS)标识，需与飞机 station_id 一致 (默认: GCS)\n"
+        "  --sender-id <id>         地面站 Agent 标识 (默认: gcs-sim)\n"
+        "  --board-ip <ip>          地面站 Agent 上报的通信 IP (默认: 空)\n"
         "  -h, --help               显示本帮助并退出\n"
         "\n"
         "控制指令 (按出现顺序发往 sendToPlane/<plane-id>):\n"
@@ -118,9 +121,10 @@ void print_usage() {
         "  --task-action <action>   任务动作 Start/Stop，兼容项\n"
         "\n"
         "信息查询与连接:\n"
-        "  --query <MessageType>    原生查询指定飞机，当前支持 VehicleInfo\n"
+        "  --query AgentInfo        原生查询指定 Agent\n"
+        "  --agent-id <id>          查询目标的 Agent 标识 (默认: --plane-id)\n"
         "  --query-timeout-ms <ms>  查询超时（默认 2000）\n"
-        "  --no-presence            不声明地面站存活标记（仅查询场景）\n"
+        "  --no-presence            跳过自身上线标记、信息上报和查询响应\n"
         "  --zenoh-config <path>    Zenoh 配置文件\n"
         "  --connect <endpoint>     远端端点，多个用逗号分隔\n"
         "  --listen <endpoint>      本地监听端点\n"
@@ -154,10 +158,14 @@ bool parse_envelope(const std::string& wire, Envelope& out) {
     if (envelope.is_discarded() || !envelope.is_object()) {
         return false;
     }
-    out.sender_id = envelope.value("senderId", std::string{});
-    out.message_id = envelope.value("messageId", std::string{});
-    out.type = envelope.value("type", std::string{});
-    out.payload = envelope.value("payload", std::string{});
+    try {
+        out.sender_id = envelope.value("senderId", std::string{});
+        out.message_id = envelope.value("messageId", std::string{});
+        out.type = envelope.value("type", std::string{});
+        out.payload = envelope.value("payload", std::string{});
+    } catch (const nlohmann::json::exception&) {
+        return false;
+    }
     return !out.message_id.empty() && !out.type.empty();
 }
 
@@ -175,6 +183,8 @@ Options parse_options(int argc, char** argv) {
             options.plane_id = argv[++i];
         } else if (arg == "--query" && i + 1 < argc) {
             options.query_type = argv[++i];
+        } else if (arg == "--agent-id" && i + 1 < argc) {
+            options.query_agent_id = argv[++i];
         } else if (arg == "--query-timeout-ms" && i + 1 < argc) {
             options.query_timeout_ms = std::stoi(argv[++i]);
         } else if (arg == "--no-presence") {
@@ -187,6 +197,8 @@ Options parse_options(int argc, char** argv) {
             options.endpoints.listen = argv[++i];
         } else if (arg == "--sender-id" && i + 1 < argc) {
             options.sender_id = argv[++i];
+        } else if (arg == "--board-ip" && i + 1 < argc) {
+            options.board_ip = argv[++i];
         } else if (arg == "--send-peer-state" && i + 1 < argc) {
             options.peer_plane_id = argv[++i];
         } else if (arg == "--no-ack") {
@@ -315,6 +327,10 @@ int main(int argc, char** argv) {
         print_usage();
         return 0;
     }
+    if (!options.query_type.empty() && options.query_type != "AgentInfo") {
+        SPDLOG_ERROR("不支持的查询类型: {}", options.query_type);
+        return 2;
+    }
 
     std::mutex mutex;
     std::condition_variable cv;
@@ -330,7 +346,7 @@ int main(int argc, char** argv) {
 
     std::atomic<std::uint64_t> vehicle_state_count{0};
     std::atomic<std::uint64_t> task_state_count{0};
-    std::atomic<std::uint64_t> vehicle_info_count{0};
+    std::atomic<std::uint64_t> agent_info_count{0};
     std::atomic<std::uint64_t> radar_datagram_count{0};
     std::atomic<std::uint64_t> radar_valid_scan_count{0};
     std::atomic<std::uint64_t> radar_no_target_scan_count{0};
@@ -343,7 +359,7 @@ int main(int argc, char** argv) {
     struct CloseSession {
         plane::communication::ZenohTransport& session;
         ~CloseSession() { session.close(); }
-    } close_session{session};
+    };
 
     auto on_sample = [&](const std::string& wire, bool from_broadcast) {
         Envelope envelope;
@@ -354,15 +370,15 @@ int main(int argc, char** argv) {
         if (envelope.sender_id == options.sender_id) {
             return;
         }
-        if (envelope.type == "VehicleInfo") {
-            plane::model::VehicleInfo info;
+        if (envelope.type == "AgentInfo") {
+            plane::model::AgentInfo info;
             std::string decode_error;
-            if (plane::communication::from_payload(envelope.payload, info, decode_error) &&
-                envelope.sender_id == info.planeId && info.planeId == options.plane_id) {
-                vehicle_info_count.fetch_add(1);
-                SPDLOG_INFO("收到飞机信息（VehicleInfo）: {}", envelope.payload);
+            if (from_broadcast && plane::communication::from_payload(envelope.payload, info, decode_error) &&
+                envelope.sender_id == info.agentId) {
+                agent_info_count.fetch_add(1);
+                SPDLOG_INFO("收到 AgentInfo: {}", envelope.payload);
             } else {
-                SPDLOG_WARN("飞机信息（VehicleInfo）无效或非目标飞机: {}", decode_error);
+                SPDLOG_WARN("AgentInfo 无效: senderId={} {}", envelope.sender_id, decode_error);
             }
             return;
         }
@@ -415,6 +431,42 @@ int main(int argc, char** argv) {
         }
     };
 
+    const std::string station_token = plane::communication::station_liveliness_key(options.sender_id);
+    const std::string agent_key = plane::communication::agent_query_key(options.sender_id);
+    const plane::model::AgentInfo agent_info{
+        options.sender_id, plane::model::AgentType::GroundStation, options.board_ip, "", true};
+    std::string agent_info_payload;
+    std::mutex presence_mutex;
+    std::set<std::string> online_agent_keys;
+    std::atomic<bool> agent_info_pending{false};
+    const auto on_liveliness = [&](const std::string& key, bool online) {
+        if (key == station_token) return;
+        std::lock_guard<std::mutex> lock(presence_mutex);
+        if (!online) {
+            online_agent_keys.erase(key);
+        } else if (online_agent_keys.insert(key).second) {
+            agent_info_pending = true;
+        }
+    };
+    const auto agent_info_wire = [&]() {
+        return plane::communication::encode_envelope(
+            {options.sender_id, options.sender_id + "-info-" + std::to_string(unix_now_ms()) + "-" +
+                                    std::to_string(++sequence),
+             plane::model::MessageType::AgentInfo, agent_info_payload});
+    };
+    const auto publish_agent_info = [&]() {
+        std::string publish_error;
+        std::lock_guard<std::mutex> lock(g_send_mutex);
+        if (!session.put(std::string(plane::model::topic_sendToAll), agent_info_wire(), publish_error)) {
+            SPDLOG_ERROR("发布 AgentInfo 失败: {}", publish_error);
+            return false;
+        }
+        SPDLOG_INFO("已发布 AgentInfo: agentId={}", options.sender_id);
+        return true;
+    };
+    // 先停止所有回调，再析构被回调引用的局部状态。
+    CloseSession close_session{session};
+
     if (!session.subscribe(
             std::string(plane::model::topic_sendToStation), [&](const std::string& wire) { on_sample(wire, false); },
             error) ||
@@ -424,11 +476,31 @@ int main(int argc, char** argv) {
         SPDLOG_ERROR("{}", error);
         return 2;
     }
-    // 必须先建立上行订阅，再宣告地面站可接收 VehicleInfo。
-    if (options.announce_presence &&
-        !session.declare_liveliness_token(plane::communication::station_liveliness_key(options.sender_id), error)) {
-        SPDLOG_ERROR("{}", error);
-        return 2;
+    if (options.announce_presence) {
+        if (agent_key.empty()) {
+            SPDLOG_ERROR("Agent 标识无效: agentId={}", options.sender_id);
+            return 2;
+        }
+        if (!plane::communication::to_payload(agent_info, agent_info_payload, error) ||
+            !session.declare_queryable(
+                agent_key,
+                [&](const std::string& key, std::string& reply, std::string& query_error) {
+                    if (key != agent_key) {
+                        query_error = "AgentInfo 查询地址不匹配";
+                        return false;
+                    }
+                    reply = agent_info_wire();
+                    return true;
+                },
+                error) ||
+            !session.subscribe_liveliness(plane::communication::plane_liveliness_key("*"), on_liveliness, error) ||
+            !session.subscribe_liveliness(plane::communication::station_liveliness_key("*"), on_liveliness, error) ||
+            !session.declare_liveliness_token(station_token, error)) {
+            SPDLOG_ERROR("{}", error);
+            return 2;
+        }
+        agent_info_pending = false;
+        if (!publish_agent_info()) return 2;
     }
     SPDLOG_INFO("地面站订阅已就绪: sender_id={}", options.sender_id);
 
@@ -545,18 +617,14 @@ int main(int argc, char** argv) {
             options.friendly_match_max_distance_m);
     }
     if (!options.query_type.empty()) {
-        plane::model::MessageType type;
         plane::model::Message reply;
-        if (!plane::communication::message_type_from_string(options.query_type, type)) {
-            SPDLOG_ERROR("不支持的查询类型: {}", options.query_type);
-            return 2;
-        }
-        if (!plane::communication::queryPlane(session, options.plane_id, type, reply, error,
+        const auto& query_agent_id = options.query_agent_id.empty() ? options.plane_id : options.query_agent_id;
+        if (!plane::communication::queryAgent(session, query_agent_id, reply, error,
                                               options.query_timeout_ms)) {
             SPDLOG_ERROR("查询失败: {}", error);
             return 2;
         }
-        SPDLOG_INFO("飞机信息查询成功: {}", reply.payload);
+        SPDLOG_INFO("AgentInfo 查询成功: {}", reply.payload);
     }
 
     bool all_acked = true;
@@ -650,6 +718,7 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, handle_stop_signal);
     const auto listen_start = std::chrono::steady_clock::now();
     while (g_stop_requested == 0) {
+        if (agent_info_pending.exchange(false)) publish_agent_info();
         if (options.listen_seconds > 0 &&
             std::chrono::steady_clock::now() - listen_start >= std::chrono::seconds(options.listen_seconds)) {
             break;
@@ -659,11 +728,9 @@ int main(int argc, char** argv) {
     radar_cleanup.stop();
     SPDLOG_INFO("状态统计: vehicle_state_count={} task_state_count={}", vehicle_state_count.load(),
                 task_state_count.load());
-    SPDLOG_INFO("信息统计: vehicle_info_count={}", vehicle_info_count.load());
+    SPDLOG_INFO("信息统计: agent_info_count={}", agent_info_count.load());
     SPDLOG_INFO("雷达统计: UDP数据报={} radar_tracks有效扫描={} 无靶机输出扫描={} 已发布靶机={}",
                 radar_datagram_count.load(), radar_valid_scan_count.load(), radar_no_target_scan_count.load(),
                 radar_target_count.load());
-    // 先停止所有回调，之后再析构被回调引用的计数器。
-    session.close();
     return all_acked ? 0 : 1;
 }

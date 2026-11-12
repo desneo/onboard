@@ -82,14 +82,14 @@ include(CTest)
 add_subdirectory(tools/gcs_sim)
 
 if(BUILD_TESTING)
-  add_executable(vehicle_info_test tests/unit/vehicle_info_test.cpp
+  add_executable(agent_info_test tests/unit/agent_info_test.cpp
     src/communication/communication_module.cpp
     src/core/config.cpp src/core/time_utils.cpp src/state/state_store.cpp)
-  target_include_directories(vehicle_info_test PRIVATE src)
-  target_compile_options(vehicle_info_test PRIVATE -Wall -Wextra)
-  target_link_libraries(vehicle_info_test PRIVATE plane_protocol plane::deps)
-  add_test(NAME vehicle_info COMMAND vehicle_info_test)
-  set_tests_properties(vehicle_info PROPERTIES TIMEOUT 45)
+  target_include_directories(agent_info_test PRIVATE src)
+  target_compile_options(agent_info_test PRIVATE -Wall -Wextra)
+  target_link_libraries(agent_info_test PRIVATE plane_protocol plane::deps)
+  add_test(NAME agent_info COMMAND agent_info_test)
+  set_tests_properties(agent_info PROPERTIES TIMEOUT 45)
 
   add_executable(zenoh_liveliness_test tests/unit/zenoh_liveliness_test.cpp)
   target_compile_options(zenoh_liveliness_test PRIVATE -Wall -Wextra)

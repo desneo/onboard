@@ -16,6 +16,7 @@ inline constexpr std::string_view kTaskInfoReceived = "communication.task_info";
 inline constexpr std::string_view kCommandReceived = "communication.command";
 inline constexpr std::string_view kSystemParamReceived = "communication.system_param";
 inline constexpr std::string_view kGcsTargetReceived = "communication.gcs_target";
+inline constexpr std::string_view kAgentInfoReceived = "communication.agent_info";
 inline constexpr std::string_view kError = "communication.error";
 
 }  // namespace events

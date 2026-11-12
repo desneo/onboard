@@ -203,10 +203,10 @@ cd build/plane
 | --- | --- |
 | `system.safe_height_m` | 未指定起飞高度时使用的安全高度 |
 | `system.log_dir` | 日志目录 |
-| `system.board_ip` | VehicleInfo 中的任务板 IP；fleet 部署在未配置时填入板卡 IP |
-| `camera.pod_video_url` | VehicleInfo 中的吊舱视频流地址，未配置时为空，仅传递地址 |
+| `system.board_ip` | `AgentInfo.boardIp`，fleet 部署在未配置时填入板卡 IP |
+| `camera.pod_video_url` | `AgentInfo.videoUrl`，未配置时为空 |
 | `system.state_report_period_ms` | 状态上报周期 |
-| `communication.plane_id` / `station_id` | 本机和地面站标识 |
+| `communication.plane_id` | 本机标识 |
 | `communication.zenoh_config_file` | Zenoh 原生配置文件，默认 `config/zenoh.json5` |
 | `communication.zenoh_connect` / `zenoh_listen` | Zenoh 连接或监听端点，默认留空使用自动发现 |
 | `communication.ack_timeout_ms` / `ack_max_retries` | 可靠消息确认超时和重试次数 |
@@ -259,32 +259,24 @@ GCS 预检；串口和其他 UDP 连接仍以 `CompanionComputer` 身份接入�
 
 配置文件修改后重启程序生效；`SystemParam` 消息可在运行中更新安全高度。
 
-## 机载信息上报与查询
+## AgentInfo 上报与查询
 
-共享消息数据和通信地址模板定义位于 `../common/common_include/message.h`：
-`topic_queryToPlane = "queryToPlane/{planeId}/{MessageType}"`，
-`topic_stationLiveliness = "station/liveliness/{stationId}"`。
-查询接口及实现位于本工程 `src/communication`，其他工程可以依据公共地址模板和消息定义接入。
-`VehicleInfo` 的 JSON 载荷为 `{"planeId":"uav1","boardIp":"192.168.1.100","podVideoUrl":"","isSim":true}`，
-仍放在标准 Message 信封的 payload 字符串内，type 为 VehicleInfo。
-机载启动后发送一次，地面站上线／重连时再次发送，不周期广播。
-`isSim` 为 JSON 布尔值，直接使用现有仿真判定：UDP 端口位于 `14030`～`14039`、
-`14280`～`14289` 或 `14580`～`14589` 时为 true，其他情况为 false。
-该字段仅加入 VehicleInfo；读取缺少该字段的旧 VehicleInfo 时按 false 处理。
+机载和地面站通过 `sendToAll` 发布 `AgentInfo`。节点启动、发现其他节点上线或重连时上报，
+重复上线通知按存活标记去重。各节点在同一 Zenoh 网络中使用唯一的 `agentId`。
+字段、枚举和通信地址见 [`message.h`](../common/common_include/message.h) 与[跨端流程](../common/docs/groundstation-onboard-flow.md)。
 
-地面站先订阅 `sendToStation`，再声明 Zenoh 存活标记 `station/liveliness/<station_id>`。
-主动查询使用原生 `get("queryToPlane/<planeId>/VehicleInfo", "", ...)`，返回同样的 Message 信封；
-机载 CommunicationApi 直接暴露 queryPlane 接口，目前只支持 VehicleInfo。
-旧地面站要接收新信息，需支持新消息类型和地面站存活标记。
+机载的 `agentType = "Vehicle"`，`isSim` 沿用飞控仿真判定。`gcs_sim` 上报 `agentType = "GroundStation"` 和
+`isSim = true`，默认 `agentId = "gcs-sim"`。多实例联调时分别用 `--sender-id` 设置唯一 ID，通信 IP 由 `--board-ip` 指定。
+机载 `CommunicationApi::queryAgent` 通过 `queryToAgent/{agentId}/AgentInfo` 查询，两种角色使用相同地址格式。
 
-使用配套工具查询（工具先订阅再声明地面站在线）：
+使用配套工具查询机载或地面站。
 
 ```bash
-./build/gcs_sim --plane-id uav1 --sender-id GCS --query VehicleInfo
+./build/gcs_sim --query AgentInfo --agent-id uav1 --no-radar-udp --listen-seconds 1
 ```
 
-可用 `--connect tcp/<host>:<port>` 指定 Zenoh 端点，`--query-timeout-ms 2000` 设置超时；
-只查询、不声明地面站上线时追加 `--no-presence`。
+`--agent-id` 默认取 `--plane-id`。可用 `--connect tcp/<host>:<port>` 指定 Zenoh 端点，
+`--query-timeout-ms 2000` 设置超时。独立查询追加 `--no-presence`，跳过本工具的上线标记、上报和查询响应。
 查询失败、类型不支持或没有响应时，工具返回非零退出码。
 
 自动化控制场景可追加 `--control-settle-ms <ms>`：工具在建立 Zenoh 上行订阅与地面站

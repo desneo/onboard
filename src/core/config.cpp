@@ -107,7 +107,6 @@ std::string canonical_key(const std::string& section, const std::string& key) {
         {"camera.pod_video_url", "pod_video_url"},
         {"system.state_report_period_ms", "state_report_period_ms"},
         {"communication.plane_id", "plane_id"},
-        {"communication.station_id", "station_id"},
         {"communication.zenoh_config_file", "zenoh_config_file"},
         {"communication.zenoh_connect", "zenoh_connect"},
         {"communication.zenoh_listen", "zenoh_listen"},
@@ -212,8 +211,6 @@ bool load_config(const std::string& path, AppConfig& out) {
             out.pod_video_url = value;
         } else if (key == "plane_id") {
             out.plane_id = value;
-        } else if (key == "station_id") {
-            out.station_id = value;
         } else if (key == "zenoh_config_file") {
             out.zenoh_config_file = value;
         } else if (key == "zenoh_connect") {

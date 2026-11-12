@@ -17,7 +17,6 @@ struct AppConfig {
     std::string pod_video_url;
 
     std::string plane_id = "uav1";
-    std::string station_id = "gcs";
     std::string zenoh_config_file;
     std::string zenoh_connect;
     std::string zenoh_listen;
@@ -35,7 +34,7 @@ struct AppConfig {
     double fc_route_speed_m_s = 5.0;
 
     /// 是否仿真飞机：udp 链路且 fc_udp_url 端口处于场景 02 的 14030-14039／14280-14289
-    /// 或旧 SITL 的 14580-14589 时置为 true，同时用于 VehicleInfo.isSim。
+    /// 或旧 SITL 的 14580-14589 时置为 true，同时用于 AgentInfo.isSim。
     bool is_sim = false;
 
     int bt_tick_interval_ms = 50;

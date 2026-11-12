@@ -28,7 +28,7 @@
 - 第一版本飞控：PX4；
 - 飞控使用 UDP 且端口位于场景 02 的 PX4 远端端口 `14030`～`14039`、本地端口
   `14280`～`14289`，或旧 SITL 的 `14580`～`14589`（`1458*`）时判定为仿真飞机，
-  判定结果通过 `VehicleInfo.isSim` 上报。
+  判定结果通过 `AgentInfo.isSim` 上报。
 
 运行主日志默认直接写入 `logs/plane.log`，不按日期创建子目录；重启后追加。
 单文件达到 50 MB 后按序号轮转，历史文件为 `plane.1.log` 至 `plane.5.log`，超过保留数量淘汰最旧文件。
@@ -154,6 +154,9 @@
 
 视频流不由机载程序采集、处理或转发。
 
+机载收到合法 `TaskInfo` 或 `Command` 后交给任务调度，并向 `sendToStation` 返回 `Ack`。
+`senderId` 用于标识发送方，机载按报文类型和内容处理控制消息。
+
 配套 GCS 雷达入口默认监听 UDP `0.0.0.0:7790`，只处理 `radar_tracks`：
 
 - 雷达 UDP 对外只有 `type=radar_tracks`、`schema_version=1` 一种协议报文，每个扫描周期发送一个完整数据报；
@@ -165,16 +168,13 @@
 - 友机没有出现在雷达扫描中不阻塞该帧；尚无友机状态或存在过期状态时整帧暂停转发；
 - 靶机数据按公共 `GcsTarget` 尽力发布，不增加 Ack 或重发。雷达扫描中的径向速度和方位角作为额外字段忽略。
 
-### 7.2 机载信息与主动查询
+### 7.2 节点信息与主动查询
 
-- 新增 `MessageType::VehicleInfo`，包含 `planeId`、任务板 IP `boardIp`、吊舱视频流地址 `podVideoUrl`、是否为仿真飞机 `isSim`（bool，默认 false）。
-- `isSim` 直接读取现有 AppConfig.is_sim 的判定结果，不增加独立配置项；只在 VehicleInfo 中增加，不修改 VehicleState。
-- IP 和视频地址在启动时从配置加载到长期维护的 AppConfig；每次发送或查询时读取当前配置值，未配置时为空。
-- 机载通信启动后上报一次；配置的地面站上线或恢复上线时再次上报，不周期发送。
-- 地面站先订阅 `sendToStation`，再声明 `station/liveliness/<station_id>`；重复在线通知不重复上报。
-- 支持 Zenoh 原生 get/queryable 查询 `queryToPlane/<planeId>/VehicleInfo`，返回标准 Message 信封。
-- 查询接口以飞机 ID 和 MessageType 选择信息，当前只支持 VehicleInfo；非法参数、不支持的类型、无响应或错误响应必须明确返回失败。
-- 信息查询为只读操作，不触发任务或飞行动作；视频地址仅作为元数据传递。
+- 飞机和地面站以公共 `AgentInfo` 广播节点信息。机载填写 `agentId = planeId` 和 `agentType = Vehicle`，从配置读取 IP 和视频地址，从仿真判定读取 `isSim`。
+- 机载先订阅 `sendToAll` 并注册查询接口，再声明 `plane/liveliness/{planeId}`。通信启动和发现其他节点上线或重连时，机载向 `sendToAll` 发布本机 `AgentInfo`，按存活标记去重。
+- 机载接收并校验其他节点的 `AgentInfo`，要求 `agentId` 与信封的 `senderId` 一致。
+- 支持 Zenoh 原生 get/queryable 查询 `queryToAgent/{agentId}/AgentInfo`，返回标准 `Message` 信封。查询失败时返回错误。
+- 查询读取节点元数据，视频地址用于下游播放。
 
 ### 7.3 无人机间
 

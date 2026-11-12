@@ -99,7 +99,7 @@ class FleetCtlTest(unittest.TestCase):
         with self.assertRaises(fleetctl.FleetError):
             fleetctl.selected_planes(config, len(config.planes) + 1)
 
-    def test_configure_plane_removes_retired_image_sections(self):
+    def test_configure_plane_removes_retired_settings(self):
         config = fleetctl.load_config(ROOT / "config" / "fleet.ini")
         source = (
             "[system]\nlog_dir = logs/old-run\n"
@@ -107,6 +107,7 @@ class FleetCtlTest(unittest.TestCase):
             "[plugins]\ndirectory = plugins\n[video_output]\ntype = Rtsp\n"
             "[debug]\ntarget_log = true\n[suicide_mission]\nphase_timeout_ms = 1000\n"
             "[safety]\nalert_voltage_threshold_v = 21\n"
+            "[communication]\nstation_id = old-station\n"
         )
         result = fleetctl.configure_plane(source, config.planes[0], "udpout://127.0.0.1:14580")
         for section in ("image_input", "detection", "plugins", "video_output", "debug", "suicide_mission"):
@@ -114,6 +115,7 @@ class FleetCtlTest(unittest.TestCase):
         self.assertIn("[safety]\nalert_voltage_threshold_v = 21", result)
         self.assertIn("log_dir = logs\n", result)
         self.assertIn("udp_url = udpout://127.0.0.1:14580", result)
+        self.assertNotIn("station_id", result)
 
     def test_fleet_environment_and_dependency_order(self):
         config = fleetctl.load_config(ROOT / "config" / "fleet.ini")
@@ -194,13 +196,29 @@ class FleetCtlTest(unittest.TestCase):
         self.assertIn("board_ip = " + plane.host, default_result)
         self.assertIn("pod_video_url =\n", default_result)
 
-    def test_vehicle_info_rejects_multiple_boards_before_remote_actions(self):
+    def test_agent_info_rejects_multiple_boards_before_remote_actions(self):
         config = fleetctl.load_config(ROOT / "config" / "fleet.ini")
         remote = Mock()
         with self.assertRaises(fleetctl.FleetError):
-            fleetctl.command_test_vehicle_info(argparse.Namespace(count=2), config, remote)
+            fleetctl.command_test_agent_info(argparse.Namespace(count=2), config, remote)
         remote.run.assert_not_called()
         remote.rsync_to.assert_not_called()
+
+    def test_agent_info_command_and_log_payloads(self):
+        args = fleetctl.build_parser().parse_args(["test-agent-info", "--count", "1"])
+        self.assertEqual(args.command, "test-agent-info")
+        text = (
+            '[info] 收到 AgentInfo: {"agentId":"uav1","agentType":"Vehicle"}\n'
+            '[info] 收到 AgentInfo: {"agentId":"station-a","agentType":"GroundStation"}\n'
+            '[info] AgentInfo 查询成功: {"agentId":"station-b","agentType":"GroundStation"}\n'
+        )
+        self.assertEqual(fleetctl.agent_info_log_payloads(text, "收到 AgentInfo"), [
+            {"agentId": "uav1", "agentType": "Vehicle"},
+            {"agentId": "station-a", "agentType": "GroundStation"},
+        ])
+        self.assertEqual(fleetctl.agent_info_log_payloads(text, "AgentInfo 查询成功"), [
+            {"agentId": "station-b", "agentType": "GroundStation"},
+        ])
 
     def test_midcourse_rejects_multiple_boards_before_remote_actions(self):
         config = fleetctl.load_config(ROOT / "config" / "fleet.ini")

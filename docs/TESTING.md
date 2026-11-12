@@ -149,7 +149,7 @@ cd build/plane
 
 默认运行包须包含 `config/zenoh.json5`，由 `plane.conf` 的 `zenoh_config_file` 加载，
 `transport/unicast/open_timeout` 为 `2000` 毫秒；`zenoh_connect` 留空，保留组播和 gossip 自动发现。
-修改该配置后，在一号机验证自动发现的 VehicleInfo 上报与查询、正常停止及恢复启动，
+修改该配置后，在一号机验证自动发现的 AgentInfo 上报与查询、正常停止及恢复启动，
 记录实际停止耗时，并确认没有触发停止脚本的强制结束。
 
 运行日志检查须确认项目人工编写的消息和业务描述均使用中文，不出现英文句子；API 名、协议名、
@@ -238,13 +238,13 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 | 单一控制内容 | 任意时刻只有一个 Task 或 Command 执行 |
 | 最新内容替换 | 新 Task/Command 中止当前执行并立即启动最新内容 |
 | 任务中止 | 只有匹配 taskId 的 Stop 生效，后续节点不再执行 |
-| 非 GCS 控制 | 拒绝其他发送方下发的 Task 和 Command |
-| 任务确认 | 收到合法 Task 后返回对应 messageId 的 Ack |
+| 控制报文 | 不同发送方的合法 TaskInfo 和 Command 均进入任务调度 |
+| 接收确认 | 收到合法 TaskInfo 或 Command 后向 sendToStation 返回对应 messageId 的 Ack |
 | 状态广播 | 按配置周期广播本机最新 VehicleState |
 | 友机状态 | 按 planeId 更新和查询其他无人机最新状态，位置更新不打印日志 |
 | 友机上下线 | Zenoh 存活标记出现时打印一次上线，撤销或失联时打印一次下线，恢复后重新打印上线 |
 | 任务状态 | 地面站能获得状态、行为树和当前节点；无任务时为 None |
-| GCS 链路 | 收到 GCS 报文变为 connected，超过阈值变为 disconnected |
+| GCS 链路 | 解码合法下行报文后变为 connected，超过阈值变为 disconnected |
 | 队列上限 | 接收队列满时丢弃最旧消息，进程保持可用 |
 | 确认重试 | 可靠消息超时后按配置重试，超过次数产生明确错误 |
 
@@ -294,27 +294,27 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 失败项：日志位置、现象和初步定位
 ```
 
-## VehicleInfo 信息接口验证
+## AgentInfo 信息接口验证
 
-`vehicle_info` CTest 使用关闭组播和 gossip 的 TCP 回环会话，验证配置加载、无地面站时的启动上报、
-指定地面站上线／重复通知／重连、已有 token 的 history 发现、无周期重复上报，以及原生查询的成功、
-当前配置读取、isSim 的 true/false 布尔值、非法参数、不支持类型、错误发送方和无响应。测试不发送飞行或任务指令。
+`agent_info` CTest 使用关闭组播和 gossip 的 TCP 回环会话，验证启动上报、多个地面站标记上线和重连、
+重复标记去重、已有标记的 history 发现，以及 AgentInfo 查询。回环测试还验证不同发送方的控制报文分发
+和 Ack，不连接飞控。
 
 部署并在一号机验证：
 
 ```bash
-python3 tools/fleetctl.py test-vehicle-info --count 1
+python3 tools/fleetctl.py test-agent-info --count 1
 ```
 
 该命令只预检一号机，备份程序和配置，部署完整运行包和 gcs_sim，保留现有连接参数及视频地址，
 其中 SITL UDP 主机统一校正为清单中的 `192.168.1.56` 并验证实际飞控连接；
 任务板 IP 未配置时写入 fleet.ini 中的该板 IP。gcs_sim 在板端独立进程中运行，验证：
 
-1. 地面站已订阅时启动机载，收到一次 VehicleInfo，观察期间没有周期重复；
-2. 地面站再次上线及恢复上线时，各收到一次当前配置的信息；
-3. 原生查询指定飞机，结果与板端配置完全一致；isSim 与现有仿真判定一致；仅查询时没有额外主动上报；
-4. 不存在的飞机明确返回无响应或超时，不支持的查询类型明确失败；
-5. 板端二进制校验一致、依赖自检成功、机载最终保持运行。
+1. 地面站已订阅时启动机载，收到一次 `AgentInfo`，观察期间没有周期重复。
+2. 两套地面站身份在线时，均收到机载信息，机载也记录两个地面站的上报。地面站重连后再次收到上报。
+3. 按 ID 查询机载与地面站，验证 `agentType`、地址及 `isSim`。独立查询期间机载上报计数为零。
+4. 不存在的 Agent 返回无响应或超时，非法查询类型明确失败。
+5. 板端二进制校验和依赖自检成功，机载保持运行，SITL 环境中验证飞控连接和遥测。
 
 不重启 SITL、不发送控制报文、不连接或处理视频流。证据保存到
-`logs/fleet/<run_id>/vehicle-info-report.json` 及对应原始日志。
+`logs/fleet/<run_id>/agent-info-report.json` 及对应原始日志。

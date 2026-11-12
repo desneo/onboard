@@ -6,7 +6,6 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -23,7 +22,6 @@ using plane::core::now_ms;
 namespace {
 
 constexpr int kWorkerTickMs = 50;
-constexpr std::string_view kLivelinessPrefix = "plane/liveliness/";
 
 bool is_reliable(plane::model::MessageType type) {
     return type == plane::model::MessageType::Alert || type == plane::model::MessageType::Ack;
@@ -43,8 +41,8 @@ struct MessageTypeOf<plane::model::Ack> {
 };
 
 template <>
-struct MessageTypeOf<plane::model::VehicleInfo> {
-    static constexpr auto value = plane::model::MessageType::VehicleInfo;
+struct MessageTypeOf<plane::model::AgentInfo> {
+    static constexpr auto value = plane::model::MessageType::AgentInfo;
 };
 
 template <>
@@ -91,6 +89,11 @@ bool CommunicationModule::init() {
 }
 
 bool CommunicationModule::start() {
+    const std::string query_key = agent_query_key(config_.plane_id);
+    if (query_key.empty()) {
+        report_error("plane_id 不能用作查询 agentId");
+        return false;
+    }
     ZenohEndpoints endpoints;
     endpoints.config_file = config_.zenoh_config_file;
     endpoints.connect = config_.zenoh_connect;
@@ -115,46 +118,38 @@ bool CommunicationModule::start() {
     {
         std::lock_guard<std::mutex> lock(presence_mutex_);
         presence_active_ = true;
-        station_online_ = false;
-        vehicle_info_pending_ = true;
+        online_agents_.clear();
+        agent_info_pending_ = true;
     }
     if (!transport_.subscribe_liveliness(
-            std::string(kLivelinessPrefix) + "*",
-            [this](const std::string& key_expr, bool online) { on_peer_liveliness(key_expr, online); }, error) ||
-        !transport_.declare_liveliness_token(std::string(kLivelinessPrefix) + config_.plane_id, error)) {
-        report_error("飞机存活性声明失败: " + error);
-        return false;
-    }
-
-    const std::string expected_station_liveliness = station_liveliness_key(config_.station_id);
-    if (!transport_.subscribe_liveliness(
-            expected_station_liveliness,
-            [this, expected_station_liveliness](const std::string& key_expr, bool online) {
-                if (key_expr == expected_station_liveliness) {
-                    on_station_liveliness(online);
-                }
-            },
+            plane_liveliness_key("*"),
+            [this](const std::string& key_expr, bool online) { on_peer_liveliness(key_expr, online); },
+            error) ||
+        !transport_.subscribe_liveliness(
+            station_liveliness_key("*"),
+            [this](const std::string& key_expr, bool online) { update_agent_liveliness(key_expr, online); },
             error) ||
         !transport_.declare_queryable(
-            plane_query_selector(config_.plane_id),
-            [this](const std::string& key, std::string& reply, std::string& error) {
-                if (key != plane_query_key(config_.plane_id, plane::model::MessageType::VehicleInfo)) {
-                    error = "不支持的查询类型，当前仅支持 VehicleInfo";
+            query_key,
+            [this, query_key](const std::string& key, std::string& reply, std::string& error) {
+                if (key != query_key) {
+                    error = "AgentInfo 查询必须指定精确的 agentId";
                     return false;
                 }
                 plane::model::Message message;
-                if (!make_message(config_.plane_id, vehicle_info(), message, error)) return false;
+                if (!make_message(config_.plane_id, agent_info(), message, error)) return false;
                 reply = encode_envelope(message);
                 return true;
             },
-            error)) {
-        report_error("地面站存活性或查询接口声明失败: " + error);
+            error) ||
+        !transport_.declare_liveliness_token(plane_liveliness_key(config_.plane_id), error)) {
+        report_error("节点存活性或 AgentInfo 查询接口声明失败: " + error);
         return false;
     }
 
     running_ = true;
     worker_ = std::thread([this]() { worker_loop(); });
-    SPDLOG_INFO("通信模块已启动: plane_id={} station_id={}", config_.plane_id, config_.station_id);
+    SPDLOG_INFO("通信模块已启动: plane_id={}", config_.plane_id);
     SPDLOG_INFO("模块启动完成: {}", name());
     return true;
 }
@@ -163,9 +158,8 @@ void CommunicationModule::stop() {
     {
         std::lock_guard<std::mutex> lock(presence_mutex_);
         presence_active_ = false;
-        station_online_ = false;
-        vehicle_info_pending_ = false;
-        online_peers_.clear();
+        online_agents_.clear();
+        agent_info_pending_ = false;
     }
     const bool was_running = running_.exchange(false);
     if (was_running) {
@@ -193,23 +187,25 @@ bool CommunicationModule::sendToAll(const OutgoingMessage& message) {
     return send_message(std::string(plane::model::topic_sendToAll), message);
 }
 
-bool CommunicationModule::queryPlane(const std::string& plane_id, plane::model::MessageType type,
-                                     plane::model::Message& reply, std::string& error, int timeout_ms) {
-    return plane::communication::queryPlane(transport_, plane_id, type, reply, error, timeout_ms);
+bool CommunicationModule::queryAgent(const std::string& agent_id, plane::model::Message& reply,
+                                     std::string& error, int timeout_ms) {
+    return plane::communication::queryAgent(transport_, agent_id, reply, error, timeout_ms);
 }
 
-plane::model::VehicleInfo CommunicationModule::vehicle_info() const {
-    return {config_.plane_id, config_.board_ip, config_.pod_video_url, config_.is_sim};
+plane::model::AgentInfo CommunicationModule::agent_info() const {
+    return {config_.plane_id, plane::model::AgentType::Vehicle, config_.board_ip, config_.pod_video_url, config_.is_sim};
 }
 
-void CommunicationModule::on_station_liveliness(bool online) {
+bool CommunicationModule::update_agent_liveliness(const std::string& key_expr, bool online) {
     std::lock_guard<std::mutex> lock(presence_mutex_);
-    if (!presence_active_ || station_online_ == online) return;
-    station_online_ = online;
-    if (online) {
-        vehicle_info_pending_ = true;
-        rx_cv_.notify_one();
+    if (!presence_active_) return false;
+    if (!online) {
+        return online_agents_.erase(key_expr) != 0;
     }
+    if (!online_agents_.insert(key_expr).second) return false;
+    agent_info_pending_ = true;
+    rx_cv_.notify_one();
+    return true;
 }
 
 void CommunicationModule::enqueue_wire(std::string raw) {
@@ -226,23 +222,20 @@ void CommunicationModule::enqueue_wire(std::string raw) {
 }
 
 void CommunicationModule::on_peer_liveliness(const std::string& key_expr, bool online) {
-    if (key_expr.compare(0, kLivelinessPrefix.size(), kLivelinessPrefix) != 0) {
+    static const std::string prefix = plane_liveliness_key("");
+    if (key_expr.compare(0, prefix.size(), prefix) != 0) {
         return;
     }
-    const std::string plane_id = key_expr.substr(kLivelinessPrefix.size());
+    const std::string plane_id = key_expr.substr(prefix.size());
     if (plane_id.empty() || plane_id == config_.plane_id) {
         return;
     }
-    std::lock_guard<std::mutex> lock(presence_mutex_);
-    if (!presence_active_) {
-        return;
-    }
-    if (online) {
-        if (online_peers_.insert(plane_id).second) {
+    if (update_agent_liveliness(key_expr, online)) {
+        if (online) {
             SPDLOG_INFO("他机上线: {}", plane_id);
+        } else {
+            SPDLOG_INFO("他机下线: {}", plane_id);
         }
-    } else if (online_peers_.erase(plane_id) != 0) {
-        SPDLOG_INFO("他机下线: {}", plane_id);
     }
 }
 
@@ -252,15 +245,15 @@ void CommunicationModule::worker_loop() {
         {
             std::unique_lock<std::mutex> lock(rx_mutex_);
             rx_cv_.wait_for(lock, std::chrono::milliseconds(kWorkerTickMs),
-                            [this]() { return !rx_queue_.empty() || vehicle_info_pending_ || !running_; });
+                            [this]() { return !rx_queue_.empty() || agent_info_pending_ || !running_; });
             batch.swap(rx_queue_);
         }
         for (const auto& raw : batch) {
             on_wire_message(raw);
         }
-        if (vehicle_info_pending_.exchange(false)) {
-            if (sendToStation(vehicle_info())) {
-                SPDLOG_INFO("已上报飞机信息: plane_id={}", config_.plane_id);
+        if (agent_info_pending_.exchange(false)) {
+            if (sendToAll(agent_info())) {
+                SPDLOG_INFO("已发布 AgentInfo: agentId={}", config_.plane_id);
             }
         }
         report_states();
@@ -275,7 +268,8 @@ void CommunicationModule::on_wire_message(const std::string& raw) {
         report_error("报文解析失败: " + error);
         return;
     }
-    if (envelope.senderId == config_.plane_id) {
+    if (envelope.senderId == config_.plane_id && envelope.type != plane::model::MessageType::TaskInfo &&
+        envelope.type != plane::model::MessageType::Command) {
         return;
     }
     handle_envelope(envelope);
@@ -283,14 +277,6 @@ void CommunicationModule::on_wire_message(const std::string& raw) {
 
 void CommunicationModule::handle_envelope(const plane::model::Message& envelope) {
     std::string error;
-    if (envelope.senderId == config_.station_id) {
-        state_store_.notify_station_seen();
-    }
-    if ((envelope.type == plane::model::MessageType::TaskInfo || envelope.type == plane::model::MessageType::Command) &&
-        envelope.senderId != config_.station_id) {
-        SPDLOG_WARN("拒绝非地面站控制消息: senderId={}", envelope.senderId);
-        return;
-    }
     switch (envelope.type) {
         case plane::model::MessageType::TaskInfo: {
             plane::model::TaskInfo value;
@@ -298,8 +284,9 @@ void CommunicationModule::handle_envelope(const plane::model::Message& envelope)
                 report_error("TaskInfo 解码失败: " + error);
                 return;
             }
+            state_store_.notify_station_seen();
             event_bus_.publish(events::kTaskInfoReceived, value);
-            send_ack(envelope);
+            send_ack(envelope.messageId);
             break;
         }
         case plane::model::MessageType::Command: {
@@ -308,8 +295,9 @@ void CommunicationModule::handle_envelope(const plane::model::Message& envelope)
                 report_error("Command 解码失败: " + error);
                 return;
             }
+            state_store_.notify_station_seen();
             event_bus_.publish(events::kCommandReceived, value);
-            send_ack(envelope);
+            send_ack(envelope.messageId);
             break;
         }
         case plane::model::MessageType::SystemParam: {
@@ -318,6 +306,7 @@ void CommunicationModule::handle_envelope(const plane::model::Message& envelope)
                 report_error("SystemParam 解码失败: " + error);
                 return;
             }
+            state_store_.notify_station_seen();
             event_bus_.publish(events::kSystemParamReceived, value);
             break;
         }
@@ -327,19 +316,32 @@ void CommunicationModule::handle_envelope(const plane::model::Message& envelope)
                 report_error("GcsTarget 解码失败: " + error);
                 return;
             }
+            state_store_.notify_station_seen();
             event_bus_.publish(events::kGcsTargetReceived, value);
             break;
         }
         case plane::model::MessageType::VehicleState: {
-            if (envelope.senderId == config_.station_id) {
-                break;
-            }
             plane::model::VehicleState value;
             if (!from_payload(envelope.payload, value, error)) {
                 report_error("VehicleState 解码失败: " + error);
                 return;
             }
             state_store_.update_peer_state(value);
+            break;
+        }
+        case plane::model::MessageType::AgentInfo: {
+            plane::model::AgentInfo value;
+            if (!from_payload(envelope.payload, value, error)) {
+                report_error("AgentInfo 解码失败: " + error);
+                return;
+            }
+            if (value.agentId != envelope.senderId || envelope.messageId.empty()) {
+                report_error("AgentInfo 的 agentId 或 messageId 无效");
+                return;
+            }
+            SPDLOG_INFO("收到 AgentInfo: agentId={} agentType={}", value.agentId,
+                        value.agentType == plane::model::AgentType::Vehicle ? "Vehicle" : "GroundStation");
+            event_bus_.publish(events::kAgentInfoReceived, value);
             break;
         }
         case plane::model::MessageType::Ack: {
@@ -391,12 +393,8 @@ bool CommunicationModule::send_message(const std::string& topic, const OutgoingM
     return true;
 }
 
-bool CommunicationModule::send_ack(const plane::model::Message& envelope) {
-    plane::model::Ack ack;
-    ack.ackId = envelope.messageId;
-    const std::string topic = envelope.senderId == config_.station_id ? std::string(plane::model::topic_sendToStation)
-                                                                      : "sendToPlane/" + envelope.senderId;
-    return send_message(topic, OutgoingMessage{ack});
+bool CommunicationModule::send_ack(const std::string& message_id) {
+    return sendToStation(plane::model::Ack{message_id});
 }
 
 void CommunicationModule::report_states() {

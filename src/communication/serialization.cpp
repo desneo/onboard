@@ -51,11 +51,16 @@ bool enum_from_string(const std::string& name, Enum& out) {
 
 }  // namespace
 
-bool to_payload(const plane::model::VehicleInfo& value, std::string& out, std::string& error) {
+bool is_valid_agent_id(std::string_view agent_id) {
+    return !agent_id.empty() && agent_id.find_first_of("/*?#$") == std::string_view::npos;
+}
+
+bool to_payload(const plane::model::AgentInfo& value, std::string& out, std::string& error) {
     try {
-        out = json{{"planeId", value.planeId},
+        out = json{{"agentId", value.agentId},
+                   {"agentType", std::string(magic_enum::enum_name(value.agentType))},
                    {"boardIp", value.boardIp},
-                   {"podVideoUrl", value.podVideoUrl},
+                   {"videoUrl", value.videoUrl},
                    {"isSim", value.isSim}}
                   .dump();
         return true;
@@ -65,14 +70,26 @@ bool to_payload(const plane::model::VehicleInfo& value, std::string& out, std::s
     }
 }
 
-bool from_payload(const std::string& payload, plane::model::VehicleInfo& out, std::string& error) {
+bool from_payload(const std::string& payload, plane::model::AgentInfo& out, std::string& error) {
     try {
         const json in = json::parse(payload);
-        plane::model::VehicleInfo value;
-        value.planeId = in.at("planeId").get<std::string>();
+        if (!in.is_object() || in.size() != 5) {
+            error = "AgentInfo 必须包含五个公共字段";
+            return false;
+        }
+        plane::model::AgentInfo value;
+        value.agentId = in.at("agentId").get<std::string>();
+        if (!is_valid_agent_id(value.agentId)) {
+            error = "AgentInfo.agentId 非法";
+            return false;
+        }
+        if (!enum_from_string(in.at("agentType").get<std::string>(), value.agentType)) {
+            error = "未知 AgentType";
+            return false;
+        }
         value.boardIp = in.at("boardIp").get<std::string>();
-        value.podVideoUrl = in.at("podVideoUrl").get<std::string>();
-        value.isSim = in.value("isSim", false);
+        value.videoUrl = in.at("videoUrl").get<std::string>();
+        value.isSim = in.at("isSim").get<bool>();
         out = std::move(value);
         return true;
     } catch (const json::exception& e) {

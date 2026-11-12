@@ -37,8 +37,8 @@ class CommunicationModule final : public plane::core::IModule, public Communicat
     bool sendToPlane(const std::string& plane_id, const OutgoingMessage& message) override;
     bool sendToAll(const OutgoingMessage& message) override;
 
-    bool queryPlane(const std::string& plane_id, plane::model::MessageType type, plane::model::Message& reply,
-                    std::string& error, int timeout_ms = 2000) override;
+    bool queryAgent(const std::string& agent_id, plane::model::Message& reply, std::string& error,
+                    int timeout_ms = 2000) override;
 
    private:
     struct PendingMessage {
@@ -49,8 +49,8 @@ class CommunicationModule final : public plane::core::IModule, public Communicat
     };
 
     void enqueue_wire(std::string raw);
-    plane::model::VehicleInfo vehicle_info() const;
-    void on_station_liveliness(bool online);
+    plane::model::AgentInfo agent_info() const;
+    bool update_agent_liveliness(const std::string& key_expr, bool online);
     void on_peer_liveliness(const std::string& key_expr, bool online);
     void worker_loop();
     void on_wire_message(const std::string& raw);
@@ -59,7 +59,7 @@ class CommunicationModule final : public plane::core::IModule, public Communicat
     void report_states();
     void check_pending();
     bool send_message(const std::string& topic, const OutgoingMessage& message);
-    bool send_ack(const plane::model::Message& envelope);
+    bool send_ack(const std::string& message_id);
     void report_error(const std::string& detail) const;
 
     plane::core::EventBus& event_bus_;
@@ -70,9 +70,8 @@ class CommunicationModule final : public plane::core::IModule, public Communicat
     ZenohTransport transport_;
     std::mutex presence_mutex_;
     bool presence_active_ = false;
-    bool station_online_ = false;
-    std::atomic<bool> vehicle_info_pending_{false};
-    std::unordered_set<std::string> online_peers_;
+    std::unordered_set<std::string> online_agents_;
+    std::atomic<bool> agent_info_pending_{false};
     std::mutex rx_mutex_;
     std::condition_variable rx_cv_;
     std::deque<std::string> rx_queue_;
