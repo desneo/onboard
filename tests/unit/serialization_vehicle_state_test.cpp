@@ -7,7 +7,6 @@
 #include <string>
 
 #include "communication/serialization.h"
-#include "target/gcs_target.h"
 
 int main() {
     plane::model::VehicleState source;
@@ -48,27 +47,28 @@ int main() {
     assert(decoded.roll_deg == 0.0F);
     assert(decoded.voltage_v == 0.0F);
 
-    plane::target::GcsTarget target;
-    target.trackId = "target-7";
-    target.geoPos.latitude = 30.1;
-    target.geoPos.longitude = 120.2;
-    target.geoPos.altitude = 321.0F;
-    target.timestamp_ms = 1'800'000'000'123LL;
-    target.radial_speed_m_s = -12.5F;
-    target.azimuth_deg = 47.0F;
-    assert(plane::communication::to_payload(target, payload, error));
-    assert(payload.find("timestamp_ms") != std::string::npos);
-    assert(payload.find("velocity_m_s") == std::string::npos);
-    plane::target::GcsTarget decoded_target;
-    assert(plane::communication::from_payload(payload, decoded_target, error));
-    assert(decoded_target.trackId == target.trackId);
-    assert(decoded_target.timestamp_ms == target.timestamp_ms);
-    assert(decoded_target.geoPos.altitude == target.geoPos.altitude);
-    assert(decoded_target.radial_speed_m_s == target.radial_speed_m_s);
-    assert(decoded_target.azimuth_deg == target.azimuth_deg);
+    const std::string target_payload = R"({
+        "trackId":"target-7","geoPos":{"latitude":30.1,"longitude":120.2,"altitude":321},
+        "timestamp_ms":1800000000123
+    })";
+    plane::model::GcsTarget decoded_target;
+    assert(plane::communication::from_payload(target_payload, decoded_target, error));
+    assert(decoded_target.trackId == "target-7");
+    assert(decoded_target.timestamp_ms == 1'800'000'000'123LL);
+    assert(decoded_target.geoPos.latitude == 30.1);
+    assert(decoded_target.geoPos.longitude == 120.2);
+    assert(decoded_target.geoPos.altitude == 321.0F);
 
-    const std::string old_target = R"({"trackId":"old","geoPos":{"latitude":30,"longitude":120,"altitude":100}})";
-    assert(!plane::communication::from_payload(old_target, decoded_target, error));
+    const std::string extended_target = R"({
+        "trackId":"extended","geoPos":{"latitude":30,"longitude":120,"altitude":100},
+        "timestamp_ms":1800000000124,"radial_speed_m_s":-12.5,"azimuth_deg":47
+    })";
+    assert(plane::communication::from_payload(extended_target, decoded_target, error));
+    assert(decoded_target.trackId == "extended");
+    assert(decoded_target.timestamp_ms == 1'800'000'000'124LL);
+
+    const std::string no_timestamp = R"({"trackId":"old","geoPos":{"latitude":30,"longitude":120,"altitude":100}})";
+    assert(!plane::communication::from_payload(no_timestamp, decoded_target, error));
 
     return 0;
 }

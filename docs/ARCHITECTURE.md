@@ -126,7 +126,10 @@ ZenohTransport 管理原生 queryable 的生命周期和带超时的 get；plane
 
 Communication 对外提供 `sendToStation`、`sendToPlane` 和 `sendToAll` 三类发送能力。网络输入由 Communication 接收为字符串，根据 `MessageType` 使用 nlohmann-json 转换成对应数据对象，再通过 EventBus 交给业务模块；JSON 类型和解析逻辑不得进入业务模块。
 
-`gcs_sim` 是 7790 雷达 UDP 与 Zenoh 之间的适配工具。防守机状态只从 `sendToAll` 的
+`gcs_sim` 是 7790 雷达 UDP 与 Zenoh 之间的独立适配工具。雷达过滤、目标编码及其测试位于
+`tools/gcs_sim`。它与主程序共用 `plane_protocol` 的报文编解码、查询和 Zenoh 传输。
+机载目标缓存和中制导直接使用 `common_include/message.h` 定义的 `plane::model::GcsTarget`。
+防守机状态只从 `sendToAll` 的
 `VehicleState` 缓存获得，雷达 UDP 不承担友机状态输入。适配器按扫描时间用 NED 速度外推友机，
 对 confirmed 航迹执行允许“友机未出现在扫描中”的全局一对一门限匹配；只过滤 50 米内实际匹配的
 航迹。尚无友机状态或状态过期时失败关闭，友机未匹配到雷达航迹时不阻塞靶机转发。
@@ -165,6 +168,7 @@ Communication 对外提供 `sendToStation`、`sendToPlane` 和 `sendToAll` 三�
 | `tests/harness` | 测试公共脚本 |
 | `scripts` | 源码树中的程序启停脚本；打包后复制到运行目录根部 |
 | `tools` | 打包和辅助工具 |
+| `tools/gcs_sim` | 地面站联调工具、雷达适配和对应测试 |
 | `cmake` | CMake 依赖和平台配置 |
 | `docs` | 产品、架构和测试文档 |
 

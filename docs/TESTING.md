@@ -163,7 +163,8 @@ cd build/plane
 `config_simulation` 验证场景 02 的 PX4 远端 UDP 端口 `14030`～`14039`、本地端口
 `14280`～`14289` 与旧 SITL 端口 `14580`～`14589` 为仿真，范围外端口和串口不判定为仿真。
 
-`radar_target_filter` 验证 JSON 容错、空扫描、coasting 忽略、confirmed 过滤、严格时间戳输入、多友机全局匹配、
+`radar_target_filter` 位于 `tools/gcs_sim/tests`，验证不带速度和方位角的雷达航迹、JSON 容错、
+空扫描、coasting 忽略、confirmed 过滤、严格时间戳输入、多友机全局匹配、
 50 米门限、NED 状态外推、过期状态失败关闭，以及“友机未出现在雷达帧时仍转发靶机”。
 `midcourse_controller` 使用真实 `libmidcourse_alg.so`，验证任务启动前已形成的 20 帧历史、增量更新、
 INI／PX4 限值来源、两种输出模式、会话重置和错误路径；

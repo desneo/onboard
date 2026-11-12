@@ -1,7 +1,7 @@
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
-#include "tools/gcs_sim/radar_target_filter.h"
+#include "radar_target_filter.h"
 
 #include <algorithm>
 #include <cassert>
@@ -30,8 +30,6 @@ nlohmann::json track(const std::string& id, double north_m, const std::string& s
             {"latitude", 30.0 + north_m / kMetersPerLatitudeDegree},
             {"longitude", 120.0},
             {"altitude_msl_m", 100.0},
-            {"radial_speed_m_s", 12.0},
-            {"azimuth_deg", 90.0},
             {"unknown_field", "ignored"}};
 }
 
@@ -44,7 +42,7 @@ std::string scan(std::int64_t timestamp_ms, std::vector<nlohmann::json> tracks) 
         .dump();
 }
 
-bool contains_id(const std::vector<plane::target::GcsTarget>& targets, const std::string& id) {
+bool contains_id(const std::vector<plane::model::GcsTarget>& targets, const std::string& id) {
     return std::any_of(targets.begin(), targets.end(), [&](const auto& target) { return target.trackId == id; });
 }
 
@@ -55,7 +53,7 @@ int main() {
     using plane::gcs_sim::RadarTargetFilter;
 
     constexpr std::int64_t kTime = 1'800'000'000'000LL;
-    std::vector<plane::target::GcsTarget> output;
+    std::vector<plane::model::GcsTarget> output;
     std::string error;
 
     RadarTargetFilter no_state;

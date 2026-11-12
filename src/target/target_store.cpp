@@ -28,8 +28,9 @@ bool TargetStore::init() {
 }
 
 bool TargetStore::start() {
-    event_bus_.subscribe<GcsTarget>(plane::communication::events::kGcsTargetReceived,
-                                    [this](const GcsTarget& target) { on_gcs_target(target); });
+    event_bus_.subscribe<plane::model::GcsTarget>(
+        plane::communication::events::kGcsTargetReceived,
+        [this](const plane::model::GcsTarget& target) { on_gcs_target(target); });
     SPDLOG_INFO("模块启动完成: {}", name());
     return true;
 }
@@ -42,9 +43,9 @@ void TargetStore::stop() {
 
 void TargetStore::release() {}
 
-std::vector<GcsTarget> TargetStore::gcs_targets() const {
+std::vector<plane::model::GcsTarget> TargetStore::gcs_targets() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    std::vector<GcsTarget> result;
+    std::vector<plane::model::GcsTarget> result;
     result.reserve(gcs_latest_.size());
     for (const auto& item : gcs_latest_) {
         result.push_back(item.second);
@@ -52,7 +53,7 @@ std::vector<GcsTarget> TargetStore::gcs_targets() const {
     return result;
 }
 
-bool TargetStore::gcs_target(const std::string& track_id, GcsTarget& out) const {
+bool TargetStore::gcs_target(const std::string& track_id, plane::model::GcsTarget& out) const {
     std::lock_guard<std::mutex> lock(mutex_);
     const auto it = gcs_latest_.find(track_id);
     if (it == gcs_latest_.end()) {
@@ -62,7 +63,7 @@ bool TargetStore::gcs_target(const std::string& track_id, GcsTarget& out) const 
     return true;
 }
 
-std::vector<GcsTarget> TargetStore::gcs_target_history(const std::string& track_id) const {
+std::vector<plane::model::GcsTarget> TargetStore::gcs_target_history(const std::string& track_id) const {
     std::lock_guard<std::mutex> lock(mutex_);
     const auto it = gcs_history_.find(track_id);
     if (it == gcs_history_.end()) {
@@ -71,7 +72,7 @@ std::vector<GcsTarget> TargetStore::gcs_target_history(const std::string& track_
     return {it->second.begin(), it->second.end()};
 }
 
-void TargetStore::on_gcs_target(const GcsTarget& target) {
+void TargetStore::on_gcs_target(const plane::model::GcsTarget& target) {
     if (target.trackId.empty() || target.timestamp_ms <= 0) {
         SPDLOG_WARN("忽略非法 GCS 目标: trackId={} timestamp_ms={}", target.trackId, target.timestamp_ms);
         return;

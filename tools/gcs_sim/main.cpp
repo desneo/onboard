@@ -23,9 +23,9 @@
 #include "communication/plane_query.h"
 #include "communication/serialization.h"
 #include "communication/zenoh_transport.h"
-#include "core/log.h"
+#include "core/log_pattern.h"
 #include "message.h"
-#include "tools/gcs_sim/radar_target_filter.h"
+#include "radar_target_filter.h"
 
 namespace {
 
@@ -279,6 +279,18 @@ std::string build_wire(const std::string& sender_id, const std::string& message_
     return envelope.dump();
 }
 
+std::string encode_target_payload(const plane::model::GcsTarget& target) {
+    const auto& position = target.geoPos;
+    return nlohmann::json{{"trackId", target.trackId},
+                          {"geoPos",
+                           {{"latitude", position.latitude},
+                            {"longitude", position.longitude},
+                            {"height", position.height},
+                            {"altitude", position.altitude}}},
+                          {"timestamp_ms", target.timestamp_ms}}
+        .dump();
+}
+
 void send_wire(plane::communication::ZenohTransport& session, const std::string& topic, const std::string& wire) {
     std::string error;
     std::lock_guard<std::mutex> lock(g_send_mutex);
@@ -491,7 +503,7 @@ int main(int argc, char** argv) {
                     break;
                 }
                 radar_datagram_count.fetch_add(1);
-                std::vector<plane::target::GcsTarget> targets;
+                std::vector<plane::model::GcsTarget> targets;
                 std::string filter_error;
                 const std::string payload(buffer.data(), static_cast<std::size_t>(received));
                 if (!radar_filter.process_scan(payload, unix_now_ms(), targets, filter_error)) {
@@ -513,16 +525,10 @@ int main(int argc, char** argv) {
                     radar_no_target_scan_count.fetch_add(1);
                 }
                 for (const auto& target : targets) {
-                    std::string target_payload;
-                    std::string encode_error;
-                    if (!plane::communication::to_payload(target, target_payload, encode_error)) {
-                        SPDLOG_ERROR("GCS 目标序列化失败: {}", encode_error);
-                        continue;
-                    }
                     try {
                         const std::string message_id = options.sender_id + "-radar-" + std::to_string(++sequence);
                         send_wire(session, "sendToPlane/" + options.plane_id,
-                                  build_wire(options.sender_id, message_id, "GcsTarget", target_payload));
+                                  build_wire(options.sender_id, message_id, "GcsTarget", encode_target_payload(target)));
                         radar_target_count.fetch_add(1);
                     } catch (const std::exception& exception) {
                         SPDLOG_ERROR("雷达靶机数据发送失败: {}", exception.what());
@@ -597,16 +603,11 @@ int main(int argc, char** argv) {
     if (!options.gcs_target_id.empty()) {
         const std::int64_t first_timestamp_ms = unix_now_ms();
         for (int i = 0; i < options.gcs_target_repeat; ++i) {
-            const std::string payload = nlohmann::json{
-                {"trackId", options.gcs_target_id},
-                {"geoPos",
-                 {{"latitude", 30.0 + 0.0001 * i}, {"longitude", 120.0}, {"height", 50.0F}, {"altitude", 60.0F}}},
-                {"timestamp_ms", first_timestamp_ms + i * 1000},
-                {"radial_speed_m_s", 10.0F},
-                {"azimuth_deg", 90.0F}}.dump();
+            const plane::model::GcsTarget target{
+                options.gcs_target_id, {30.0 + 0.0001 * i, 120.0, 50.0F, 60.0F}, first_timestamp_ms + i * 1000LL};
             const std::string message_id = options.gcs_target_id + "-" + std::to_string(++sequence);
             send_wire(session, "sendToPlane/" + options.plane_id,
-                      build_wire(options.sender_id, message_id, "GcsTarget", payload));
+                      build_wire(options.sender_id, message_id, "GcsTarget", encode_target_payload(target)));
         }
         SPDLOG_INFO("已发送 GCS 目标: trackId={} gcs_target_repeat={}", options.gcs_target_id,
                     options.gcs_target_repeat);

@@ -88,8 +88,8 @@ class FakeStateStore final : public plane::state::StateStoreApi {
     void notify_station_seen() override {}
 };
 
-plane::target::GcsTarget target(const std::string& id, int index) {
-    plane::target::GcsTarget result;
+plane::model::GcsTarget target(const std::string& id, int index) {
+    plane::model::GcsTarget result;
     result.trackId = id;
     result.timestamp_ms = 1'800'000'000'000LL + static_cast<std::int64_t>(index) * 1000;
     result.geoPos.latitude = 30.010 + 0.00001 * static_cast<double>(index);

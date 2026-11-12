@@ -1,0 +1,12 @@
+add_executable(gcs_sim main.cpp radar_target_filter.cpp)
+target_compile_options(gcs_sim PRIVATE -Wall -Wextra)
+target_link_libraries(gcs_sim PRIVATE plane_protocol plane::nlohmann_json spdlog::spdlog)
+set_target_properties(gcs_sim PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+
+if(BUILD_TESTING)
+  add_executable(radar_target_filter_test tests/radar_target_filter_test.cpp radar_target_filter.cpp)
+  target_include_directories(radar_target_filter_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_options(radar_target_filter_test PRIVATE -Wall -Wextra)
+  target_link_libraries(radar_target_filter_test PRIVATE plane::common_include plane::nlohmann_json)
+  add_test(NAME radar_target_filter COMMAND radar_target_filter_test)
+endif()

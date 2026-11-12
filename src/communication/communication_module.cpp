@@ -2,9 +2,12 @@
 
 #include <spdlog/spdlog.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -24,6 +27,51 @@ constexpr std::string_view kLivelinessPrefix = "plane/liveliness/";
 
 bool is_reliable(plane::model::MessageType type) {
     return type == plane::model::MessageType::Alert || type == plane::model::MessageType::Ack;
+}
+
+template <typename T>
+struct MessageTypeOf;
+
+template <>
+struct MessageTypeOf<plane::model::Alert> {
+    static constexpr auto value = plane::model::MessageType::Alert;
+};
+
+template <>
+struct MessageTypeOf<plane::model::Ack> {
+    static constexpr auto value = plane::model::MessageType::Ack;
+};
+
+template <>
+struct MessageTypeOf<plane::model::VehicleInfo> {
+    static constexpr auto value = plane::model::MessageType::VehicleInfo;
+};
+
+template <>
+struct MessageTypeOf<plane::model::VehicleState> {
+    static constexpr auto value = plane::model::MessageType::VehicleState;
+};
+
+template <>
+struct MessageTypeOf<plane::model::TaskState> {
+    static constexpr auto value = plane::model::MessageType::TaskState;
+};
+
+bool make_message(const std::string& sender_id, const OutgoingMessage& value, plane::model::Message& out,
+                  std::string& error) {
+    static std::atomic<std::uint64_t> counter{0};
+    return std::visit(
+        [&](const auto& payload_value) -> bool {
+            std::string payload;
+            if (!to_payload(payload_value, payload, error)) {
+                return false;
+            }
+            using Payload = std::decay_t<decltype(payload_value)>;
+            out = {sender_id, sender_id + "-" + std::to_string(++counter), MessageTypeOf<Payload>::value,
+                   std::move(payload)};
+            return true;
+        },
+        value);
 }
 
 }  // namespace
@@ -274,7 +322,7 @@ void CommunicationModule::handle_envelope(const plane::model::Message& envelope)
             break;
         }
         case plane::model::MessageType::GcsTarget: {
-            plane::target::GcsTarget value;
+            plane::model::GcsTarget value;
             if (!from_payload(envelope.payload, value, error)) {
                 report_error("GcsTarget 解码失败: " + error);
                 return;

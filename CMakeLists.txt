@@ -18,12 +18,21 @@ execute_process(
 
 include(cmake/Dependencies.cmake)
 
-add_executable(plane
-  src/main.cpp
-  src/camera/camera_control_module.cpp
+add_library(plane_protocol STATIC
   src/communication/serialization.cpp
   src/communication/plane_query.cpp
   src/communication/zenoh_transport.cpp
+)
+target_include_directories(plane_protocol PUBLIC src)
+target_compile_options(plane_protocol PRIVATE -Wall -Wextra)
+target_link_libraries(plane_protocol
+  PUBLIC plane::common_include
+  PRIVATE plane::magic_enum plane::nlohmann_json spdlog::spdlog zenohc::lib zenohcxx::zenohc
+)
+
+add_executable(plane
+  src/main.cpp
+  src/camera/camera_control_module.cpp
   src/communication/communication_module.cpp
   src/core/build_info.cpp
   src/core/config.cpp
@@ -62,45 +71,29 @@ target_compile_definitions(plane PRIVATE
   PLANE_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
 )
 target_link_libraries(plane PRIVATE
-  plane::common_include
+  plane_protocol
   plane::midcourse_alg
   plane::deps
 )
 # 可执行文件直接输出到 build/plane/，该目录作为可整体拷贝的独立运行目录。
 set_target_properties(plane PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plane")
 
-add_executable(gcs_sim tools/gcs_sim/main.cpp
-  tools/gcs_sim/radar_target_filter.cpp
-  src/core/log.cpp
-  src/communication/serialization.cpp src/communication/plane_query.cpp src/communication/zenoh_transport.cpp)
-target_include_directories(gcs_sim PRIVATE src "${CMAKE_SOURCE_DIR}")
-target_compile_options(gcs_sim PRIVATE -Wall -Wextra)
-target_link_libraries(gcs_sim PRIVATE
-  plane::common_include
-  plane::nlohmann_json
-  plane::magic_enum
-  fmt::fmt
-  spdlog::spdlog
-  zenohc::lib
-  zenohcxx::zenohc
-)
-
 include(CTest)
+add_subdirectory(tools/gcs_sim)
+
 if(BUILD_TESTING)
   add_executable(vehicle_info_test tests/unit/vehicle_info_test.cpp
-    src/communication/communication_module.cpp src/communication/plane_query.cpp
-    src/communication/serialization.cpp src/communication/zenoh_transport.cpp
+    src/communication/communication_module.cpp
     src/core/config.cpp src/core/time_utils.cpp src/state/state_store.cpp)
   target_include_directories(vehicle_info_test PRIVATE src)
   target_compile_options(vehicle_info_test PRIVATE -Wall -Wextra)
-  target_link_libraries(vehicle_info_test PRIVATE plane::common_include plane::deps)
+  target_link_libraries(vehicle_info_test PRIVATE plane_protocol plane::deps)
   add_test(NAME vehicle_info COMMAND vehicle_info_test)
   set_tests_properties(vehicle_info PROPERTIES TIMEOUT 45)
 
-  add_executable(zenoh_liveliness_test tests/unit/zenoh_liveliness_test.cpp src/communication/zenoh_transport.cpp)
-  target_include_directories(zenoh_liveliness_test PRIVATE src)
+  add_executable(zenoh_liveliness_test tests/unit/zenoh_liveliness_test.cpp)
   target_compile_options(zenoh_liveliness_test PRIVATE -Wall -Wextra)
-  target_link_libraries(zenoh_liveliness_test PRIVATE spdlog::spdlog zenohc::lib zenohcxx::zenohc)
+  target_link_libraries(zenoh_liveliness_test PRIVATE plane_protocol)
   add_test(NAME zenoh_liveliness COMMAND zenoh_liveliness_test)
   set_tests_properties(zenoh_liveliness PROPERTIES TIMEOUT 45)
 
@@ -127,17 +120,9 @@ if(BUILD_TESTING)
   target_link_libraries(camera_target_test PRIVATE plane::common_include plane::eventpp spdlog::spdlog)
   add_test(NAME camera_target COMMAND camera_target_test)
 
-  add_executable(serialization_vehicle_state_test
-    tests/unit/serialization_vehicle_state_test.cpp
-    src/communication/serialization.cpp
-  )
-  target_include_directories(serialization_vehicle_state_test PRIVATE src)
+  add_executable(serialization_vehicle_state_test tests/unit/serialization_vehicle_state_test.cpp)
   target_compile_options(serialization_vehicle_state_test PRIVATE -Wall -Wextra)
-  target_link_libraries(serialization_vehicle_state_test PRIVATE
-    plane::common_include
-    plane::magic_enum
-    plane::nlohmann_json
-  )
+  target_link_libraries(serialization_vehicle_state_test PRIVATE plane_protocol)
   add_test(NAME serialization_vehicle_state COMMAND serialization_vehicle_state_test)
 
   add_executable(attitude_conversion_test
@@ -148,15 +133,6 @@ if(BUILD_TESTING)
   target_compile_options(attitude_conversion_test PRIVATE -Wall -Wextra)
   target_link_libraries(attitude_conversion_test PRIVATE plane::common_include)
   add_test(NAME attitude_conversion COMMAND attitude_conversion_test)
-
-  add_executable(radar_target_filter_test
-    tests/unit/radar_target_filter_test.cpp
-    tools/gcs_sim/radar_target_filter.cpp
-  )
-  target_include_directories(radar_target_filter_test PRIVATE src "${CMAKE_SOURCE_DIR}")
-  target_compile_options(radar_target_filter_test PRIVATE -Wall -Wextra)
-  target_link_libraries(radar_target_filter_test PRIVATE plane::common_include plane::nlohmann_json)
-  add_test(NAME radar_target_filter COMMAND radar_target_filter_test)
 
   add_executable(midcourse_controller_test
     tests/unit/midcourse_controller_test.cpp

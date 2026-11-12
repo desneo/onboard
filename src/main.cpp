@@ -15,6 +15,7 @@
 #include "core/deps_check.h"
 #include "core/event_bus.h"
 #include "core/log.h"
+#include "core/log_pattern.h"
 #include "core/runtime.h"
 #include "core/system_param_store.h"
 #include "flight_control/flight_control_events.h"

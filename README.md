@@ -296,8 +296,8 @@ GCS 预检；串口和其他 UDP 连接仍以 `CompanionComputer` 身份接入�
 `gcs_sim` 默认监听 `0.0.0.0:7790`。雷达对外只有 `type=radar_tracks`、`schema_version=1` 一种
 UDP JSON 报文，每个扫描周期对应一个完整数据报；`tracks` 可以为空，也可以同时包含 `confirmed`
 和 `coasting`。空扫描和保持航迹会被正常接收，但只有 `confirmed` 航迹参与友机过滤并发布为
-`GcsTarget`。防守飞机坐标不由 7790 提供，而是从 Zenoh `VehicleState` 获取。GCS 使用扫描时间
-外推友机位置，对 50 米内的 confirmed 雷达航迹做全局一对一匹配并过滤；友机没有出现在某次
+`GcsTarget`，载荷包含 `trackId`、`geoPos` 和 `timestamp_ms`。防守飞机坐标从 Zenoh `VehicleState`
+获取。GCS 使用扫描时间外推友机位置，对 50 米内的 confirmed 雷达航迹做全局一对一匹配并过滤；友机没有出现在某次
 雷达扫描中不会阻塞靶机，但友机状态缺失或过期时整帧暂停转发。
 
 运行时每 5 秒至多输出一次雷达接收统计，分别记录 UDP 数据报、有效 `radar_tracks` 扫描、

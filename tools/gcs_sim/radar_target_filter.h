@@ -7,7 +7,6 @@
 #include <vector>
 
 #include "message.h"
-#include "target/gcs_target.h"
 
 namespace plane::gcs_sim {
 
@@ -24,7 +23,7 @@ class RadarTargetFilter {
     bool update_friendly(const std::string& sender_id, const plane::model::VehicleState& state,
                          std::int64_t received_unix_ms, std::string& error);
     bool process_scan(const std::string& payload, std::int64_t now_unix_ms,
-                      std::vector<plane::target::GcsTarget>& out, std::string& error) const;
+                      std::vector<plane::model::GcsTarget>& out, std::string& error) const;
 
    private:
     struct FriendlySample {

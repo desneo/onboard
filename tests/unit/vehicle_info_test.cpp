@@ -190,8 +190,8 @@ int main() {
     require(observer.declare_queryable(
                 "queryToPlane/wrong/VehicleInfo",
                 [](const std::string&, std::string& wire, std::string& error) {
-                    plane::model::Message message;
-                    if (!make_message("other", plane::model::VehicleInfo{"other", "", ""}, message, error))
+                    plane::model::Message message{"other", "other-1", MessageType::VehicleInfo, {}};
+                    if (!to_payload(plane::model::VehicleInfo{"other", "", ""}, message.payload, error))
                         return false;
                     wire = encode_envelope(message);
                     return true;

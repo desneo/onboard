@@ -8,9 +8,9 @@
 #include <memory>
 #include <vector>
 
-namespace plane::core {
-void set_project_log_pattern() { spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] [%t] %s:%# %v"); }
+#include "core/log_pattern.h"
 
+namespace plane::core {
 void init_logging(const LogOptions& options) {
     std::filesystem::create_directories(options.log_dir);
 

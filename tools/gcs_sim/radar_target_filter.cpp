@@ -1,4 +1,4 @@
-#include "tools/gcs_sim/radar_target_filter.h"
+#include "radar_target_filter.h"
 
 #include <algorithm>
 #include <cmath>
@@ -127,7 +127,7 @@ bool RadarTargetFilter::update_friendly(const std::string& sender_id, const plan
 }
 
 bool RadarTargetFilter::process_scan(const std::string& payload, std::int64_t now_unix_ms,
-                                     std::vector<plane::target::GcsTarget>& out, std::string& error) const {
+                                     std::vector<plane::model::GcsTarget>& out, std::string& error) const {
     out.clear();
     nlohmann::json scan;
     try {
@@ -150,22 +150,18 @@ bool RadarTargetFilter::process_scan(const std::string& payload, std::int64_t no
             return false;
         }
 
-        std::vector<plane::target::GcsTarget> confirmed;
+        std::vector<plane::model::GcsTarget> confirmed;
         for (const auto& track : scan.at("tracks")) {
             if (!track.is_object() || track.value("state", std::string{}) != "confirmed") {
                 continue;
             }
-            plane::target::GcsTarget target;
+            plane::model::GcsTarget target;
             target.trackId = track_id_string(track.at("track_id"));
             target.timestamp_ms = timestamp_ms;
             target.geoPos.latitude = track.at("latitude").get<double>();
             target.geoPos.longitude = track.at("longitude").get<double>();
             target.geoPos.altitude = track.at("altitude_msl_m").get<float>();
-            target.geoPos.height = 0.0F;
-            target.radial_speed_m_s = track.at("radial_speed_m_s").get<float>();
-            target.azimuth_deg = track.at("azimuth_deg").get<float>();
-            if (target.trackId.empty() || !valid_geo(target.geoPos) || !std::isfinite(target.radial_speed_m_s) ||
-                !std::isfinite(target.azimuth_deg)) {
+            if (target.trackId.empty() || !valid_geo(target.geoPos)) {
                 error = "confirmed 雷达航迹包含非法必需字段";
                 return false;
             }

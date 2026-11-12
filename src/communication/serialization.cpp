@@ -1,12 +1,9 @@
 #include "communication/serialization.h"
 
-#include <atomic>
 #include <cmath>
-#include <cstdint>
 #include <magic_enum/magic_enum.hpp>
 #include <nlohmann/json.hpp>
 #include <string>
-#include <type_traits>
 #include <utility>
 
 namespace plane::communication {
@@ -51,34 +48,6 @@ bool enum_from_string(const std::string& name, Enum& out) {
     out = *value;
     return true;
 }
-
-template <typename T>
-struct MessageTypeOf;
-
-template <>
-struct MessageTypeOf<plane::model::Alert> {
-    static constexpr plane::model::MessageType value = plane::model::MessageType::Alert;
-};
-
-template <>
-struct MessageTypeOf<plane::model::Ack> {
-    static constexpr plane::model::MessageType value = plane::model::MessageType::Ack;
-};
-
-template <>
-struct MessageTypeOf<plane::model::VehicleInfo> {
-    static constexpr plane::model::MessageType value = plane::model::MessageType::VehicleInfo;
-};
-
-template <>
-struct MessageTypeOf<plane::model::VehicleState> {
-    static constexpr plane::model::MessageType value = plane::model::MessageType::VehicleState;
-};
-
-template <>
-struct MessageTypeOf<plane::model::TaskState> {
-    static constexpr plane::model::MessageType value = plane::model::MessageType::TaskState;
-};
 
 }  // namespace
 
@@ -208,29 +177,12 @@ bool from_payload(const std::string& payload, plane::model::SystemParam& out, st
     }
 }
 
-bool to_payload(const plane::target::GcsTarget& value, std::string& out, std::string& error) {
-    try {
-        out = json{{"trackId", value.trackId},
-                   {"geoPos", to_json(value.geoPos)},
-                   {"timestamp_ms", value.timestamp_ms},
-                   {"radial_speed_m_s", value.radial_speed_m_s},
-                   {"azimuth_deg", value.azimuth_deg}}
-                  .dump();
-        return true;
-    } catch (const json::exception& e) {
-        error = e.what();
-        return false;
-    }
-}
-
-bool from_payload(const std::string& payload, plane::target::GcsTarget& out, std::string& error) {
+bool from_payload(const std::string& payload, plane::model::GcsTarget& out, std::string& error) {
     try {
         const json in = json::parse(payload);
         out.trackId = in.at("trackId").get<std::string>();
         geo_point_from_json(in.at("geoPos"), out.geoPos);
-        out.timestamp_ms = in.at("timestamp_ms").get<std::int64_t>();
-        out.radial_speed_m_s = number_or_default<float>(in, "radial_speed_m_s");
-        out.azimuth_deg = number_or_default<float>(in, "azimuth_deg");
+        out.timestamp_ms = in.at("timestamp_ms").get<decltype(out.timestamp_ms)>();
         if (out.trackId.empty() || out.timestamp_ms <= 0 || !std::isfinite(out.geoPos.latitude) ||
             !std::isfinite(out.geoPos.longitude) || !std::isfinite(out.geoPos.altitude)) {
             error = "GcsTarget 缺少有效 trackId、timestamp_ms 或地理位置";
@@ -376,29 +328,6 @@ std::string message_type_to_string(plane::model::MessageType type) { return std:
 
 bool message_type_from_string(const std::string& name, plane::model::MessageType& out) {
     return enum_from_string(name, out);
-}
-
-std::string next_message_id(const std::string& sender_id) {
-    static std::atomic<std::uint64_t> counter{0};
-    return sender_id + "-" + std::to_string(++counter);
-}
-
-bool make_message(const std::string& sender_id, const OutgoingMessage& value, plane::model::Message& out,
-                  std::string& error) {
-    return std::visit(
-        [&](const auto& payload_value) -> bool {
-            using T = std::decay_t<decltype(payload_value)>;
-            std::string payload;
-            if (!to_payload(payload_value, payload, error)) {
-                return false;
-            }
-            out.senderId = sender_id;
-            out.messageId = next_message_id(sender_id);
-            out.type = MessageTypeOf<T>::value;
-            out.payload = std::move(payload);
-            return true;
-        },
-        value);
 }
 
 }  // namespace plane::communication

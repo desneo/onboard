@@ -21,7 +21,7 @@ namespace {
 constexpr std::size_t kRequiredHistorySize = 20;
 constexpr std::int64_t kProgressLogIntervalMs = 5000;
 
-double median_interval_s(const std::vector<plane::target::GcsTarget>& history) {
+double median_interval_s(const std::vector<plane::model::GcsTarget>& history) {
     std::vector<std::int64_t> intervals;
     intervals.reserve(history.size() - 1);
     for (std::size_t index = 1; index < history.size(); ++index) {
@@ -49,7 +49,7 @@ struct MidcourseController::Impl {
           state_store(state_store_value),
           target_store(target_store_value) {}
 
-    void on_target(const plane::target::GcsTarget& target) {
+    void on_target(const plane::model::GcsTarget& target) {
         std::lock_guard<std::mutex> lock(mutex);
         if (!session || locked_track_id.empty() || target.trackId != locked_track_id ||
             target.timestamp_ms <= last_measurement_timestamp_ms) {
@@ -136,12 +136,12 @@ struct MidcourseController::Impl {
                 algorithm_config.max_horizontal_speed_m_s, algorithm_config.max_climb_speed_m_s,
                 algorithm_config.max_descent_speed_m_s, algorithm_config.cmd_accel_max_m_s2);
         }
-        const std::vector<plane::target::GcsTarget> history = target_store.gcs_target_history(locked_track_id);
+        const std::vector<plane::model::GcsTarget> history = target_store.gcs_target_history(locked_track_id);
         if (history.size() < kRequiredHistorySize) {
             return false;
         }
         const auto first = history.end() - static_cast<std::ptrdiff_t>(kRequiredHistorySize);
-        std::vector<plane::target::GcsTarget> init_history(first, history.end());
+        std::vector<plane::model::GcsTarget> init_history(first, history.end());
         for (std::size_t index = 1; index < init_history.size(); ++index) {
             if (init_history[index].timestamp_ms <= init_history[index - 1].timestamp_ms) {
                 error = "中制导初始化历史时间戳未严格递增";
@@ -186,7 +186,7 @@ struct MidcourseController::Impl {
     std::int64_t start_ms = 0;
     std::int64_t last_progress_log_ms = 0;
     std::int64_t last_measurement_timestamp_ms = 0;
-    std::vector<plane::target::GcsTarget> pending_targets;
+    std::vector<plane::model::GcsTarget> pending_targets;
     std::optional<AlgorithmSession> session;
 };
 
@@ -203,9 +203,9 @@ void MidcourseController::start() {
     if (impl_->subscribed) {
         return;
     }
-    impl_->event_bus.subscribe<plane::target::GcsTarget>(
+    impl_->event_bus.subscribe<plane::model::GcsTarget>(
         plane::communication::events::kGcsTargetReceived,
-        [impl = impl_.get()](const plane::target::GcsTarget& target) { impl->on_target(target); });
+        [impl = impl_.get()](const plane::model::GcsTarget& target) { impl->on_target(target); });
     impl_->subscribed = true;
 }
 
