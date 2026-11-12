@@ -64,17 +64,23 @@ int main() {
         file
             << R"({"mode":"peer","scouting":{"multicast":{"enabled":false},"gossip":{"enabled":false}},"listen":{"endpoints":[]}})";
     }
-    std::string config_path = std::string(path) + "/plane.conf";
+    const std::string config_path = std::string(path) + "/plane.ini";
+    const std::string profile_path = std::string(path) + "/profile.ini";
     {
         std::ofstream file(config_path);
-        file << "[system]\nboard_ip = 192.168.1.100\n[camera]\npod_video_url = rtsp://pod/live?a=1&b=2\n"
-             << "[flight_control]\nlink_type = udp\nudp_url = udpout://127.0.0.1:14580\n";
+        file << "[deployment]\nprofile = " << profile_path << '\n';
+    }
+    {
+        std::ofstream file(profile_path);
+        file << "[metadata-test]\nboard_ip = 192.168.1.100\npod_video_url = rtsp://pod/live?a=1&b=2\n"
+             << "fc_url = udpout://127.0.0.1:14580\n";
     }
     plane::core::AppConfig config;
-    require(plane::core::load_config(config_path, config), "load config failed");
-    require(config.board_ip == "192.168.1.100" && config.pod_video_url == "rtsp://pod/live?a=1&b=2" && config.is_sim,
+    const std::vector<std::string> local_addresses{"192.168.1.100"};
+    require(plane::core::load_config(config_path, config, &local_addresses), "load config failed");
+    require(config.plane_id == "metadata-test" && config.board_ip == "192.168.1.100" &&
+                config.pod_video_url == "rtsp://pod/live?a=1&b=2" && config.is_sim,
             "metadata config mismatch");
-    config.plane_id = "metadata-test";
     config.state_report_period_ms = 100;
     config.zenoh_config_file = zenoh_config;
 

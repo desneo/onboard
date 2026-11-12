@@ -12,7 +12,7 @@ if [ ! -x "${PLANE_DIR}/plane" ]; then
   exit 1
 fi
 
-mkdir -p "${PLANE_DIR}/config" "${PLANE_DIR}/lib"
+mkdir -p "${PLANE_DIR}/config/profiles" "${PLANE_DIR}/lib"
 
 # 部署说明：随独立运行目录分发，部署端无需依赖源码树即可完成配置和启停。
 install -m 0644 "${ROOT}/README.md" "${PLANE_DIR}/README.md"
@@ -26,8 +26,10 @@ done
 rm -rf -- "${PLANE_DIR}/plugins" "${PLANE_DIR}/models" "${PLANE_DIR}/configs" "${PLANE_DIR}/rknn"
 
 # 配置文件：每次从工程生成。
-install -m 0644 "${ROOT}/config/plane.conf" "${PLANE_DIR}/config/plane.conf"
+install -m 0644 "${ROOT}/config/plane.ini" "${PLANE_DIR}/config/plane.ini"
+rm -f -- "${PLANE_DIR}/config/plane.conf"
 install -m 0644 "${ROOT}/config/zenoh.json5" "${PLANE_DIR}/config/zenoh.json5"
+install -m 0644 "${ROOT}/config/profiles/"*.ini "${PLANE_DIR}/config/profiles/"
 
 # 先快照依赖解析结果，再清除旧包残留。主程序打包后使用 $ORIGIN/lib；如果先清理，
 # 增量打包时会暂时丢失原包中的私有库路径，导致无法重新收集。

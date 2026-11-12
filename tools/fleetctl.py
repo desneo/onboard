@@ -8,6 +8,7 @@ import configparser
 import dataclasses
 import datetime as dt
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -25,7 +26,11 @@ from zoneinfo import ZoneInfo
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CONFIG = ROOT / "config" / "fleet.ini"
+DEFAULT_CONFIG = ROOT / "tests" / "fleet.ini"
+PLANE_CONFIG = "config/plane.ini"
+LEGACY_PLANE_CONFIG = "config/plane.conf"
+PROFILE_DIR = "config/profiles"
+SITL_REMOTE_PORT_RANGES = ((14280, 14289), (14580, 14589))
 PEER_LINK_RE = re.compile(r"他机(上线|下线):\s*([^\s]+)")
 LOG_TIME_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\]")
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -336,7 +341,7 @@ def selected_planes(config: FleetConfig, count: int) -> tuple[Plane, ...]:
     if count > len(config.planes):
         declared = ", ".join(f"{plane.plane_id}({plane.host})" for plane in config.planes)
         raise FleetError(
-            f"环境不满足：请求 {count} 架飞机，但 config/fleet.ini 仅声明 {len(config.planes)} 块机载板。\n"
+            f"环境不满足：请求 {count} 架飞机，但所选测试清单仅声明 {len(config.planes)} 块机载板。\n"
             f"已声明: {declared}\n本次不会启动 SITL 或机载程序。"
         )
     return config.planes[:count]
@@ -349,7 +354,8 @@ def require_local_commands(commands: Iterable[str]) -> None:
 
 
 def bundle_problems(bundle: Path) -> list[str]:
-    required_files = ["plane", "runplane.sh", "stopplane.sh", "config/plane.conf"]
+    required_files = ["plane", "runplane.sh", "stopplane.sh", PLANE_CONFIG]
+    required_files.extend(f"{PROFILE_DIR}/{path.name}" for path in sorted((ROOT / PROFILE_DIR).glob("*.ini")))
     required_dirs = ["lib"]
     problems = [name for name in required_files if not (bundle / name).is_file()]
     problems.extend(name + "/" for name in required_dirs if not (bundle / name).is_dir())
@@ -549,6 +555,15 @@ def endpoint_port(uri: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def sitl_remote_port(uri: str) -> int | None:
+    if not uri.startswith(("udp://", "udpout://")):
+        return None
+    port = endpoint_port(uri)
+    if port is not None and any(first <= port <= last for first, last in SITL_REMOTE_PORT_RANGES):
+        return port
+    return None
+
+
 def validate_flight_listeners(base_port: int, count: int, socket_text: str) -> tuple[int, ...]:
     if base_port <= 0 or base_port + count - 1 > 65535:
         raise FleetError(f"非法飞控端口范围: {base_port}～{base_port + count - 1}")
@@ -655,6 +670,8 @@ def set_ini_value(text: str, section: str, key: str, value: str) -> str:
         if key_re.match(lines[index]):
             lines[index] = replacement
             return "".join(lines)
+    if not lines[end - 1].endswith("\n"):
+        lines[end - 1] += "\n"
     lines.insert(end, replacement)
     return "".join(lines)
 
@@ -677,6 +694,7 @@ def configure_plane(base: str, plane: Plane, flight_url: str) -> str:
             lines.append(line)
     result = "".join(lines)
     updates = [
+        ("deployment", "profile", ""),
         ("system", "log_dir", "logs"),
         ("system", "board_ip", plane.host),
         ("communication", "plane_id", plane.plane_id),
@@ -691,14 +709,137 @@ def configure_plane(base: str, plane: Plane, flight_url: str) -> str:
     return result
 
 
-def remote_config_or_default(
-    plane: Plane, remote: RemoteExecutor, default_config: Path
-) -> str:
-    path = f"{plane.runtime_dir}/config/plane.conf"
-    result = remote.run(plane, f"test -f {shlex.quote(path)} && cat {shlex.quote(path)} || true", check=False)
-    if result.returncode == 0 and result.stdout.strip():
-        return result.stdout
-    return default_config.read_text(encoding="utf-8")
+def remote_ipv4_addresses(plane: Plane, remote: RemoteExecutor) -> set[str]:
+    result = remote.run(plane, "ip -j -4 address show up")
+    try:
+        interfaces = json.loads(result.stdout)
+        return {
+            address["local"]
+            for interface in interfaces
+            if "UP" in interface["flags"] and "LOOPBACK" not in interface["flags"]
+            for address in interface.get("addr_info", ())
+            if address["family"] == "inet"
+        }
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise FleetError(f"{plane.plane_id} 无法解析本机 IPv4 地址") from exc
+
+
+def deployment_settings(
+    path: str, text: str, local_addresses: set[str], *, allow_unmatched: bool
+) -> list[tuple[str, str, str]]:
+    parser = configparser.ConfigParser(interpolation=None, delimiters=("=",), default_section="")
+    parser.optionxform = str
+    parser.SECTCRE = re.compile(r"\[(?P<header>[^\[\]]+)\]$")
+    parser.read_string("\n".join(line.strip() for line in text.splitlines()), source=path)
+    selected = None
+    plane_ids = set()
+    board_ips = set()
+    for section in parser.sections():
+        plane_id = section.strip()
+        if not plane_id or re.search(r"[/\*?#$\s]", plane_id) or plane_id in plane_ids:
+            raise FleetError(f"部署预置 {path} 的飞机 ID 无效或重复: [{section}]")
+        plane_ids.add(plane_id)
+        entry = parser[section]
+        try:
+            board_ip = str(ipaddress.IPv4Address(entry.get("board_ip", "")))
+        except ipaddress.AddressValueError as exc:
+            raise FleetError(f"部署预置 {path} 的 [{plane_id}] 缺少有效 board_ip") from exc
+        if board_ip in board_ips:
+            raise FleetError(f"部署预置 {path} 的 board_ip 重复: {board_ip}")
+        board_ips.add(board_ip)
+        fc_url = entry.get("fc_url", "")
+        scheme, _, address = fc_url.partition("://")
+        host_or_device, separator, port_or_baud = address.rpartition(":")
+        if not separator or re.search(r"\s", fc_url) or not re.fullmatch(r"[0-9]+", port_or_baud):
+            raise FleetError(f"部署预置 {path} 的 [{plane_id}] 缺少有效 fc_url")
+        digits = port_or_baud.lstrip("0")
+        number = int(digits) if 0 < len(digits) <= 10 else 0
+        if scheme == "serial" and host_or_device.startswith("/") and 0 < number <= 2**31 - 1:
+            flight_settings = [
+                ("flight_control", "link_type", "serial"),
+                ("flight_control", "serial_device", host_or_device),
+                ("flight_control", "serial_baud", str(number)),
+            ]
+        elif (
+            scheme in {"udp", "udpin", "udpout"}
+            and (scheme != "udpout" or host_or_device)
+            and not any(character in host_or_device for character in "/\\?#@")
+            and 0 < number <= 65535
+        ):
+            flight_settings = [
+                ("flight_control", "link_type", "udp"),
+                ("flight_control", "udp_url", fc_url),
+            ]
+        else:
+            raise FleetError(f"部署预置 {path} 的 [{plane_id}] 缺少有效 fc_url")
+        if board_ip not in local_addresses:
+            continue
+        if selected is not None:
+            raise FleetError(f"部署预置 {path} 中有多个飞机 ID 匹配本机 IPv4")
+        selected = [
+            ("communication", "plane_id", plane_id),
+            ("system", "board_ip", board_ip),
+            *flight_settings,
+            *(("camera", key, entry.get(key, "")) for key in ("pod_model", "pod_video_url", "pod_control_url")),
+        ]
+    if selected is None and not allow_unmatched:
+        raise FleetError(f"部署预置 {path} 未匹配本机 IPv4")
+    return selected or []
+
+
+def read_plane_config(
+    plane: Plane, remote: RemoteExecutor, bundle: Path
+) -> tuple[str | None, str]:
+    """读取现场原始配置，将有效预置展开为测试使用的逐机直配。"""
+    paths = " ".join(shlex.quote(f"{plane.runtime_dir}/{name}") for name in (PLANE_CONFIG, LEGACY_PLANE_CONFIG))
+    result = remote.run(
+        plane,
+        f'for path in {paths}; do if [ -e "$path" ] || [ -L "$path" ]; then cat -- "$path"; exit $?; fi; done; exit 44',
+        check=False,
+    )
+    if result.returncode not in (0, 44):
+        raise FleetError(f"{plane.plane_id} 无法读取板端配置: {sanitize_output(result.stdout).strip()}")
+    original = result.stdout if result.returncode == 0 else None
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        base = original if original is not None else (bundle / PLANE_CONFIG).read_text(encoding="utf-8")
+        parser.read_string(base, source=PLANE_CONFIG)
+        profile = parser.get("deployment", "profile", fallback="")
+        if not profile:
+            return original, base
+        if original is None:
+            profile_path = bundle / profile
+            profile_text = profile_path.read_text(encoding="utf-8")
+            addresses = {plane.host}
+        else:
+            profile_path = Path(plane.runtime_dir) / profile
+            profile_text = remote.run(plane, f"cat -- {shlex.quote(str(profile_path))}").stdout
+            addresses = remote_ipv4_addresses(plane, remote)
+        settings = deployment_settings(str(profile_path), profile_text, addresses, allow_unmatched=original is None)
+    except (configparser.Error, OSError, UnicodeError) as exc:
+        raise FleetError(f"{plane.plane_id} 读取运行配置失败: {exc}") from exc
+    for section, key, value in settings:
+        base = set_ini_value(base, section, key, value)
+    return original, set_ini_value(base, "deployment", "profile", "")
+
+
+def upload_plane_bundle(plane: Plane, bundle: Path, remote: RemoteExecutor) -> None:
+    runtime = plane.runtime_dir.rstrip("/") + "/"
+    remote.rsync_to(
+        plane,
+        str(bundle) + "/",
+        runtime,
+        extra=(
+            "--delete",
+            "--exclude=/logs/",
+            f"--exclude=/{PLANE_CONFIG}",
+            f"--exclude=/{LEGACY_PLANE_CONFIG}",
+            f"--exclude=/{PLANE_CONFIG}.fleet-backup-*",
+            f"--exclude=/{LEGACY_PLANE_CONFIG}.fleet-backup-*",
+            f"--exclude=/{PROFILE_DIR}/",
+        ),
+    )
+    remote.rsync_to(plane, str(bundle / PROFILE_DIR) + "/", runtime + PROFILE_DIR + "/", extra=("--ignore-existing",))
 
 
 def sync_plane(
@@ -708,32 +849,25 @@ def sync_plane(
     run_id: str,
     remote: RemoteExecutor,
     run_dir: Path,
+    base: str,
 ) -> None:
     runtime = shlex.quote(plane.runtime_dir)
-    config_path = f"{plane.runtime_dir}/config/plane.conf"
-    base = remote_config_or_default(plane, remote, bundle / "config" / "plane.conf")
+    config_path = f"{plane.runtime_dir}/{PLANE_CONFIG}"
+    legacy_path = shlex.quote(f"{plane.runtime_dir}/{LEGACY_PLANE_CONFIG}")
+    config_backup = shlex.quote(config_path + ".fleet-backup-" + run_id)
     rendered = configure_plane(base, plane, flight_url)
-    local_config = run_dir / f"{plane.plane_id}.plane.conf"
+    local_config = run_dir / f"{plane.plane_id}.plane.ini"
     local_config.write_text(rendered, encoding="utf-8")
 
     prepare = (
         f"mkdir -p {runtime}/config {runtime}/logs && "
         f"if [ -f {shlex.quote(config_path)} ]; then "
-        f"cp -a {shlex.quote(config_path)} {shlex.quote(config_path + '.fleet-backup-' + run_id)}; fi"
+        f"cp -a {shlex.quote(config_path)} {config_backup}; "
+        f"elif [ -f {legacy_path} ]; then cp -a {legacy_path} {config_backup}; fi"
     )
     remote.run(plane, prepare)
     print(f"[sync] {plane.plane_id} -> {plane.host}:{plane.runtime_dir}")
-    remote.rsync_to(
-        plane,
-        str(bundle) + "/",
-        plane.runtime_dir.rstrip("/") + "/",
-        extra=(
-            "--delete",
-            "--exclude=/logs/",
-            "--exclude=/config/plane.conf",
-            "--exclude=/config/plane.conf.fleet-backup-*",
-        ),
-    )
+    upload_plane_bundle(plane, bundle, remote)
     remote.rsync_to(plane, local_config, config_path)
 
 
@@ -947,10 +1081,11 @@ def render_presence_config(base: str, template_text: str, plane: Plane, simulato
     udp_url = current.get(
         "flight_control", "udp_url", fallback=template.get("flight_control", "udp_url", fallback="")
     )
-    port = endpoint_port(udp_url)
-    if simulator_host and link_type == "udp" and port is not None and 14580 <= port <= 14589:
+    port = sitl_remote_port(udp_url)
+    if simulator_host and link_type == "udp" and port is not None:
         result = set_ini_value(result, "flight_control", "udp_url", f"udpout://{simulator_host}:{port}")
-    return set_ini_value(result, "communication", "plane_id", plane.plane_id)
+    result = set_ini_value(result, "communication", "plane_id", plane.plane_id)
+    return set_ini_value(result, "deployment", "profile", "")
 
 
 def presence_event_counts(text: str, peer_id: str) -> tuple[int, int]:
@@ -1057,13 +1192,14 @@ def command_test_presence(args: argparse.Namespace, config: FleetConfig, remote:
     try:
         preflight(config, planes, remote, include_simulator=False)
         bundle = ensure_bundle()
-        template = (bundle / "config/plane.conf").read_text(encoding="utf-8")
+        template = (bundle / PLANE_CONFIG).read_text(encoding="utf-8")
         rendered = {}
         for plane in planes:
-            existing = remote.run(plane, f"cat {shlex.quote(plane.runtime_dir + '/config/plane.conf')}").stdout
-            (run_dir / f"{plane.plane_id}.previous.conf").write_text(existing, encoding="utf-8")
-            local_config = run_dir / f"{plane.plane_id}.plane.conf"
-            text = render_presence_config(existing, template, plane, config.simulator.host)
+            original, effective = read_plane_config(plane, remote, bundle)
+            if original is not None:
+                (run_dir / f"{plane.plane_id}.previous.ini").write_text(original, encoding="utf-8")
+            local_config = run_dir / f"{plane.plane_id}.plane.ini"
+            text = render_presence_config(effective, template, plane, config.simulator.host)
             if args.auto_discovery:
                 text = set_ini_value(text, "communication", "zenoh_config_file", "config/zenoh.json5")
                 text = set_ini_value(text, "communication", "zenoh_connect", "")
@@ -1078,9 +1214,8 @@ def command_test_presence(args: argparse.Namespace, config: FleetConfig, remote:
         stop_planes(planes, remote)
         expected_sha = hashlib.sha256((bundle / "plane").read_bytes()).hexdigest()
         for plane in planes:
-            remote.rsync_to(plane, str(bundle) + "/", plane.runtime_dir + "/",
-                            extra=("--delete", "--exclude=/logs/", "--exclude=/config/plane.conf"))
-            remote.rsync_to(plane, rendered[plane.plane_id], plane.runtime_dir + "/config/plane.conf")
+            upload_plane_bundle(plane, bundle, remote)
+            remote.rsync_to(plane, rendered[plane.plane_id], f"{plane.runtime_dir}/{PLANE_CONFIG}")
             check_remote_dependencies(plane, remote)
             deps = remote.run(plane, f"cd {shlex.quote(plane.runtime_dir)} && sha256sum plane && ./plane --deps-check")
             (run_dir / f"{plane.plane_id}.deps.log").write_text(deps.stdout, encoding="utf-8")
@@ -1204,11 +1339,12 @@ def command_test_agent_info(args: argparse.Namespace, config: FleetConfig, remot
         return text
 
     try:
-        existing = remote.run(plane, f"cat {runtime}/config/plane.conf").stdout
-        (run_dir / "previous.conf").write_text(existing, encoding="utf-8")
-        template = (bundle / "config/plane.conf").read_text(encoding="utf-8")
-        rendered = render_presence_config(existing, template, plane, config.simulator.host)
-        local_config = run_dir / "plane.conf"
+        original, effective = read_plane_config(plane, remote, bundle)
+        if original is not None:
+            (run_dir / "previous.ini").write_text(original, encoding="utf-8")
+        template = (bundle / PLANE_CONFIG).read_text(encoding="utf-8")
+        rendered = render_presence_config(effective, template, plane, config.simulator.host)
+        local_config = run_dir / "plane.ini"
         local_config.write_text(rendered, encoding="utf-8")
         parser = configparser.ConfigParser(interpolation=None)
         parser.read_string(rendered)
@@ -1233,9 +1369,8 @@ def command_test_agent_info(args: argparse.Namespace, config: FleetConfig, remot
         report["backup"] = backup
         save()
         stop_planes(planes, remote)
-        remote.rsync_to(plane, str(bundle) + "/", plane.runtime_dir + "/",
-                        extra=("--delete", "--exclude=/logs/", "--exclude=/config/plane.conf"))
-        remote.rsync_to(plane, local_config, plane.runtime_dir + "/config/plane.conf")
+        upload_plane_bundle(plane, bundle, remote)
+        remote.rsync_to(plane, local_config, f"{plane.runtime_dir}/{PLANE_CONFIG}")
         remote.run(plane, f"mkdir -p {shlex.quote(test_dir)}")
         remote.rsync_to(plane, gcs_binary, test_dir + "/gcs_sim")
         check_remote_dependencies(plane, remote)
@@ -1370,15 +1505,15 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
 
         simulator_port = config.simulator.flight_port_base
         if simulator_port is None:
-            raise FleetError("fleet.ini 未配置 simulator.flight_port_base，无法确定手动 SITL 的飞控端口")
-        config_text = remote_config_or_default(plane, remote, bundle / "config" / "plane.conf")
+            raise FleetError("测试清单未配置 simulator.flight_port_base，无法确定手动 SITL 的飞控端口")
+        original, config_text = read_plane_config(plane, remote, bundle)
         deployed_config = configparser.ConfigParser(interpolation=None)
         deployed_config.read_string(config_text)
-        configured_port = endpoint_port(deployed_config.get("flight_control", "udp_url", fallback=""))
+        configured_port = sitl_remote_port(deployed_config.get("flight_control", "udp_url", fallback=""))
         if (
-            deployed_config.get("flight_control", "link_type", fallback="udp") == "udp"
+            original is not None
+            and deployed_config.get("flight_control", "link_type", fallback="udp") == "udp"
             and configured_port is not None
-            and 14580 <= configured_port <= 14589
         ):
             simulator_port = configured_port
         flight_endpoint = f"udpout://{config.simulator.host}:{simulator_port}"
@@ -1393,7 +1528,7 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
         report["flight_endpoint"] = flight_endpoint
         report["control_output_mode"] = mode
         stop_planes(planes, remote)
-        sync_plane(plane, bundle, flight_endpoint, run_id, remote, run_dir)
+        sync_plane(plane, bundle, flight_endpoint, run_id, remote, run_dir, config_text)
         check_remote_dependencies(plane, remote)
         remote.run(plane, f"mkdir -p {shlex.quote(test_dir)}")
         remote.rsync_to(plane, gcs_binary, test_dir + "/gcs_sim")
@@ -1574,13 +1709,14 @@ def command_test(args: argparse.Namespace, config: FleetConfig, remote: RemoteEx
     print(f"[run] run_id={run_id}, 证据目录={run_dir}")
     preflight(config, planes, remote)
     bundle = ensure_bundle()
+    configurations = [read_plane_config(plane, remote, bundle)[1] for plane in planes]
     stop_planes(planes, remote)
     for plane in planes:
         install_system_dependencies(config, plane, remote)
     stop_simulator(config, remote)
     endpoints = start_simulator(config, len(planes), remote, run_dir)
-    for index, plane in enumerate(planes):
-        sync_plane(plane, bundle, endpoints.flight_urls[index], run_id, remote, run_dir)
+    for plane, flight_url, base in zip(planes, endpoints.flight_urls, configurations):
+        sync_plane(plane, bundle, flight_url, run_id, remote, run_dir, base)
         check_remote_dependencies(plane, remote)
     for plane in planes:
         start_plane(plane, remote)
@@ -1643,7 +1779,7 @@ def command_verify(args: argparse.Namespace, config: FleetConfig, remote: Remote
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="环境清单（默认 config/fleet.ini）")
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="测试环境清单（默认 tests/fleet.ini）")
     subparsers = parser.add_subparsers(dest="command", required=True)
     for name, help_text in (
         ("preflight", "只执行环境和连接预检"),

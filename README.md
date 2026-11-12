@@ -61,8 +61,9 @@
 
 ```text
 src/                  机载程序源码
-config/plane.conf     默认运行配置
-tests/                契约测试、集成测试及测试配置
+config/plane.ini      默认运行配置
+config/profiles/      机群部署预置
+tests/                测试代码及环境清单
 scripts/              源码树中的程序启停脚本
 tools/                打包和辅助程序
 cmake/                CMake 依赖配置
@@ -114,12 +115,13 @@ cd /path/to/plane
 
 # 确认目标机架构正确、关键文件齐全，并检查随包动态库解析。
 uname -m
-test -x plane && test -f config/plane.conf && test -d lib
+test -x plane && test -f config/plane.ini && test -d lib
 ! ldd ./plane | grep 'not found'
 ./plane --deps-check
 ```
 
-部署前按现场环境修改 `config/plane.conf`，至少确认 `[flight_control]` 中的连接类型及对应 UDP 或串口参数和 Zenoh 端点。图像相关配置已删除。
+部署前在 `config/plane.ini` 选择现场预置并确认 Zenoh 端点。将同一份运行目录复制到机群的每块板卡。
+升级已有单机部署时，先备份 `config/plane.conf`，再将现场参数迁入 `config/plane.ini` 并清空 `[deployment]` 的 `profile`。
 
 本版本启动脚本不检查 RKNN 模型，也不修改图像尺寸配置。交互式启动：
 
@@ -191,11 +193,38 @@ cd build/plane
 ./plane --deps-check
 ```
 
-程序从当前工作目录读取 `config/plane.conf`，因此直接运行时应位于独立运行目录。
+程序从当前工作目录读取 `config/plane.ini`，因此直接运行时应位于独立运行目录。
 
 ## 配置说明
 
-默认配置为 [`config/plane.conf`](config/plane.conf)，采用带 section 的 INI 格式。配置项必须按模块放在 `[section]` 下，使用 `key = value`。
+配置项按模块放在 `[section]` 下，采用 `key = value` 格式。默认配置见 [`config/plane.ini`](config/plane.ini)。
+
+### 机群部署预置
+
+在 `config/plane.ini` 中设置 `[deployment]` 的 `profile`，相对路径以运行目录为基准。默认使用捷联 A2416A 仿真预置。
+
+```ini
+[deployment]
+profile = config/profiles/sitl_jielian_a2416a.ini
+```
+
+预置中每个节名是飞机 ID，`board_ip` 和 `fc_url` 必填。UDP 飞控可填写 `udpout://192.168.1.56:14280`，串口可填写 `serial:///dev/ttyS0:57600`。以下为默认预置中的一号机。
+
+```ini
+[uav1]
+board_ip = 192.168.1.100
+fc_url = udpout://192.168.1.56:14280
+pod_model = jielian_a2416a
+pod_video_url = rtsp://192.168.1.56:8554/jielian_a2416a
+pod_control_url = udp://192.168.1.56:8001
+```
+
+启动时，程序用已启用的非回环网卡 IPv4 地址匹配 `board_ip`。预置须有唯一匹配，飞机 ID 和板卡 IP 在文件内也须唯一。配置无法读取、必填项无效或匹配失败时，程序退出并记录原因。
+命中的节提供本机身份、飞控连接和吊舱配置，`pod_video_url` 随 `AgentInfo` 上报。
+`pod_model`、`pod_video_url` 和 `pod_control_url` 均可留空。
+
+随包预置文件按 `sitl_<pod_model>.ini` 命名，可选 `jielian_a2416a`、`two_axis`、`aisheng_asd2` 和 `zhongke_d80`。
+部署客户机群时，将对应 INI 放入运行目录的 `config/profiles/` 并修改 `profile`。单机直配时清空 `profile`，在主配置中填写板卡 IP、飞机 ID、飞控连接和吊舱配置。
 
 ### 系统与通信
 
@@ -204,6 +233,7 @@ cd build/plane
 | `system.safe_height_m` | 未指定起飞高度时使用的安全高度 |
 | `system.log_dir` | 日志目录 |
 | `system.board_ip` | `AgentInfo.boardIp`，fleet 部署在未配置时填入板卡 IP |
+| `camera.pod_model` / `pod_control_url` | 单机直配的吊舱型号和控制地址 |
 | `camera.pod_video_url` | `AgentInfo.videoUrl`，未配置时为空 |
 | `system.state_report_period_ms` | 状态上报周期 |
 | `communication.plane_id` | 本机标识 |
@@ -218,7 +248,7 @@ cd build/plane
 `config/zenoh.json5` 将 `transport/unicast/open_timeout` 设为 `2000` 毫秒，限制每次主动建链的等待时间；
 连接失败后仍按默认策略重试。该值不修改已建立连接的在线判定或业务消息确认超时。
 从运行目录根部启动时加载此文件；清空 `zenoh_config_file` 则使用 Zenoh 库的默认配置。
-SITL 测试统一使用 `config/fleet.ini` 的 `simulator.host`（当前为 `192.168.1.56`）；
+SITL 测试统一使用 `tests/fleet.ini` 的 `simulator.host`（当前为 `192.168.1.56`）。
 测试部署会校正板端旧的 SITL IP，保留现有 `14580`～`14589` 的 UDP 端口，并验证实际飞控连接和遥测。
 
 ### 飞控与任务

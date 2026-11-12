@@ -16,29 +16,27 @@
 ## 2. 基准环境
 
 ### 2.1 平台与设备
-#### px4 sitl环境
-1）192.168.1.56 zsh/1，登录后到 `/home/zsh/code/PX4-Autopilot/scenarios/02_rocket_two_axis_pod` 执行
-    先停止，再启动全新的环境
-    ./start.sh 脚本启动测试仿真环境，默认3架， -n 参数用于指定启动的飞机架次；
-    ./stop.sh停止仿真环境
-2）start脚本执行后会输出几架飞机使用的飞机url、吊舱视频流和吊舱控制端口，从中解析出信息来修改飞机中对应的配置文件
-3）SITL 测试统一使用 `config/fleet.ini` 的 `simulator.host`（当前为 `192.168.1.56`），不得沿用板端旧 IP。
-    对现有 `14580`～`14589` 的 SITL UDP 连接保留端口并校正主机，启动后验证实际飞控连接和遥测。
+
+#### PX4 SITL 环境
+
+SITL 测试使用 `tests/fleet.ini` 的 `simulator.host`（当前为 `192.168.1.56`）和 `simulator.scenario_dir`。
+场景的 `start.sh` 以 `-n` 指定飞机数量，并输出逐机飞控、吊舱视频流和控制端口。对现有
+`14580`～`14589` 的 SITL UDP 连接保留端口并校正主机，启动后验证实际飞控连接和遥测。
 
 #### 测试环境
 1）每架机载对应一块板子
 2）4架飞机分别是 `192.168.1.100`、`192.168.1.101`、`192.168.1.102`、`192.168.1.103`，均使用 `firefly/firefly`
-3）机器可读清单以 `config/fleet.ini` 为准。请求飞机数超过其中声明的板卡数时，必须在启动任何程序前报告环境不足。
+3）机器可读清单以 `tests/fleet.ini` 为准。请求飞机数超过其中声明的板卡数时，必须在启动任何程序前报告环境不足。
 
 #### 多机自动化
 
 执行约束：
 
 - 用户要求启动或验证多架飞机时，必须使用 `python3 tools/fleetctl.py`，不得临时拼接远端命令绕过预检。
-- 环境清单以 `config/fleet.ini` 为准，不得扫描或猜测未声明的板卡。
+- `fleetctl.py` 默认读取 `tests/fleet.ini`，可通过全局选项 `--config <路径>` 指定清单。只使用清单声明的板卡。
 - 请求数量超过清单声明数量时，只报告环境不足，不启动部分 SITL 或机载程序。
-- 板端架构或 Ubuntu 版本与 `fleet.ini` 不一致时，必须在修改远端环境前终止，不得跨发行版混装 APT 依赖。
-- 飞控端口使用 `fleet.ini` 声明的 API/Offboard 端口基准，并在每次启动后验证对应 UDP 端口均已实际监听。所有端点都必须通过数量和唯一性校验，不得使用未经验证的猜测值。
+- 板端架构或 Ubuntu 版本与清单不一致时，必须在修改远端环境前终止，不得跨发行版混装 APT 依赖。
+- 飞控端口使用清单声明的 API/Offboard 端口基准，并在每次启动后验证对应 UDP 端口均已实际监听。所有端点都必须通过数量和唯一性校验。
 
 只做连接和环境预检：
 
@@ -61,6 +59,10 @@ python3 tools/fleetctl.py test-presence --count 2
 需要清空双机已有固定连接地址并使用随包的 2 秒建链超时配置时，增加 `--auto-discovery`；
 SITL UDP 端口仍保留板端现有值，主机统一使用 `192.168.1.56`。
 
+该命令预检和操作清单中的前两块板卡，备份旧程序及配置，验证双向正常退出、恢复上线，
+再终止二号机进程以验证异常退出及恢复。初始和结束各观察 10 秒，检查重复上下线和位置更新日志。
+报告及各阶段原始日志保存在 `logs/fleet/<run_id>/`，成功后双机保持运行。
+
 用户手动启动 `192.168.1.56:14580` 的 PX4 SITL 后，部署一号机并验证中制导：
 
 ```bash
@@ -72,10 +74,6 @@ python3 tools/fleetctl.py test-midcourse --count 1 --target-track-id <track_id>
 Zenoh 获取，雷达帧无需包含防守机航迹。空扫描和 `coasting` 航迹会被合法接收但不发布为
 `GcsTarget`；测试所需的 20+1 帧必须包含指定 `track_id` 的 `confirmed` 航迹。运行日志中的
 雷达接收统计用于区分 UDP 未到达、合法但无靶机输出的扫描和已发布靶机。
-
-该命令只预检和操作清单中的前两块板卡，备份旧程序及配置，验证双向正常退出、恢复上线，
-再终止二号机进程以验证异常退出及恢复。初始和结束各观察 10 秒，检查重复上下线和位置更新日志。
-报告及各阶段原始日志保存在 `logs/fleet/<run_id>/`，成功后双机保持运行。
 
 如果部署已启动但监控会话中断，可复核并重写该次报告，不重启现场：
 
@@ -91,10 +89,12 @@ python3 tools/fleetctl.py down --count 2
 
 `test` 使用完整的 `build/plane`；包不完整时才调用 CMake 编译。脚本先停止旧机载进程，随后按以下顺序准备板端环境：
 
-1. 校验板端架构与 Ubuntu 版本，再把 `config/fleet.ini` 中的代理写入板端 `/etc/apt/apt.conf.d/99zz-fleet-proxy`；
-2. 按清单补装核心运行依赖，不安装图像处理或媒体库；
-3. 重启 SITL，解析飞控地址；本版本不安装 RKNN 库或启动图像链路；
+1. 校验板端架构与 Ubuntu 版本，再把清单中的代理写入板端 `/etc/apt/apt.conf.d/99zz-fleet-proxy`。
+2. 按清单补装核心运行依赖。
+3. 重启 SITL，解析飞控地址。
 4. 同步到 `/home/firefly/plane`，生成逐机配置，启动并持续分析日志。
+
+工具读取板端 `config/plane.ini`，首次升级可读取旧 `config/plane.conf` 迁移现场参数。需要注入逐机端点的测试先读取现场有效配置，再将生成的 `plane.ini` 的 `profile` 留空。
 
 Zenoh 使用默认发现，不依赖 GCS 地址。测试证据写入 `logs/fleet/<run_id>/`；验证通过后环境保持运行，以便继续检查，失败时也保留现场并提示使用 `down` 停止。
 
@@ -104,8 +104,7 @@ Zenoh 使用默认发现，不依赖 GCS 地址。测试证据写入 `logs/fleet
 
 ### 2.2 软件出包
 
-运行包只要求主程序、配置、启停脚本和核心动态库；不包含模型、视觉插件或媒体服务。
-相机控制模块保留，但接口不传递图像帧。
+运行包包含主程序、启停脚本、核心动态库、`config/plane.ini`、`config/zenoh.json5` 和 `config/profiles/` 下的四份仿真预置。
 
 ## 3. 基础验证
 
@@ -132,6 +131,19 @@ cd build/plane
 
 通过标准：程序退出码为 0，日志包含依赖版本和检查成功信息。
 
+### 3.3 部署预置板端验收
+
+1. 确认捷联 A2416A SITL 一号机在 `192.168.1.56:14280` 提供飞控连接。
+2. 从 `tests/fleet.ini` 选取 `uav1`（`192.168.1.100`），备份板端现场配置。将运行包部署到 `/home/firefly/plane`，保留默认 `profile = config/profiles/sitl_jielian_a2416a.ini` 并执行 `./runplane.sh`。
+3. 从本机同一 Zenoh 网络查询板端信息并接收遥测。
+
+```bash
+./build/gcs_sim --query AgentInfo --agent-id uav1 --no-radar-udp --listen-seconds 5
+```
+
+通过标准为启动日志显示匹配 `uav1`、飞控实际连接到 `14280`，收到 `fcLinkState=connected` 的有效位置遥测。
+查询结果应包含 `agentId=uav1`、`boardIp=192.168.1.100`、`videoUrl=rtsp://192.168.1.56:8554/jielian_a2416a` 和 `isSim=true`。
+
 ## 4. 自动化测试
 
 ### 4.1 无图像依赖检查
@@ -147,7 +159,7 @@ cd build/plane
 `state_store_quiet` 验证连续状态更新仍发布内部事件并更新缓存，但不产生日志。
 部署工具按最新运行中的上下线事件验证在线状态，不再把日志条数当作收到的位置样本数。
 
-默认运行包须包含 `config/zenoh.json5`，由 `plane.conf` 的 `zenoh_config_file` 加载，
+默认运行包须包含 `config/zenoh.json5`，由 `plane.ini` 的 `zenoh_config_file` 加载，
 `transport/unicast/open_timeout` 为 `2000` 毫秒；`zenoh_connect` 留空，保留组播和 gossip 自动发现。
 修改该配置后，在一号机验证自动发现的 AgentInfo 上报与查询、正常停止及恢复启动，
 记录实际停止耗时，并确认没有触发停止脚本的强制结束。
@@ -162,6 +174,8 @@ cd build/plane
 
 `config_simulation` 验证场景 02 的 PX4 远端 UDP 端口 `14030`～`14039`、本地端口
 `14280`～`14289` 与旧 SITL 端口 `14580`～`14589` 为仿真，范围外端口和串口不判定为仿真。
+配置测试还需覆盖同一预置按不同本机 IP 选择不同飞机 ID 和 RTSP、UDP 与串口飞控、单机直配，以及配置读取失败、重复 ID/IP、必填项无效、零匹配和多匹配。
+`fleetctl` 单测验证测试清单默认路径、`--config` 覆盖及测试部署配置迁移。
 
 `radar_target_filter` 位于 `tools/gcs_sim/tests`，验证不带速度和方位角的雷达航迹、JSON 容错、
 空扫描、coasting 忽略、confirmed 过滤、严格时间戳输入、多友机全局匹配、
@@ -308,7 +322,7 @@ python3 tools/fleetctl.py test-agent-info --count 1
 
 该命令只预检一号机，备份程序和配置，部署完整运行包和 gcs_sim，保留现有连接参数及视频地址，
 其中 SITL UDP 主机统一校正为清单中的 `192.168.1.56` 并验证实际飞控连接；
-任务板 IP 未配置时写入 fleet.ini 中的该板 IP。gcs_sim 在板端独立进程中运行，验证：
+任务板 IP 未配置时写入清单中的该板 IP。gcs_sim 在板端独立进程中运行，验证：
 
 1. 地面站已订阅时启动机载，收到一次 `AgentInfo`，观察期间没有周期重复。
 2. 两套地面站身份在线时，均收到机载信息，机载也记录两个地面站的上报。地面站重连后再次收到上报。

@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 #include "core/config.h"
 
@@ -14,8 +15,12 @@ int main() {
     close(fd);
     struct Cleanup {
         const char* path;
-        ~Cleanup() { std::filesystem::remove(path); }
-    } cleanup{path};
+        std::string profile_path;
+        ~Cleanup() {
+            std::filesystem::remove(path);
+            std::filesystem::remove(profile_path);
+        }
+    } cleanup{path, std::string(path) + ".ini"};
 
     struct Case {
         const char* link_type;
@@ -69,6 +74,80 @@ int main() {
         algorithm.control_output_mode != plane::algorithm::MidcourseControlMode::Attitude ||
         algorithm.yaw_mode != 0) {
         return 6;
+    }
+
+    {
+        std::ofstream file(path);
+        file << "[deployment]\nprofile = " << cleanup.profile_path
+             << "\n[system]\nboard_ip = 192.168.1.10\n[communication]\nplane_id = direct\n"
+                "[camera]\npod_model = direct\npod_video_url = rtsp://direct/live\n"
+                "pod_control_url = udp://direct:8000\n";
+        if (!file) return 7;
+    }
+    const std::string uav1 =
+        "[uav1]\nboard_ip = 192.168.1.100\nfc_url = udpout://192.168.1.56:14280\n"
+        "pod_model = jielian_a2416a\npod_video_url = rtsp://192.168.1.56:8554/jielian_a2416a\n"
+        "pod_control_url = udp://192.168.1.56:8001\n";
+    const std::string uav2 =
+        "[uav2]\nboard_ip = 192.168.1.101\nfc_url = udpin://:14281\n"
+        "pod_video_url = rtsp://192.168.1.56:8555/jielian_a2416a\n";
+    const std::string uav3 = "[uav3]\nboard_ip = 192.168.1.102\nfc_url = serial:///dev/ttyS0:57600\n";
+    const auto write_profile = [&](const std::string& content) {
+        std::ofstream file(cleanup.profile_path);
+        file << content;
+        return static_cast<bool>(file);
+    };
+    if (!write_profile(uav1 + uav2 + uav3)) return 8;
+    const std::vector<std::string> first{"10.0.0.2", "192.168.1.100", "192.168.1.100"};
+    if (!plane::core::load_config(path, config, &first) || config.plane_id != "uav1" ||
+        config.board_ip != "192.168.1.100" || config.fc_link_type != "udp" ||
+        config.fc_udp_url != "udpout://192.168.1.56:14280" || !config.is_sim ||
+        config.pod_model != "jielian_a2416a" || config.pod_video_url != "rtsp://192.168.1.56:8554/jielian_a2416a" ||
+        config.pod_control_url != "udp://192.168.1.56:8001") {
+        return 9;
+    }
+    const std::vector<std::string> second{"192.168.1.101"};
+    if (!plane::core::load_config(path, config, &second) || config.plane_id != "uav2" ||
+        config.board_ip != "192.168.1.101" || config.fc_udp_url != "udpin://:14281" || !config.is_sim ||
+        config.pod_video_url != "rtsp://192.168.1.56:8555/jielian_a2416a" ||
+        !config.pod_model.empty() || !config.pod_control_url.empty()) {
+        return 10;
+    }
+    const std::vector<std::string> third{"192.168.1.102"};
+    if (!plane::core::load_config(path, config, &third) || config.plane_id != "uav3" ||
+        config.fc_link_type != "serial" || config.fc_serial_device != "/dev/ttyS0" ||
+        config.fc_serial_baud != 57600 || config.is_sim || !config.pod_video_url.empty()) {
+        return 11;
+    }
+    const std::vector<std::string> unknown{"192.168.1.103"};
+    const std::vector<std::string> multiple{"192.168.1.100", "192.168.1.101"};
+    if (plane::core::load_config(path, config, &unknown) || plane::core::load_config(path, config, &multiple)) {
+        return 12;
+    }
+    const std::string invalid_profiles[] = {
+        uav1 + uav1,
+        uav1 + "[other]\nboard_ip = 192.168.1.100\nfc_url = udp://:14540\n",
+        uav1 + "[other]\nboard_ip = invalid\nfc_url = udp://:14540\n",
+        uav1 + "[other]\nboard_ip = 192.168.1.104\n",
+        uav1 + "[other]\nboard_ip = 192.168.1.104\nfc_url = udpout://192.168.1.56:14280junk\n",
+        uav1 + "[other]\nboard_ip = 192.168.1.104\nfc_url = serial:///dev/ttyS0:0\n",
+    };
+    for (const auto& invalid : invalid_profiles) {
+        if (!write_profile(invalid) || plane::core::load_config(path, config, &first) || config.plane_id != "uav3") {
+            return 13;
+        }
+    }
+    std::filesystem::remove(cleanup.profile_path);
+    if (plane::core::load_config(path, config, &first)) return 14;
+    {
+        std::ofstream file(path);
+        file << "[deployment]\nprofile =\n[communication]\nplane_id = direct\n"
+                "[flight_control]\nlink_type = udp\nudp_url = udp://:14540\n";
+        if (!file) return 15;
+    }
+    if (!plane::core::load_config(path, config, &first) || config.plane_id != "direct" ||
+        config.fc_udp_url != "udp://:14540" || config.is_sim) {
+        return 16;
     }
     return 0;
 }

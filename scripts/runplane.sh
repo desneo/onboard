@@ -34,7 +34,7 @@ fi
 
 if [ "${1:-}" != "" ]; then
     PLANE_DIR="$1"
-elif [ -f "${SCRIPT_DIR}/plane" ] || [ -f "${SCRIPT_DIR}/config/plane.conf" ]; then
+elif [ -f "${SCRIPT_DIR}/plane" ] || [ -f "${SCRIPT_DIR}/config/plane.ini" ]; then
     PLANE_DIR="${SCRIPT_DIR}"
 elif [ -d "${SOURCE_ROOT}/build/plane" ]; then
     PLANE_DIR="${SOURCE_ROOT}/build/plane"
@@ -43,7 +43,7 @@ else
     exit 1
 fi
 
-CONFIG="${PLANE_DIR}/config/plane.conf"
+CONFIG="${PLANE_DIR}/config/plane.ini"
 [ -f "${CONFIG}" ] || { echo "错误: 配置文件不存在: ${CONFIG}" >&2; exit 1; }
 [ -f "${PLANE_DIR}/plane" ] || { echo "错误: 可执行文件不存在: ${PLANE_DIR}/plane" >&2; exit 1; }
 # 上传工具可能丢失执行权限，启动前自动补齐。

@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 
 import argparse
+import dataclasses
 import importlib.util
+import json
 from pathlib import Path
+import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
@@ -95,12 +99,18 @@ class FleetCtlTest(unittest.TestCase):
         self.assertIn("[flight_control]\nudp_url = old", updated)
 
     def test_inventory_rejects_more_planes_than_declared(self):
-        config = fleetctl.load_config(ROOT / "config" / "fleet.ini")
+        config = fleetctl.load_config(fleetctl.DEFAULT_CONFIG)
         with self.assertRaises(fleetctl.FleetError):
             fleetctl.selected_planes(config, len(config.planes) + 1)
 
+    def test_test_inventory_path_defaults_and_can_be_overridden(self):
+        parser = fleetctl.build_parser()
+        command = ["preflight", "--count", "1"]
+        self.assertEqual(parser.parse_args(command).config, ROOT / "tests" / "fleet.ini")
+        self.assertEqual(parser.parse_args(["--config", "site.ini", *command]).config, Path("site.ini"))
+
     def test_configure_plane_removes_retired_settings(self):
-        config = fleetctl.load_config(ROOT / "config" / "fleet.ini")
+        config = fleetctl.load_config(fleetctl.DEFAULT_CONFIG)
         source = (
             "[system]\nlog_dir = logs/old-run\n"
             "[image_input]\ntype = Rtsp\n[detection]\nmodel_path = old-model\n"
@@ -118,7 +128,7 @@ class FleetCtlTest(unittest.TestCase):
         self.assertNotIn("station_id", result)
 
     def test_fleet_environment_and_dependency_order(self):
-        config = fleetctl.load_config(ROOT / "config" / "fleet.ini")
+        config = fleetctl.load_config(fleetctl.DEFAULT_CONFIG)
         self.assertEqual(config.board_arch, "aarch64")
         self.assertEqual(config.board_os_version, "22.04")
         self.assertEqual(config.simulator.flight_port_base, 14580)
@@ -133,7 +143,7 @@ class FleetCtlTest(unittest.TestCase):
         self.assertEqual(args.run_id, "20261016-000000")
 
     def test_peer_presence_uses_latest_event_across_duplicate_logs(self):
-        planes = fleetctl.load_config(ROOT / "config" / "fleet.ini").planes[:2]
+        planes = fleetctl.load_config(fleetctl.DEFAULT_CONFIG).planes[:2]
         online = "[2026-10-27 18:00:01.000] [info] 他机上线: uav2\n"
         offline = "[2026-10-27 18:00:02.000] [info] 他机下线: uav2\n"
         result = fleetctl.analyze_plane(planes[0], planes, online + offline + online)
@@ -143,7 +153,7 @@ class FleetCtlTest(unittest.TestCase):
         self.assertTrue(result.peer_online["uav2"])
 
     def test_old_run_cannot_satisfy_current_presence_check(self):
-        planes = fleetctl.load_config(ROOT / "config" / "fleet.ini").planes[:2]
+        planes = fleetctl.load_config(fleetctl.DEFAULT_CONFIG).planes[:2]
         text = (
             "[2026-10-27 17:00:00.000] [info] 他机上线: uav2\n"
             "[2026-10-27 17:00:01.000] [info] 飞控连接建立\n"
@@ -154,7 +164,7 @@ class FleetCtlTest(unittest.TestCase):
         self.assertFalse(result.flight_connected)
 
     def test_spdlog_error_level_is_detected(self):
-        planes = fleetctl.load_config(ROOT / "config" / "fleet.ini").planes[:1]
+        planes = fleetctl.load_config(fleetctl.DEFAULT_CONFIG).planes[:1]
         text = (
             "[2026-10-30 18:00:00.000] [info] plane 程序启动: version=0.1.0\n"
             "[2026-10-30 18:00:01.000] [error] 飞控连接失败\n"
@@ -163,13 +173,13 @@ class FleetCtlTest(unittest.TestCase):
         self.assertEqual(result.errors, ["[2026-10-30 18:00:01.000] [error] 飞控连接失败"])
 
     def test_presence_deployment_preserves_board_connections(self):
-        plane = fleetctl.load_config(ROOT / "config" / "fleet.ini").planes[1]
+        plane = fleetctl.load_config(fleetctl.DEFAULT_CONFIG).planes[1]
         base = (
             "[communication]\nplane_id = old\nzenoh_connect = tcp/127.0.0.1:7447\n"
             "[flight_control]\nlink_type = serial\nserial_device = /dev/test\n"
             "[image_input]\ntype = Rtsp\n"
         )
-        template = (ROOT / "config" / "plane.conf").read_text()
+        template = (ROOT / fleetctl.PLANE_CONFIG).read_text()
         result = fleetctl.render_presence_config(base, template, plane, "192.168.1.56")
         self.assertIn("plane_id = uav2", result)
         self.assertIn("zenoh_connect = tcp/127.0.0.1:7447", result)
@@ -178,17 +188,90 @@ class FleetCtlTest(unittest.TestCase):
         self.assertNotIn("[image_input]", result)
 
     def test_presence_sitl_address_uses_inventory_host_and_preserves_port(self):
-        config = fleetctl.load_config(ROOT / "config" / "fleet.ini")
-        base = "[flight_control]\nlink_type = udp\nudp_url = udpout://192.168.1.40:14581\n"
-        template = (ROOT / "config" / "plane.conf").read_text()
-        result = fleetctl.render_presence_config(base, template, config.planes[1], config.simulator.host)
-        self.assertIn("udp_url = udpout://192.168.1.56:14581", result)
-        self.assertNotIn("192.168.1.40", result)
+        config = fleetctl.load_config(fleetctl.DEFAULT_CONFIG)
+        template = (ROOT / fleetctl.PLANE_CONFIG).read_text()
+        for port in (14281, 14581):
+            with self.subTest(port=port):
+                base = f"[flight_control]\nlink_type = udp\nudp_url = udpout://192.168.1.40:{port}\n"
+                result = fleetctl.render_presence_config(base, template, config.planes[1], config.simulator.host)
+                self.assertIn(f"udp_url = udpout://192.168.1.56:{port}", result)
+                self.assertNotIn("192.168.1.40", result)
+        listener = "[flight_control]\nlink_type = udp\nudp_url = udpin://0.0.0.0:14281\n"
+        result = fleetctl.render_presence_config(listener, template, config.planes[1], config.simulator.host)
+        self.assertIn("udp_url = udpin://0.0.0.0:14281", result)
+
+    def test_test_config_migration_prefers_ini_and_flattens_selected_profile(self):
+        plane = fleetctl.load_config(fleetctl.DEFAULT_CONFIG).planes[0]
+        board_ip = plane.host
+        other_board_ip = "192.168.1.201"
+        active_addresses = [{"family": "inet", "local": board_ip}]
+        interfaces = [
+            {"flags": ["UP"], "addr_info": active_addresses},
+            {"flags": ["UP", "LOOPBACK"], "addr_info": [{"family": "inet", "local": other_board_ip}]},
+        ]
+        remote = Mock()
+
+        def run_local(_plane, script, *, check=True):
+            if script == "ip -j -4 address show up":
+                return subprocess.CompletedProcess([], 0, stdout=json.dumps(interfaces))
+            return subprocess.run(["bash", "-c", script], text=True, capture_output=True, check=check)
+
+        remote.run.side_effect = run_local
+        with tempfile.TemporaryDirectory(prefix="fleet config ") as directory:
+            runtime = Path(directory)
+            plane = dataclasses.replace(plane, host="uav1.local", runtime_dir=directory)
+            config_dir = runtime / "config"
+            config_dir.mkdir()
+            legacy = "[system]\nsafe_height_m = 25\n"
+            (runtime / fleetctl.LEGACY_PLANE_CONFIG).write_text(legacy, encoding="utf-8")
+            self.assertEqual(fleetctl.read_plane_config(plane, remote, ROOT), (legacy, legacy))
+
+            profile_name = "config/site's preset.ini"
+            original = (
+                f"[deployment]\nprofile = {profile_name}\n"
+                "[system]\nsafe_height_m = 30\n"
+                "[camera]\npod_video_url = rtsp://ignored"
+            )
+            (runtime / fleetctl.PLANE_CONFIG).write_text(original, encoding="utf-8")
+            (runtime / profile_name).write_text(
+                f"[aircraft-1]\nboard_ip = {board_ip}\nfc_url = serial:///dev/ttyS0:115200\n"
+                "pod_model = jielian_a2416a\npod_video_url = rtsp://camera/live?a=1&b=2\n"
+                "pod_control_url = udp://camera:8001\n"
+                f"[aircraft-2]\nboard_ip = {other_board_ip}\nfc_url = udpout://sitl:14281\n",
+                encoding="utf-8",
+            )
+            actual, effective = fleetctl.read_plane_config(plane, remote, ROOT)
+            self.assertEqual(actual, original)
+            for setting in (
+                "safe_height_m = 30", "profile = \n", f"board_ip = {board_ip}", "plane_id = aircraft-1",
+                "link_type = serial", "serial_device = /dev/ttyS0", "serial_baud = 115200",
+                "pod_model = jielian_a2416a", "pod_video_url = rtsp://camera/live?a=1&b=2",
+                "pod_control_url = udp://camera:8001",
+            ):
+                self.assertIn(setting, effective)
+            template = (ROOT / fleetctl.PLANE_CONFIG).read_text(encoding="utf-8")
+            presence = fleetctl.render_presence_config(effective, template, plane)
+            self.assertIn(f"plane_id = {plane.plane_id}", presence)
+            self.assertIn(f"board_ip = {board_ip}", presence)
+            self.assertIn("link_type = serial", presence)
+            self.assertIn("pod_control_url = udp://camera:8001", presence)
+            self.assertIn("profile = \n", presence)
+            rendered = fleetctl.configure_plane(effective, plane, "udpout://sitl:14580")
+            self.assertIn("udp_url = udpout://sitl:14580", rendered)
+            self.assertIn("link_type = udp", rendered)
+            self.assertIn("profile = \n", rendered)
+
+            active_addresses.append({"family": "inet", "local": other_board_ip})
+            with self.assertRaisesRegex(fleetctl.FleetError, "多个飞机 ID"):
+                fleetctl.read_plane_config(plane, remote, ROOT)
+            active_addresses.clear()
+            with self.assertRaisesRegex(fleetctl.FleetError, "未匹配"):
+                fleetctl.read_plane_config(plane, remote, ROOT)
 
     def test_metadata_config_preserves_custom_addresses(self):
-        plane = fleetctl.load_config(ROOT / "config" / "fleet.ini").planes[0]
+        plane = fleetctl.load_config(fleetctl.DEFAULT_CONFIG).planes[0]
         base = "[system]\nboard_ip = 10.0.0.7\n[camera]\npod_video_url = rtsp://pod/live?a=1&b=2\n"
-        template = (ROOT / "config" / "plane.conf").read_text()
+        template = (ROOT / fleetctl.PLANE_CONFIG).read_text()
         result = fleetctl.render_presence_config(base, template, plane)
         self.assertIn("board_ip = 10.0.0.7", result)
         self.assertIn("pod_video_url = rtsp://pod/live?a=1&b=2", result)
@@ -197,7 +280,7 @@ class FleetCtlTest(unittest.TestCase):
         self.assertIn("pod_video_url =\n", default_result)
 
     def test_agent_info_rejects_multiple_boards_before_remote_actions(self):
-        config = fleetctl.load_config(ROOT / "config" / "fleet.ini")
+        config = fleetctl.load_config(fleetctl.DEFAULT_CONFIG)
         remote = Mock()
         with self.assertRaises(fleetctl.FleetError):
             fleetctl.command_test_agent_info(argparse.Namespace(count=2), config, remote)
@@ -221,7 +304,7 @@ class FleetCtlTest(unittest.TestCase):
         ])
 
     def test_midcourse_rejects_multiple_boards_before_remote_actions(self):
-        config = fleetctl.load_config(ROOT / "config" / "fleet.ini")
+        config = fleetctl.load_config(fleetctl.DEFAULT_CONFIG)
         remote = Mock()
         with self.assertRaises(fleetctl.FleetError):
             fleetctl.command_test_midcourse(argparse.Namespace(count=2), config, remote)
@@ -235,7 +318,7 @@ class FleetCtlTest(unittest.TestCase):
         self.assertEqual(args.target_track_id, "")
 
     def test_presence_preflight_only_contacts_selected_boards(self):
-        config = fleetctl.load_config(ROOT / "config" / "fleet.ini")
+        config = fleetctl.load_config(fleetctl.DEFAULT_CONFIG)
         planes = fleetctl.selected_planes(config, 2)
         remote = Mock()
         remote.run.return_value.stdout = "ok"

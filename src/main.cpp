@@ -47,7 +47,10 @@ int main(int argc, char** argv) {
     plane::core::LogOptions log_options;
     plane::core::init_logging(log_options);
 
-    plane::core::load_config("config/plane.conf", config);
+    if (!plane::core::load_config("config/plane.ini", config)) {
+        plane::core::shutdown_logging();
+        return 1;
+    }
     if (!config.log_dir.empty() && config.log_dir != log_options.log_dir) {
         log_options.log_dir = config.log_dir;
         plane::core::shutdown_logging();

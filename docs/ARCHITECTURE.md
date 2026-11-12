@@ -151,7 +151,8 @@ Communication 对外提供 `sendToStation`、`sendToPlane` 和 `sendToAll` 三�
 | `src/target` | 地面站目标存储 |
 | `src/camera` | 相机控制能力 |
 | `src/geo` | 地理计算封装 |
-| `config` | 默认运行配置 |
+| `config` | 默认运行配置与机群部署预置 |
+| `tests/fleet.ini` | `fleetctl.py` 的测试环境清单 |
 | `tests/contract` | 插件和外部接口契约测试 |
 | `tests/integration` | 进程及配置集成测试 |
 | `tests/fixtures` | 测试配置 |
@@ -187,6 +188,7 @@ Communication 对外提供 `sendToStation`、`sendToPlane` 和 `sendToAll` 三�
 
 ## 6. 生命周期与并发
 
+- Core Runtime 从 `config/plane.ini` 加载主配置。选中预置时，先解析本机对应的飞机 ID、板卡 IP、飞控和吊舱配置，再以有效飞控地址计算仿真判定，并将同一份 `AppConfig` 交给各模块。
 - Runtime 按注册顺序执行 `init/start`，按逆序执行 `stop/release`。
 - Flight Control 在飞控连接建立后读取并缓存通用 PX4 飞控系统参数；断连使缓存失效，重连后后台重读。
   中制导默认从 `[midcourse_algorithm]` 取规划限值，`use_px4_limits = true` 时从缓存取值。

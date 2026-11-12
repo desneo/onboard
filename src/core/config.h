@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "algorithm/midcourse_alg.h"
 #include "message.h"
@@ -14,7 +15,9 @@ struct AppConfig {
     int state_report_period_ms = 1000;
 
     std::string board_ip;
+    std::string pod_model;
     std::string pod_video_url;
+    std::string pod_control_url;
 
     std::string plane_id = "uav1";
     std::string zenoh_config_file;
@@ -61,7 +64,9 @@ struct AppConfig {
     }();
 };
 
-/// 从带 section 的 INI 文件加载配置；文件不存在时保留默认值并返回 false。
-bool load_config(const std::string& path, AppConfig& out);
+/// 加载主配置和可选部署预置。加载失败时保留原配置并返回 false。
+/// 未提供地址列表时，启用预置的配置从本机网卡获取地址。
+bool load_config(const std::string& path, AppConfig& out,
+                 const std::vector<std::string>* local_ipv4_addresses = nullptr);
 
 }  // namespace plane::core

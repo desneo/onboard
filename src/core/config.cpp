@@ -1,12 +1,22 @@
 #include "core/config.h"
 
+#include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <cerrno>
+#include <charconv>
 #include <cmath>
 #include <fstream>
-#include <sstream>
+#include <memory>
 #include <stdexcept>
+#include <string_view>
+#include <system_error>
 #include <unordered_map>
+#include <unordered_set>
+#include <utility>
 
 namespace plane::core {
 namespace {
@@ -22,6 +32,156 @@ std::string trim(const std::string& text) {
 
 bool parse_bool(const std::string& value) {
     return value == "1" || value == "true" || value == "True" || value == "on";
+}
+
+int parse_positive_int(std::string_view value) {
+    int number = 0;
+    const auto end = value.data() + value.size();
+    const auto result = std::from_chars(value.data(), end, number);
+    return result.ec == std::errc{} && result.ptr == end && number > 0 ? number : 0;
+}
+
+std::vector<std::string> get_local_ipv4_addresses() {
+    ifaddrs* interfaces = nullptr;
+    if (getifaddrs(&interfaces) != 0) {
+        throw std::system_error(errno, std::generic_category(), "枚举本机 IPv4 网卡失败");
+    }
+    const std::unique_ptr<ifaddrs, decltype(&freeifaddrs)> guard(interfaces, freeifaddrs);
+    std::vector<std::string> addresses;
+    for (const auto* entry = interfaces; entry != nullptr; entry = entry->ifa_next) {
+        if (entry->ifa_addr == nullptr || entry->ifa_addr->sa_family != AF_INET ||
+            (entry->ifa_flags & IFF_UP) == 0 || (entry->ifa_flags & IFF_LOOPBACK) != 0) {
+            continue;
+        }
+        const auto* address = reinterpret_cast<const sockaddr_in*>(entry->ifa_addr);
+        char buffer[INET_ADDRSTRLEN];
+        if (inet_ntop(AF_INET, &address->sin_addr, buffer, sizeof(buffer)) != nullptr) {
+            addresses.emplace_back(buffer);
+        }
+    }
+    return addresses;
+}
+
+using IniOptions = std::unordered_map<std::string, std::string>;
+
+std::string section_name(const std::string& line) {
+    if (line.size() < 3 || line.back() != ']') {
+        return {};
+    }
+    return trim(line.substr(1, line.size() - 2));
+}
+
+std::unordered_map<std::string, IniOptions> read_profile(const std::string& path) {
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        throw std::runtime_error("无法打开文件");
+    }
+    std::unordered_map<std::string, IniOptions> entries;
+    std::string section;
+    std::string line;
+    int line_number = 0;
+    while (std::getline(file, line)) {
+        ++line_number;
+        line = trim(line);
+        if (line.empty() || line.front() == '#' || line.front() == ';') {
+            continue;
+        }
+        if (line.front() == '[') {
+            section = section_name(line);
+            if (section.empty() || section.find_first_of("/*?#$[] \t") != std::string::npos) {
+                throw std::runtime_error("飞机 ID 无效，行号=" + std::to_string(line_number));
+            }
+            if (!entries.try_emplace(section).second) {
+                throw std::runtime_error("plane_id 重复: " + section);
+            }
+            continue;
+        }
+        const auto separator = line.find('=');
+        if (section.empty() || separator == std::string::npos) {
+            throw std::runtime_error("无法解析配置项，行号=" + std::to_string(line_number));
+        }
+        const auto key = trim(line.substr(0, separator));
+        if (key.empty() || !entries.at(section).emplace(key, trim(line.substr(separator + 1))).second) {
+            throw std::runtime_error("配置键为空或重复，行号=" + std::to_string(line_number));
+        }
+    }
+    if (file.bad()) {
+        throw std::runtime_error("读取文件失败");
+    }
+    return entries;
+}
+
+std::string profile_value(const IniOptions& options, const std::string& key) {
+    const auto it = options.find(key);
+    return it == options.end() ? std::string{} : it->second;
+}
+
+struct FlightEndpoint {
+    std::string serial_device;
+    int serial_baud = 0;
+};
+
+FlightEndpoint parse_flight_url(const std::string& url, const std::string& plane_id) {
+    const auto scheme_end = url.find("://");
+    const auto number_start = url.rfind(':');
+    if (scheme_end != std::string::npos && number_start >= scheme_end + 3 &&
+        url.find_first_of(" \t\r\n") == std::string::npos) {
+        const auto scheme = url.substr(0, scheme_end);
+        const auto address = url.substr(scheme_end + 3, number_start - scheme_end - 3);
+        const int number = parse_positive_int(std::string_view(url).substr(number_start + 1));
+        if (scheme == "serial" && !address.empty() && address.front() == '/' && number > 0) {
+            return {address, number};
+        }
+        if ((scheme == "udp" || scheme == "udpin" || scheme == "udpout") &&
+            (scheme != "udpout" || !address.empty()) && address.find_first_of("/\\?#@") == std::string::npos &&
+            number > 0 && number <= 65535) {
+            return {};
+        }
+    }
+    throw std::runtime_error("fc_url 无效，plane_id=" + plane_id);
+}
+
+void apply_profile(const std::string& path, const std::vector<std::string>& local_addresses, AppConfig& config) {
+    std::unordered_set<std::string> board_ips;
+    std::string matched_id;
+    for (const auto& [plane_id, options] : read_profile(path)) {
+        const auto board_ip = profile_value(options, "board_ip");
+        in_addr address{};
+        if (inet_pton(AF_INET, board_ip.c_str(), &address) != 1) {
+            throw std::runtime_error("board_ip 无效，plane_id=" + plane_id);
+        }
+        if (!board_ips.insert(board_ip).second) {
+            throw std::runtime_error("board_ip 重复: " + board_ip);
+        }
+
+        const auto fc_url = profile_value(options, "fc_url");
+        const auto endpoint = parse_flight_url(fc_url, plane_id);
+        if (std::find(local_addresses.begin(), local_addresses.end(), board_ip) == local_addresses.end()) {
+            continue;
+        }
+        if (!matched_id.empty()) {
+            throw std::runtime_error("本机 IPv4 命中多个飞机 ID: " + matched_id + "、" + plane_id);
+        }
+        matched_id = plane_id;
+        config.plane_id = plane_id;
+        config.board_ip = board_ip;
+        config.pod_model = profile_value(options, "pod_model");
+        config.pod_video_url = profile_value(options, "pod_video_url");
+        config.pod_control_url = profile_value(options, "pod_control_url");
+        if (endpoint.serial_device.empty()) {
+            config.fc_link_type = "udp";
+            config.fc_udp_url = fc_url;
+        } else {
+            config.fc_link_type = "serial";
+            config.fc_serial_device = endpoint.serial_device;
+            config.fc_serial_baud = endpoint.serial_baud;
+        }
+    }
+    if (matched_id.empty()) {
+        throw std::runtime_error("本机 IPv4 未匹配任何飞机");
+    }
+    SPDLOG_INFO("部署预置已匹配: profile={} plane_id={} board_ip={} pod_model={}", path, config.plane_id,
+                config.board_ip, config.pod_model);
 }
 
 bool load_midcourse_algorithm_option(const std::string& key, const std::string& value, AppConfig& out) {
@@ -104,7 +264,9 @@ std::string canonical_key(const std::string& section, const std::string& key) {
         {"system.safe_height_m", "safe_height_m"},
         {"system.log_dir", "log_dir"},
         {"system.board_ip", "board_ip"},
+        {"camera.pod_model", "pod_model"},
         {"camera.pod_video_url", "pod_video_url"},
+        {"camera.pod_control_url", "pod_control_url"},
         {"system.state_report_period_ms", "state_report_period_ms"},
         {"communication.plane_id", "plane_id"},
         {"communication.zenoh_config_file", "zenoh_config_file"},
@@ -145,27 +307,19 @@ bool detect_is_simulation(const AppConfig& config) {
     if (sep == std::string::npos) {
         return false;
     }
-    try {
-        const int port = std::stoi(config.fc_udp_url.substr(sep + 1));
-        return (port >= 14030 && port <= 14039) || (port >= 14280 && port <= 14289) ||
-               (port >= 14580 && port <= 14589);
-    } catch (const std::invalid_argument&) {
-        return false;
-    } catch (const std::out_of_range&) {
-        return false;
-    }
+    const int port = parse_positive_int(std::string_view(config.fc_udp_url).substr(sep + 1));
+    return (port >= 14030 && port <= 14039) || (port >= 14280 && port <= 14289) ||
+           (port >= 14580 && port <= 14589);
 }
 
-}  // namespace
-
-bool load_config(const std::string& path, AppConfig& out) {
+std::string read_main_config(const std::string& path, AppConfig& out) {
     std::ifstream file(path);
     if (!file.is_open()) {
-        SPDLOG_WARN("配置文件不存在，使用默认配置: {}", path);
-        out.is_sim = detect_is_simulation(out);
-        return false;
+        throw std::runtime_error("无法打开文件");
     }
 
+    std::string profile;
+    bool profile_configured = false;
     std::string line;
     std::string section;
     while (std::getline(file, line)) {
@@ -174,24 +328,26 @@ bool load_config(const std::string& path, AppConfig& out) {
             continue;
         }
         if (line.front() == '[') {
-            if (line.size() < 3 || line.back() != ']') {
-                SPDLOG_WARN("忽略无法解析的配置节: {}", line);
-                continue;
+            section = section_name(line);
+            if (section.empty()) {
+                throw std::runtime_error("无法解析配置节: " + line);
             }
-            section = trim(line.substr(1, line.size() - 2));
             continue;
         }
         const auto pos = line.find('=');
-        if (pos == std::string::npos) {
-            SPDLOG_WARN("忽略无法解析的配置行: {}", line);
-            continue;
-        }
-        if (section.empty()) {
-            SPDLOG_WARN("忽略缺少配置节的配置项: {}", line);
-            continue;
+        if (pos == std::string::npos || section.empty()) {
+            throw std::runtime_error("无法解析配置项: " + line);
         }
         const std::string raw_key = trim(line.substr(0, pos));
         const std::string value = trim(line.substr(pos + 1));
+        if (section == "deployment" && raw_key == "profile") {
+            if (profile_configured) {
+                throw std::runtime_error("deployment.profile 重复");
+            }
+            profile = value;
+            profile_configured = true;
+            continue;
+        }
         if (section == "midcourse_algorithm") {
             if (!load_midcourse_algorithm_option(raw_key, value, out)) {
                 SPDLOG_WARN("未知配置项: {}.{}", section, raw_key);
@@ -207,8 +363,12 @@ bool load_config(const std::string& path, AppConfig& out) {
             out.state_report_period_ms = std::stoi(value);
         } else if (key == "board_ip") {
             out.board_ip = value;
+        } else if (key == "pod_model") {
+            out.pod_model = value;
         } else if (key == "pod_video_url") {
             out.pod_video_url = value;
+        } else if (key == "pod_control_url") {
+            out.pod_control_url = value;
         } else if (key == "plane_id") {
             out.plane_id = value;
         } else if (key == "zenoh_config_file") {
@@ -261,7 +421,32 @@ bool load_config(const std::string& path, AppConfig& out) {
             SPDLOG_WARN("未知配置项: {}.{}", section, raw_key);
         }
     }
-    out.is_sim = detect_is_simulation(out);
+    if (file.bad()) {
+        throw std::runtime_error("读取文件失败");
+    }
+    return profile;
+}
+
+}  // namespace
+
+bool load_config(const std::string& path, AppConfig& out, const std::vector<std::string>* local_ipv4_addresses) {
+    AppConfig loaded = out;
+    std::string profile;
+    try {
+        profile = read_main_config(path, loaded);
+        if (!profile.empty()) {
+            if (local_ipv4_addresses == nullptr) {
+                apply_profile(profile, get_local_ipv4_addresses(), loaded);
+            } else {
+                apply_profile(profile, *local_ipv4_addresses, loaded);
+            }
+        }
+    } catch (const std::exception& error) {
+        SPDLOG_ERROR("加载配置失败: path={} {}", profile.empty() ? path : profile, error.what());
+        return false;
+    }
+    loaded.is_sim = detect_is_simulation(loaded);
+    out = std::move(loaded);
     return true;
 }
 
