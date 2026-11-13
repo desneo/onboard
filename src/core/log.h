@@ -11,6 +11,7 @@ struct LogOptions {
     std::string log_dir = "logs";
     std::size_t max_file_size_bytes = 50 * 1024 * 1024;
     std::size_t max_files = 5;
+    bool console = true;
 };
 
 /// 初始化全局日志；项目代码统一通过 spdlog 输出。

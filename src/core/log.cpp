@@ -15,13 +15,16 @@ void init_logging(const LogOptions& options) {
     std::filesystem::create_directories(options.log_dir);
 
     std::vector<spdlog::sink_ptr> sinks;
-    sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
+    if (options.console) {
+        sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
+    }
     sinks.push_back(std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
         options.log_dir + "/" + options.app_name + ".log", options.max_file_size_bytes, options.max_files));
 
     auto logger = std::make_shared<spdlog::logger>(options.app_name, sinks.begin(), sinks.end());
     logger->set_level(spdlog::level::info);
-    logger->flush_on(spdlog::level::warn);
+    // 服务模式通过日志文件排查，及时写出启动和连接状态。
+    logger->flush_on(options.console ? spdlog::level::warn : spdlog::level::info);
     spdlog::set_default_logger(logger);
     set_project_log_pattern();
 }

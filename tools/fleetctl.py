@@ -354,7 +354,9 @@ def require_local_commands(commands: Iterable[str]) -> None:
 
 
 def bundle_problems(bundle: Path) -> list[str]:
-    required_files = ["plane", "runplane.sh", "stopplane.sh", PLANE_CONFIG]
+    required_files = [
+        "plane", "runplane.sh", "stopplane.sh", "install-plane-service.sh", PLANE_CONFIG,
+    ]
     required_files.extend(f"{PROFILE_DIR}/{path.name}" for path in sorted((ROOT / PROFILE_DIR).glob("*.ini")))
     required_dirs = ["lib"]
     problems = [name for name in required_files if not (bundle / name).is_file()]

@@ -3,7 +3,7 @@
 #include <chrono>
 #include <csignal>
 #include <memory>
-#include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 
@@ -37,14 +37,18 @@ void handle_stop_signal(int) { g_stop_requested = 1; }
 
 int main(int argc, char** argv) {
     plane::core::set_project_log_pattern();
+    plane::core::LogOptions log_options;
     for (int i = 1; i < argc; ++i) {
-        if (std::string(argv[i]) == "--deps-check") {
+        const std::string_view arg = argv[i];
+        if (arg == "--deps-check") {
             return plane::core::run_deps_check();
+        }
+        if (arg == "--no-console") {
+            log_options.console = false;
         }
     }
 
     plane::core::AppConfig config;
-    plane::core::LogOptions log_options;
     plane::core::init_logging(log_options);
 
     if (!plane::core::load_config("config/plane.ini", config)) {

@@ -17,10 +17,11 @@ mkdir -p "${PLANE_DIR}/config/profiles" "${PLANE_DIR}/lib"
 # 部署说明：随独立运行目录分发，部署端无需依赖源码树即可完成配置和启停。
 install -m 0644 "${ROOT}/README.md" "${PLANE_DIR}/README.md"
 
-# 启停脚本：随独立运行目录分发，现场可直接 ./runplane.sh / ./stopplane.sh 使用。
-for script in runplane.sh stopplane.sh; do
+# 启停和自启部署脚本随独立运行目录分发。
+for script in runplane.sh stopplane.sh install-plane-service.sh; do
   install -m 0755 "${ROOT}/scripts/${script}" "${PLANE_DIR}/${script}"
 done
+rm -f -- "${PLANE_DIR}/plane-service.sh"
 
 # 清理旧版本遗留的图像插件、模型及配置，当前版本不再分发。
 rm -rf -- "${PLANE_DIR}/plugins" "${PLANE_DIR}/models" "${PLANE_DIR}/configs" "${PLANE_DIR}/rknn"

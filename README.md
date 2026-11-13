@@ -64,7 +64,7 @@ src/                  机载程序源码
 config/plane.ini      默认运行配置
 config/profiles/      机群部署预置
 tests/                测试代码及环境清单
-scripts/              源码树中的程序启停脚本
+scripts/              机载启停和自启部署脚本
 tools/                打包和辅助程序
 cmake/                CMake 依赖配置
 docs/                 需求、架构和测试说明
@@ -108,7 +108,7 @@ cmake --build build -j
 
 ### 部署独立运行目录
 
-`build/plane/` 包含本说明、主程序、配置、启停脚本和项目动态库。本版本启动不需要模型或图像插件。在目录根部执行：
+`build/plane/` 包含本说明、主程序、配置、启停与自启部署脚本和项目动态库。本版本启动不需要模型或图像插件。在目录根部执行：
 
 ```bash
 cd /path/to/plane
@@ -123,12 +123,37 @@ test -x plane && test -f config/plane.ini && test -d lib
 部署前在 `config/plane.ini` 选择现场预置并确认 Zenoh 端点。将同一份运行目录复制到机群的每块板卡。
 升级已有单机部署时，先备份 `config/plane.conf`，再将现场参数迁入 `config/plane.ini` 并清空 `[deployment]` 的 `profile`。
 
-本版本启动脚本不检查 RKNN 模型，也不修改图像尺寸配置。交互式启动：
+### 安装开机自启服务
+
+在 Ubuntu 22.04 板卡上，从独立运行目录执行以下命令。先用 `stopplane.sh` 停止已有的手动进程，再用部署账号安装服务。
+
+```bash
+cd /home/firefly/plane
+./stopplane.sh
+sudo ./install-plane-service.sh install
+systemctl status plane.service
+tail -F logs/plane.log
+```
+
+安装启动 `plane.service` 并启用开机自启。服务以调用 `sudo` 的部署账号运行，直接以 root 执行安装脚本时使用运行目录的属主账号。服务最早在系统开机满 10 秒时启动。后台运行时应用日志写入 `logs/plane.log`，启动脚本和第三方库的标准输出、错误可用 `sudo journalctl -u plane.service -f` 查看。
+
+使用 `./runplane.sh --service [plane_dir]` 启动后台服务，使用 `./stopplane.sh` 停止。主动停止会取消已排队的自动重启，保留下次开机自启。服务模式的优雅停机超时为 10 秒，手动模式可通过 `./stopplane.sh [超时秒数]` 指定。
+
+异常退出后等待 5 秒重启。60 秒内最多启动 5 次，超过限额进入 `failed`。排除故障后执行 `sudo systemctl reset-failed plane.service`，再执行 `./runplane.sh --service`。
+
+安装脚本通过 `sysctl.d` 设置板卡的全局 `kernel.core_pattern`，内核直接写入运行目录下的 `logs/core/core.<进程名>.<PID>.<Unix 时间戳>`。core 全部保留，由部署人员清理。板卡上其他可生成 core 的进程也使用该路由，写入需要目标目录权限。遇到外部 core 处理器或会覆盖该规则的配置时，安装脚本会报告冲突。
+
+更新服务时，先停止现有服务，部署运行包后重新执行安装命令。执行 `sudo ./install-plane-service.sh uninstall` 可停止并卸载服务，移除它管理的全局 core 规则。当前路由仍由该规则管理时，卸载恢复安装前的路由。卸载保留配置、日志和历史 core，包括已有的 `logs/cores/` 文件。
+
+### 手动运行
+
+服务正在运行、启动或等待重启时，先执行 `./stopplane.sh`，再在终端启动前台进程。
 
 ```bash
 ./runplane.sh
 ```
 
+前台运行时，应用日志同时输出到终端和日志文件。按 `Ctrl+C` 退出，再用 `./runplane.sh --service` 恢复后台服务。
 查看启动用法可执行 `./runplane.sh --help`。启动脚本会自动为 `plane` 和已有的 `stopplane.sh` 补齐执行权限。
 若上传工具丢失了启动脚本自身的执行权限，可使用 `bash ./runplane.sh` 启动。
 
@@ -159,7 +184,7 @@ tail -f logs/plane.log
 ./stopplane.sh
 ```
 
-若启动失败，先查看 `logs/plane.stdout.log` 和 `logs/plane.log`，并再次运行 `ldd ./plane` 检查运行库是否缺失。
+若启动失败，查看终端输出、`logs/plane.log` 或手动后台运行时的 `logs/plane.stdout.log`，并运行 `ldd ./plane` 检查运行库。
 
 ### 从源码树运行
 
@@ -183,7 +208,7 @@ tail -f logs/plane.log
 ./scripts/stopplane.sh
 ```
 
-打包后两个脚本仍位于独立运行目录根部，可在 `build/plane/` 中使用 `./runplane.sh` 和 `./stopplane.sh`。
+打包后启停与自启部署脚本均位于独立运行目录根部。
 
 直接运行及依赖检查：
 

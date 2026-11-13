@@ -34,6 +34,7 @@ SITL 测试使用 `tests/fleet.ini` 的 `simulator.host`（当前为 `192.168.1.
 
 - 用户要求启动或验证多架飞机时，必须使用 `python3 tools/fleetctl.py`，不得临时拼接远端命令绕过预检。
 - `fleetctl.py` 默认读取 `tests/fleet.ini`，可通过全局选项 `--config <路径>` 指定清单。只使用清单声明的板卡。
+- 对已安装自启服务的板卡，执行 `sudo systemctl disable --now plane.service` 后再运行 `fleetctl` 的部署与启停测试。
 - 请求数量超过清单声明数量时，只报告环境不足，不启动部分 SITL 或机载程序。
 - 板端架构或 Ubuntu 版本与清单不一致时，必须在修改远端环境前终止，不得跨发行版混装 APT 依赖。
 - 飞控端口使用清单声明的 API/Offboard 端口基准，并在每次启动后验证对应 UDP 端口均已实际监听。所有端点都必须通过数量和唯一性校验。
@@ -104,7 +105,7 @@ Zenoh 使用默认发现，不依赖 GCS 地址。测试证据写入 `logs/fleet
 
 ### 2.2 软件出包
 
-运行包包含主程序、启停脚本、核心动态库、`config/plane.ini`、`config/zenoh.json5` 和 `config/profiles/` 下的四份仿真预置。
+运行包包含主程序、启停脚本、`install-plane-service.sh`、核心动态库、`config/plane.ini`、`config/zenoh.json5` 和 `config/profiles/` 下的四份仿真预置。
 
 ## 3. 基础验证
 
@@ -143,6 +144,14 @@ cd build/plane
 
 通过标准为启动日志显示匹配 `uav1`、飞控实际连接到 `14280`，收到 `fcLinkState=connected` 的有效位置遥测。
 查询结果应包含 `agentId=uav1`、`boardIp=192.168.1.100`、`videoUrl=rtsp://192.168.1.56:8554/jielian_a2416a` 和 `isSim=true`。
+
+### 3.4 开机自启和崩溃恢复验收
+
+- 本地对部署与启停脚本执行 `bash -n`，对生成的 `plane.service` 执行 `systemd-analyze verify`，并完成构建和相关回归。在隔离的 systemd 测试环境中验证连续异常触发启动限额。
+- 在 uav1（`192.168.1.100`）的 `/home/firefly/plane` 部署，使用 3.3 节的 SITL 环境。记录安装前的 `sysctl -n kernel.core_pattern`，备份并停止已有服务，再部署运行包并执行安装。确认新路由指向运行目录的 `logs/core/`，服务为 `enabled` 和 `active`。重复安装和重复执行 `./runplane.sh --service` 后服务 PID 相同，执行 `./runplane.sh` 时提示先停服务。
+- 检查后台服务启动日志只写入 `logs/plane.log`，journal 可查询 systemd 服务启停和异常记录。记录 `MainPID`，确认 `/proc/<PID>/exe` 指向 `plane`，再执行 `sudo systemctl kill --kill-who=main --signal=SIGABRT plane.service`。用 `file` 确认 `logs/core/` 中的 `core.<进程名>.<PID>.<Unix 时间戳>` 为 ELF core，核对文件名中的 PID，确认旧 core 保留。用 `journalctl -u plane.service -o short-monotonic` 检查 5 秒重启间隔和新进程，按 3.3 节确认飞控连接和有效位置遥测恢复。
+- 分别在服务正常运行时和崩溃后 `SubState=auto-restart` 的等待窗口内执行 `./stopplane.sh`。等待超过 5 秒，检查 `MainPID=0`、服务保持停止且仍为 `enabled`。在终端执行 `./runplane.sh`，确认应用日志同时显示在终端并写入日志文件。按 `Ctrl+C` 退出，再执行 `./runplane.sh --service`，确认后台服务恢复且遥测正常。
+- 卸载后检查服务注册已移除，`kernel.core_pattern` 已恢复为安装前的值，历史 core 可读。重新安装并确认服务处于 `enabled` 和 `active`。在维护窗口实际重启板卡，验证系统开机满 10 秒后服务启动、全局 core 路由生效，并检查飞控连接和遥测。
 
 ## 4. 自动化测试
 
