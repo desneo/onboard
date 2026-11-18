@@ -227,7 +227,7 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 - 高度调整只使用首航点和当前状态的相对高度，不混用海拔高度；
 - 高度调整向飞控下发当前位置、目标相对高度的临时非穿越航点，不使用 Offboard；
 - 临时航点任务完成、达到高度容差并退出 Mission 后才开始正式航线；
-- 中止和超时时切换 Hold，停止临时航点任务；
+- 常规中止和超时时切换 Hold，人工接管中止时保留飞手选定的模式；
 - 起飞节点使用本次实际下发的目标高度判定完成。
 
 ## 5. 相机／吊舱控制
@@ -262,6 +262,27 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 | Attitude Offboard | 先发送合法姿态／推力设定值再启动 Offboard，按 50 ms 重发；起飞完成切换覆盖 Offboard 时能够限频恢复；停止任务时停止 Offboard 并清空缓存 |
 
 实机执行 StopMotor 和撞击相关测试前必须确认安全区域和测试授权。
+
+### 6.1 人工接管
+
+运行 `ctest --test-dir build -R '^(manual_takeover|task_scheduler_takeover)$' --output-on-failure` 验证模式基线、快速切换、正常 `Hold`、完成遥测延迟、任务中止与一次性告警。
+
+将机载程序部署到 `uav1` 的 `/home/firefly/plane`。
+连接 `192.168.1.56` 的 PX4 SITL，使用 `mavlink status` 确认连到 `uav1` 的机载链路，再在该 PX4 实例的控制台调高机载链路 `HEARTBEAT` 频率。命令中的端口取 PX4 侧实例的本地 UDP 端口。
+
+```console
+mavlink stream -u <机载链路的PX4本地UDP端口> -s HEARTBEAT -r 20
+```
+
+抓取机载实际收到的 `HEARTBEAT`，核对其模式和接收间隔。用 SITL 模式控制模拟三档拨动，约 100 ms 的短时切换以实际收到的模式帧为准。实体遥控器的三档映射在台架上复验。
+
+| 场景 | 通过标准 |
+| --- | --- |
+| 飞前 `Position`，随后由程序接手 | 正常起飞并进入预期自动模式。启动和重连时的首个模式不触发接管。 |
+| 正常 `Hold` | 起飞完成、`Hover`、临时高度航点与正式航点正常结束均不告警。起飞尾段短暂覆盖 Offboard 后仍可正常交接。 |
+| `Mission` 或 `Offboard` 中切入 `Loiter`、`Stabilized`、`Position` | 逐个独立验证三个入口，检查 PX4 的实际模式。航线未完成时进入 `Loiter`，在核对窗口结束前暂停下发，随后中止。接管后的出站抓包没有旧飞控指令、Offboard 设定值或切换 `Hold` 的清理报文。 |
+| 快速拨动 `Loiter → Stabilized → Position` | 第一次符合接管条件即中止。同一次执行只产生一条 `manual_takeover` 告警，Task 上报 `Aborted`。旧报文重传只回 `Ack`，清理完成后新的 Task 或 Command 可以执行。 |
+| 地面站界面 | 提示条显示飞机、实际模式和被中止的 Task 或 Command。重复收包或轮询时，界面只提示一次。 |
 
 ## 7. 任务与通信验收
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -10,9 +11,15 @@ struct FlightControlError {
     std::string detail;
 };
 
+struct ManualTakeoverEvent {
+    std::uint64_t execution_id = 0;
+    std::string flight_mode;
+};
+
 namespace events {
 
 inline constexpr std::string_view kError = "flight_control.error";
+inline constexpr std::string_view kManualTakeover = "flight_control.manual_takeover";
 
 }  // namespace events
 

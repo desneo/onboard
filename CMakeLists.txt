@@ -91,6 +91,19 @@ include(CTest)
 add_subdirectory(tools/gcs_sim)
 
 if(BUILD_TESTING)
+  add_executable(manual_takeover_test tests/unit/manual_takeover_test.cpp)
+  target_include_directories(manual_takeover_test PRIVATE src)
+  target_compile_options(manual_takeover_test PRIVATE -Wall -Wextra)
+  target_link_libraries(manual_takeover_test PRIVATE MAVSDK::mavsdk)
+  add_test(NAME manual_takeover COMMAND manual_takeover_test)
+
+  add_executable(task_scheduler_takeover_test tests/unit/task_scheduler_takeover_test.cpp src/task/task_scheduler.cpp)
+  target_include_directories(task_scheduler_takeover_test PRIVATE src)
+  target_compile_options(task_scheduler_takeover_test PRIVATE -Wall -Wextra)
+  target_link_libraries(task_scheduler_takeover_test PRIVATE
+    plane::common_include plane::eventpp plane::magic_enum spdlog::spdlog)
+  add_test(NAME task_scheduler_takeover COMMAND task_scheduler_takeover_test)
+
   add_executable(agent_info_test tests/unit/agent_info_test.cpp
     src/communication/communication_module.cpp
     src/core/config.cpp src/core/time_utils.cpp src/state/state_store.cpp)

@@ -67,22 +67,24 @@ bool TaskExecutionEngine::start() {
     return true;
 }
 
-void TaskExecutionEngine::stop() { abort(); }
+void TaskExecutionEngine::stop() { abort(true); }
 
 void TaskExecutionEngine::release() {}
 
-void TaskExecutionEngine::launch_tree(BT::Tree tree, const std::string& tree_name, const std::string& tree_structure) {
+void TaskExecutionEngine::launch_tree(std::uint64_t execution_id, BT::Tree tree, const std::string& tree_name,
+                                      const std::string& tree_structure) {
     tree_ = std::move(tree);
     current_tree_name_ = tree_name;
     tree_ready_ = true;
     current_node_.clear();
     SPDLOG_INFO("行为树结构: currentBehaviorTree={} tree_structure={}", current_tree_name_, tree_structure);
+    execution_id_ = execution_id;
+    flight_control_.begin_control(execution_id_);
     ticking_ = true;
     tick_thread_ = std::thread([this]() { tick_loop(); });
 }
 
-bool TaskExecutionEngine::start(const plane::model::TaskInfo& task, std::string& error) {
-    abort();
+bool TaskExecutionEngine::start(std::uint64_t execution_id, const plane::model::TaskInfo& task, std::string& error) {
     if (task.taskCode != plane::model::TaskCode::AntiUav) {
         error = "不支持的任务类型";
         return false;
@@ -102,14 +104,14 @@ bool TaskExecutionEngine::start(const plane::model::TaskInfo& task, std::string&
         return false;
     }
     is_task_tree_ = true;
-    launch_tree(std::move(tree), "AntiUav", sequence_structure(node_names));
+    launch_tree(execution_id, std::move(tree), "AntiUav", sequence_structure(node_names));
     SPDLOG_INFO("AntiUav 中制导任务已创建: taskId={} targetTrackId={}", task.taskId,
                 task.targetTrackId.empty() ? "<自动>" : task.targetTrackId);
     return true;
 }
 
-bool TaskExecutionEngine::start_command(const plane::model::Command& command, std::string& error) {
-    abort();
+bool TaskExecutionEngine::start_command(std::uint64_t execution_id, const plane::model::Command& command,
+                                        std::string& error) {
     std::lock_guard<std::mutex> lock(mutex_);
     command_context_.commandId = command.commandId;
     command_context_.type = command.type;
@@ -131,7 +133,7 @@ bool TaskExecutionEngine::start_command(const plane::model::Command& command, st
         return false;
     }
     is_task_tree_ = false;
-    launch_tree(std::move(tree), std::string("cmd-") + std::string(magic_enum::enum_name(command.type)),
+    launch_tree(execution_id, std::move(tree), std::string("cmd-") + std::string(magic_enum::enum_name(command.type)),
                 sequence_structure(node_names));
     SPDLOG_INFO("指令行为树已创建: currentBehaviorTree={} commandId={}", current_tree_name_, command.commandId);
     return true;
@@ -209,10 +211,17 @@ BT::Tree TaskExecutionEngine::build_task_tree(const std::vector<std::string>& no
     return tree;
 }
 
-void TaskExecutionEngine::abort() {
+bool TaskExecutionEngine::abort(bool acknowledge_takeover) {
     halt_tree();
     cleanup_control();
+    if (execution_id_ != 0 && !flight_control_.end_control(execution_id_, acknowledge_takeover)) {
+        return false;
+    }
+    execution_id_ = 0;
+    return true;
 }
+
+bool TaskExecutionEngine::control_can_advance() const { return flight_control_.control_can_advance(); }
 
 void TaskExecutionEngine::halt_tree() {
     ticking_ = false;
@@ -235,7 +244,12 @@ void TaskExecutionEngine::halt_tree() {
 }
 
 void TaskExecutionEngine::tick_loop() {
+    const auto interval = std::chrono::milliseconds(config_.bt_tick_interval_ms);
     while (ticking_) {
+        if (!flight_control_.control_can_advance()) {
+            std::this_thread::sleep_for(interval);
+            continue;
+        }
         BT::NodeStatus status = BT::NodeStatus::IDLE;
         bool changed = false;
         bool exception_thrown = false;
@@ -260,6 +274,9 @@ void TaskExecutionEngine::tick_loop() {
                 }
             }
         }
+        if (!ticking_) {
+            return;
+        }
         if (exception_thrown) {
             finish(plane::model::TaskStatus::Failed, "行为树异常: " + exception_text);
             return;
@@ -275,12 +292,13 @@ void TaskExecutionEngine::tick_loop() {
             finish(plane::model::TaskStatus::Failed, "节点执行失败: " + node);
             return;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(config_.bt_tick_interval_ms));
+        std::this_thread::sleep_for(interval);
     }
 }
 
 void TaskExecutionEngine::publish_progress(const std::string& node) {
     TaskProgress progress;
+    progress.execution_id = execution_id_;
     progress.currentBehaviorTree = current_tree_name_;
     progress.currentNode = node;
     event_bus_.publish(events::kExecutionProgress, progress);
@@ -290,7 +308,11 @@ void TaskExecutionEngine::publish_progress(const std::string& node) {
 void TaskExecutionEngine::finish(plane::model::TaskStatus status, const std::string& detail) {
     ticking_ = false;
     cleanup_control();
+    if (!flight_control_.end_control(execution_id_)) {
+        return;
+    }
     TaskEngineResult result;
+    result.execution_id = execution_id_;
     result.status = status;
     result.detail = detail;
     event_bus_.publish(events::kEngineResult, result);

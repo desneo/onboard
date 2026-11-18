@@ -4,6 +4,7 @@
 #include <behaviortree_cpp/control_node.h>
 
 #include <atomic>
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -38,15 +39,18 @@ class TaskExecutionEngine final : public plane::core::IModule, public TaskExecut
     void stop() override;
     void release() override;
 
-    bool start(const plane::model::TaskInfo& task, std::string& error) override;
-    bool start_command(const plane::model::Command& command, std::string& error) override;
-    void abort() override;
+    bool start(std::uint64_t execution_id, const plane::model::TaskInfo& task, std::string& error) override;
+    bool start_command(std::uint64_t execution_id, const plane::model::Command& command,
+                       std::string& error) override;
+    bool abort(bool acknowledge_takeover = false) override;
+    bool control_can_advance() const override;
 
    private:
     BT::Tree build_command_tree(const std::vector<std::string>& node_names);
     BT::Tree build_task_tree(const std::vector<std::string>& node_names);
     /// 在持锁状态下装载并启动一棵树（供任务/指令共用）。
-    void launch_tree(BT::Tree tree, const std::string& tree_name, const std::string& tree_structure);
+    void launch_tree(std::uint64_t execution_id, BT::Tree tree, const std::string& tree_name,
+                     const std::string& tree_structure);
     void tick_loop();
     void publish_progress(const std::string& node);
     void finish(plane::model::TaskStatus status, const std::string& detail);
@@ -63,6 +67,7 @@ class TaskExecutionEngine final : public plane::core::IModule, public TaskExecut
 
     std::mutex mutex_;
     BT::Tree tree_;
+    std::uint64_t execution_id_ = 0;
     bool tree_ready_ = false;
     bool is_task_tree_ = false;  ///< 当前树是否为任务树（任务才发布进度）
     std::string current_node_;

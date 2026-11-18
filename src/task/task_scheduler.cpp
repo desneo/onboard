@@ -22,10 +22,22 @@ bool TaskScheduler::init() {
 }
 
 bool TaskScheduler::start() {
-    event_bus_.subscribe<plane::model::TaskInfo>(plane::communication::events::kTaskInfoReceived,
-                                                 [this](const plane::model::TaskInfo& task) { on_task_info(task); });
-    event_bus_.subscribe<plane::model::Command>(plane::communication::events::kCommandReceived,
-                                                [this](const plane::model::Command& command) { on_command(command); });
+    using plane::communication::ReceivedControl;
+    using ReceivedTask = ReceivedControl<plane::model::TaskInfo>;
+    using ReceivedCommand = ReceivedControl<plane::model::Command>;
+    {
+        std::lock_guard<std::mutex> lock(dispatch_mutex_);
+        running_ = true;
+    }
+    event_bus_.subscribe<ReceivedTask>(
+        plane::communication::events::kTaskInfoReceived,
+        [this](const ReceivedTask& request) { on_task_info(request.value, request.received_at); });
+    event_bus_.subscribe<ReceivedCommand>(
+        plane::communication::events::kCommandReceived,
+        [this](const ReceivedCommand& request) { on_command(request.value, request.received_at); });
+    event_bus_.subscribe<plane::flight_control::ManualTakeoverEvent>(
+        plane::flight_control::events::kManualTakeover,
+        [this](const plane::flight_control::ManualTakeoverEvent& event) { on_manual_takeover(event); });
     event_bus_.subscribe<TaskEngineResult>(events::kEngineResult,
                                            [this](const TaskEngineResult& result) { on_engine_result(result); });
     event_bus_.subscribe<TaskProgress>(events::kExecutionProgress,
@@ -35,9 +47,10 @@ bool TaskScheduler::start() {
 }
 
 void TaskScheduler::stop() {
+    std::lock_guard<std::mutex> dispatch_lock(dispatch_mutex_);
+    running_ = false;
     std::lock_guard<std::mutex> lock(mutex_);
-    control_ = ControlKind::None;
-    task_state_ = plane::model::TaskState{};
+    clear_control_locked();
 }
 
 void TaskScheduler::release() {}
@@ -51,7 +64,22 @@ plane::model::TaskState TaskScheduler::current_task_state() const {
     return task_state_;
 }
 
-void TaskScheduler::on_task_info(const plane::model::TaskInfo& task) {
+bool TaskScheduler::prepare_control(ControlTime received_at) {
+    if (!running_ || received_at <= last_takeover_finished_at_) {
+        return false;
+    }
+    return engine_ == nullptr || (engine_->control_can_advance() && engine_->abort());
+}
+
+void TaskScheduler::clear_control_locked() {
+    control_ = ControlKind::None;
+    execution_id_ = 0;
+    command_id_.clear();
+    task_state_ = plane::model::TaskState{};
+}
+
+void TaskScheduler::on_task_info(const plane::model::TaskInfo& task, ControlTime received_at) {
+    std::lock_guard<std::mutex> dispatch_lock(dispatch_mutex_);
     if (task.taskAction == plane::model::TaskAction::Stop) {
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -59,116 +87,148 @@ void TaskScheduler::on_task_info(const plane::model::TaskInfo& task) {
                 SPDLOG_WARN("忽略不匹配的任务停止: taskId={}", task.taskId);
                 return;
             }
-            SPDLOG_INFO("任务中止: taskId={}", task_state_.taskId);
-            control_ = ControlKind::None;
-            task_state_ = plane::model::TaskState{};
         }
-        if (engine_ != nullptr) {
-            engine_->abort();
+        if (prepare_control(received_at)) {
+            SPDLOG_INFO("任务中止: taskId={}", task.taskId);
+            std::lock_guard<std::mutex> lock(mutex_);
+            clear_control_locked();
         }
         return;
     }
 
-    bool replaced_task = false;
+    if (!prepare_control(received_at)) {
+        SPDLOG_WARN("忽略接管核对或清理期间收到的任务: taskId={}", task.taskId);
+        return;
+    }
+    const auto execution_id = ++next_execution_id_;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        replaced_task = control_ == ControlKind::Task;
-        if (replaced_task) {
+        if (control_ == ControlKind::Task) {
             SPDLOG_INFO("任务被新任务替换: taskId={}", task_state_.taskId);
         }
+        clear_control_locked();
         control_ = ControlKind::Task;
-        task_state_ = plane::model::TaskState{};
+        execution_id_ = execution_id;
         task_state_.taskId = task.taskId;
         task_state_.status = plane::model::TaskStatus::Pending;
-    }
-    if (replaced_task && engine_ != nullptr) {
-        engine_->abort();
     }
     if (engine_ == nullptr) {
         SPDLOG_WARN("执行引擎未接入，任务保持待执行: taskId={}", task.taskId);
         return;
     }
     std::string error;
-    if (engine_->start(task, error)) {
+    if (engine_->start(execution_id, task, error)) {
         std::lock_guard<std::mutex> lock(mutex_);
-        task_state_.status = plane::model::TaskStatus::InProgress;
-        SPDLOG_INFO("任务接收并启动: taskId={}", task.taskId);
-    } else {
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            control_ = ControlKind::None;
-            task_state_ = plane::model::TaskState{};
+        if (execution_id_ == execution_id) {
+            task_state_.status = plane::model::TaskStatus::InProgress;
         }
-        report_error("任务启动失败: " + error);
+        SPDLOG_INFO("任务接收并启动: taskId={}", task.taskId);
+        return;
     }
-}
-
-void TaskScheduler::on_command(const plane::model::Command& command) {
-    bool had_control = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        had_control = control_ != ControlKind::None;
+        clear_control_locked();
+    }
+    report_error("任务启动失败: " + error);
+}
+
+void TaskScheduler::on_command(const plane::model::Command& command, ControlTime received_at) {
+    std::lock_guard<std::mutex> dispatch_lock(dispatch_mutex_);
+    if (!prepare_control(received_at)) {
+        SPDLOG_WARN("忽略接管核对或清理期间收到的指令: commandId={}", command.commandId);
+        return;
+    }
+    const auto execution_id = ++next_execution_id_;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
         if (control_ == ControlKind::Task) {
             SPDLOG_INFO("任务被独立指令替换: taskId={}", task_state_.taskId);
         }
+        clear_control_locked();
         control_ = ControlKind::Command;
-        task_state_ = plane::model::TaskState{};
-    }
-    if (had_control && engine_ != nullptr) {
-        engine_->abort();
-    }
-    if (engine_ == nullptr) {
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            control_ = ControlKind::None;
-        }
-        const std::string detail = "指令派发失败: " + command.commandId + " (执行引擎未接入)";
-        report_error(detail);
-        send_alert(detail);
-        return;
+        execution_id_ = execution_id;
+        command_id_ = command.commandId;
     }
     std::string error;
-    if (engine_->start_command(command, error)) {
+    if (engine_ != nullptr && engine_->start_command(execution_id, command, error)) {
         SPDLOG_INFO("指令已派发: commandId={}", command.commandId);
         return;
     }
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        control_ = ControlKind::None;
+        clear_control_locked();
+    }
+    if (engine_ == nullptr) {
+        error = "执行引擎未接入";
     }
     const std::string detail = "指令派发失败: " + command.commandId + " (" + error + ")";
     report_error(detail);
     send_alert(detail);
 }
 
-void TaskScheduler::on_engine_result(const TaskEngineResult& result) {
-    bool command_failed = false;
-    std::string failure_detail;
+void TaskScheduler::on_manual_takeover(const plane::flight_control::ManualTakeoverEvent& event) {
+    std::lock_guard<std::mutex> dispatch_lock(dispatch_mutex_);
+    if (!running_) {
+        return;
+    }
+
+    plane::model::TaskState aborted_task;
+    std::string aborted_command_id;
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (control_ == ControlKind::None || execution_id_ != event.execution_id) {
+            return;
+        }
+        if (control_ == ControlKind::Task) {
+            aborted_task = task_state_;
+            aborted_task.status = plane::model::TaskStatus::Aborted;
+        } else {
+            aborted_command_id = command_id_;
+        }
+    }
+
+    if (engine_ != nullptr) {
+        engine_->abort(true);
+    }
+    last_takeover_finished_at_ = std::chrono::steady_clock::now();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        clear_control_locked();
+    }
+
+    std::string detail = "已切入接管模式 " + event.flight_mode;
+    if (aborted_task.status == plane::model::TaskStatus::Aborted) {
+        detail += "，当前任务已中止（taskId=" + aborted_task.taskId + "）";
+        if (communication_ != nullptr && !communication_->sendToStation(aborted_task)) {
+            SPDLOG_ERROR("接管中止状态发送失败: taskId={}", aborted_task.taskId);
+        }
+    } else {
+        detail += "，当前指令已中止（commandId=" + aborted_command_id + "）";
+    }
+    SPDLOG_WARN("{}", detail);
+    send_alert(detail, "manual_takeover");
+}
+
+void TaskScheduler::on_engine_result(const TaskEngineResult& result) {
+    bool command_failed = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (control_ == ControlKind::None || execution_id_ != result.execution_id) {
+            return;
+        }
         if (control_ == ControlKind::Task) {
             SPDLOG_INFO("任务结束: taskId={} status={} detail={}", task_state_.taskId,
                         std::string(magic_enum::enum_name(result.status)), result.detail);
-            control_ = ControlKind::None;
-            task_state_ = plane::model::TaskState{};
-            return;
-        }
-        if (control_ == ControlKind::Command) {
-            control_ = ControlKind::None;
-            if (result.status == plane::model::TaskStatus::Failed) {
-                command_failed = true;
-                failure_detail = result.detail;
-            } else {
-                SPDLOG_INFO("指令执行结束: status={} detail={}", std::string(magic_enum::enum_name(result.status)),
-                            result.detail);
-            }
+        } else if (result.status == plane::model::TaskStatus::Failed) {
+            command_failed = true;
         } else {
-            SPDLOG_WARN("忽略非当前执行的引擎结果");
-            return;
+            SPDLOG_INFO("指令执行结束: status={} detail={}", std::string(magic_enum::enum_name(result.status)),
+                        result.detail);
         }
+        clear_control_locked();
     }
     if (command_failed) {
-        const std::string detail = "指令执行失败: " + failure_detail;
+        const std::string detail = "指令执行失败: " + result.detail;
         report_error(detail);
         send_alert(detail);
     }
@@ -176,22 +236,20 @@ void TaskScheduler::on_engine_result(const TaskEngineResult& result) {
 
 void TaskScheduler::on_execution_progress(const TaskProgress& progress) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (control_ != ControlKind::Task) {
+    if (control_ != ControlKind::Task || execution_id_ != progress.execution_id) {
         return;
     }
     task_state_.currentBehaviorTree = progress.currentBehaviorTree;
     task_state_.currentNode = progress.currentNode;
 }
 
-void TaskScheduler::send_alert(const std::string& detail) {
+void TaskScheduler::send_alert(const std::string& detail, const std::string& type) {
     if (communication_ == nullptr) {
         SPDLOG_ERROR("通信模块未接入，告警未发送: {}", detail);
         return;
     }
-    plane::model::Alert alert;
-    alert.type = "command_dispatch_failed";
-    alert.detail = detail;
-    if (!communication_->sendToStation(plane::communication::OutgoingMessage{alert})) {
+    plane::model::Alert alert{type, detail};
+    if (!communication_->sendToStation(alert)) {
         SPDLOG_ERROR("告警发送失败: {}", detail);
     }
 }

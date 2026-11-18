@@ -11,6 +11,9 @@ bool MidcourseNode::dispatch(std::string& error) {
 BT::NodeStatus MidcourseNode::checkFinish() {
     std::string error;
     if (controller_->tick(error) == MidcourseController::TickResult::Failure) {
+        if (!flight_control_->control_can_advance()) {
+            return BT::NodeStatus::RUNNING;
+        }
         SPDLOG_ERROR("中段制导失败: {}", error);
         controller_->stop();
         flight_control_->clear_offboard();

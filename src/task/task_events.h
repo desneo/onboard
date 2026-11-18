@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -9,12 +10,14 @@ namespace plane::task {
 
 /// 引擎执行结果（M5 发布，Scheduler 消费）。
 struct TaskEngineResult {
+    std::uint64_t execution_id = 0;
     plane::model::TaskStatus status = plane::model::TaskStatus::None;
     std::string detail;
 };
 
 /// 引擎执行进度（M5 发布，Scheduler 消费）。
 struct TaskProgress {
+    std::uint64_t execution_id = 0;
     std::string currentBehaviorTree;
     std::string currentNode;
 };

@@ -205,13 +205,17 @@ int main() {
         received.push_back(info);
         changed.notify_all();
     });
-    bus.subscribe<plane::model::Command>(events::kCommandReceived, [&](const plane::model::Command& command) {
+    using ReceivedCommand = plane::communication::ReceivedControl<plane::model::Command>;
+    using ReceivedTask = plane::communication::ReceivedControl<plane::model::TaskInfo>;
+    bus.subscribe<ReceivedCommand>(events::kCommandReceived, [&](const ReceivedCommand& request) {
+        const auto& command = request.value;
         std::lock_guard<std::mutex> lock(mutex);
         expected_flight_command_received = command.commandId == "control-1" &&
                                            command.type == plane::model::CommandType::Hover;
         ++command_count;
     });
-    bus.subscribe<plane::model::TaskInfo>(events::kTaskInfoReceived, [&](const plane::model::TaskInfo& task) {
+    bus.subscribe<ReceivedTask>(events::kTaskInfoReceived, [&](const ReceivedTask& request) {
+        const auto& task = request.value;
         std::lock_guard<std::mutex> lock(mutex);
         expected_task_received = task.taskId == "task-1" && task.taskAction == plane::model::TaskAction::Stop;
         ++task_count;
@@ -237,14 +241,18 @@ int main() {
                 }),
                 "control Ack missing on sendToStation");
     };
-    send_and_wait_for_ack({config.plane_id, "command-message", MessageType::Command,
-                           R"({"commandId":"control-1","type":"Hover"})"});
-    send_and_wait_for_ack({"task-sender", "task-message", MessageType::TaskInfo,
-                           R"({"taskId":"task-1","taskCode":"AntiUav","taskAction":"Stop"})"});
+    const Message flight_command{config.plane_id, "command-message", MessageType::Command,
+                                 R"({"commandId":"control-1","type":"Hover"})"};
+    const Message task_stop{"task-sender", "task-message", MessageType::TaskInfo,
+                            R"({"taskId":"task-1","taskCode":"AntiUav","taskAction":"Stop"})"};
+    send_and_wait_for_ack(flight_command);
+    send_and_wait_for_ack(task_stop);
+    send_and_wait_for_ack(flight_command);
+    send_and_wait_for_ack(task_stop);
     {
         std::lock_guard<std::mutex> lock(mutex);
         require(expected_flight_command_received && expected_task_received && command_count == 1 && task_count == 1,
-                "不同发送方的合法飞行指令或任务没有送达");
+                "飞行指令或任务未送达，或重传报文再次进入调度");
     }
     require(store.gcs_link().connected, "valid controls did not update station activity");
 
@@ -295,9 +303,10 @@ int main() {
                     camera.commands[5].yaw_deg == 20.0 && camera.received_times[3] >= before_rate &&
                     camera.received_times[4] >= camera.received_times[3],
                 "吊舱指令单播、解码、去重或顺序有误");
-        require(ack_ids == std::vector<std::string>{"command-message", "task-message", "zero-pitch", "zero-pitch",
-                                                     "zero-pitch", "zero-yaw", "angles"},
-                "吊舱指令回执有误");
+        require(ack_ids == std::vector<std::string>{"command-message", "task-message", "command-message",
+                                                    "task-message", "zero-pitch", "zero-pitch", "zero-pitch",
+                                                    "zero-yaw", "angles"},
+                "飞行控制或吊舱指令回执有误");
         require(command_count == 1 && task_count == 1, "吊舱操作误入飞行指令或任务流程");
         require(pod_states.back().planeId == expected_pod_state.planeId &&
                     pod_states.back().model == expected_pod_state.model && pod_states.back().connected &&

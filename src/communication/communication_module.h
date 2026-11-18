@@ -67,7 +67,9 @@ class CommunicationModule final : public plane::core::IModule, public Communicat
     void on_peer_liveliness(const std::string& key_expr, bool online);
     void worker_loop();
     void on_wire_message(const IncomingMessage& incoming);
-    void handle_envelope(const plane::model::Message& envelope);
+    void handle_envelope(const plane::model::Message& envelope,
+                         std::chrono::steady_clock::time_point received_at);
+    bool remember_flight_control(const plane::model::Message& envelope);
     void handle_pod_command(const plane::model::Message& envelope, const IncomingMessage& incoming);
     void handle_ack(const plane::model::Message& envelope);
     void report_states();
@@ -91,6 +93,7 @@ class CommunicationModule final : public plane::core::IModule, public Communicat
     std::condition_variable rx_cv_;
     std::deque<IncomingMessage> rx_queue_;
     std::deque<std::pair<std::string, std::string>> recent_pod_commands_;
+    std::deque<std::pair<std::string, std::string>> recent_flight_controls_;
     std::mutex pending_mutex_;
     std::unordered_map<std::string, PendingMessage> pending_;
     std::thread worker_;

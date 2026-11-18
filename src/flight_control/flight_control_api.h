@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,11 @@ using AttitudeSetpoint = plane::algorithm::AttitudeCommand;
 class FlightControlApi {
    public:
     virtual ~FlightControlApi() = default;
+
+    virtual void begin_control(std::uint64_t) {}
+    /// 接管已触发时须由调度器确认清理完成，才能解除旧执行的飞控发送限制。
+    virtual bool end_control(std::uint64_t, bool = false) { return true; }
+    virtual bool control_can_advance() const { return true; }
 
     virtual bool arm(std::string& error) = 0;
     virtual bool disarm(std::string& error) = 0;

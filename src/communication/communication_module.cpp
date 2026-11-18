@@ -25,6 +25,7 @@ namespace {
 
 constexpr int kWorkerTickMs = 50;
 constexpr std::size_t kRecentPodCommandLimit = 1024;
+constexpr std::size_t kRecentFlightControlLimit = 1024;
 
 bool is_reliable(plane::model::MessageType type) {
     return type == plane::model::MessageType::Alert || type == plane::model::MessageType::Ack;
@@ -66,6 +67,7 @@ struct MessageTypeOf<plane::model::PodState> {
 bool make_message(const std::string& sender_id, const OutgoingMessage& value, plane::model::Message& out,
                   std::string& error) {
     static std::atomic<std::uint64_t> counter{0};
+    static const std::string session_id = std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
     return std::visit(
         [&](const auto& payload_value) -> bool {
             std::string payload;
@@ -73,7 +75,8 @@ bool make_message(const std::string& sender_id, const OutgoingMessage& value, pl
                 return false;
             }
             using Payload = std::decay_t<decltype(payload_value)>;
-            out = {sender_id, sender_id + "-" + std::to_string(++counter), MessageTypeOf<Payload>::value,
+            out = {sender_id, sender_id + "-" + session_id + "-" + std::to_string(++counter),
+                   MessageTypeOf<Payload>::value,
                    std::move(payload)};
             return true;
         },
@@ -185,6 +188,7 @@ void CommunicationModule::stop() {
         rx_queue_.clear();
     }
     recent_pod_commands_.clear();
+    recent_flight_controls_.clear();
     std::lock_guard<std::mutex> lock(pending_mutex_);
     pending_.clear();
 }
@@ -306,7 +310,7 @@ void CommunicationModule::on_wire_message(const IncomingMessage& incoming) {
         handle_pod_command(envelope, incoming);
         return;
     }
-    handle_envelope(envelope);
+    handle_envelope(envelope, incoming.received_at);
 }
 
 void CommunicationModule::handle_pod_command(const plane::model::Message& envelope, const IncomingMessage& incoming) {
@@ -343,7 +347,20 @@ void CommunicationModule::handle_pod_command(const plane::model::Message& envelo
     send_ack(envelope.messageId);
 }
 
-void CommunicationModule::handle_envelope(const plane::model::Message& envelope) {
+bool CommunicationModule::remember_flight_control(const plane::model::Message& envelope) {
+    const auto id = std::make_pair(envelope.senderId, envelope.messageId);
+    if (std::find(recent_flight_controls_.begin(), recent_flight_controls_.end(), id) != recent_flight_controls_.end()) {
+        return false;
+    }
+    if (recent_flight_controls_.size() == kRecentFlightControlLimit) {
+        recent_flight_controls_.pop_front();
+    }
+    recent_flight_controls_.push_back(id);
+    return true;
+}
+
+void CommunicationModule::handle_envelope(const plane::model::Message& envelope,
+                                          std::chrono::steady_clock::time_point received_at) {
     std::string error;
     switch (envelope.type) {
         case plane::model::MessageType::TaskInfo: {
@@ -353,7 +370,10 @@ void CommunicationModule::handle_envelope(const plane::model::Message& envelope)
                 return;
             }
             state_store_.notify_station_seen();
-            event_bus_.publish(events::kTaskInfoReceived, value);
+            if (remember_flight_control(envelope)) {
+                event_bus_.publish(events::kTaskInfoReceived,
+                                   ReceivedControl<plane::model::TaskInfo>{std::move(value), received_at});
+            }
             send_ack(envelope.messageId);
             break;
         }
@@ -364,7 +384,10 @@ void CommunicationModule::handle_envelope(const plane::model::Message& envelope)
                 return;
             }
             state_store_.notify_station_seen();
-            event_bus_.publish(events::kCommandReceived, value);
+            if (remember_flight_control(envelope)) {
+                event_bus_.publish(events::kCommandReceived,
+                                   ReceivedControl<plane::model::Command>{std::move(value), received_at});
+            }
             send_ack(envelope.messageId);
             break;
         }

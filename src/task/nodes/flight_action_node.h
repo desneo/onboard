@@ -29,21 +29,17 @@ class FlightActionNode : public BT::StatefulActionNode {
 
    protected:
     BT::NodeStatus onStart() override {
-        ++tick_count_;
-        start_ms_ = plane::core::now_ms();
-        last_running_log_ms_ = start_ms_;
-        if (config().blackboard) {
-            config().blackboard->set("current_node", std::string(name()));
-        }
-        std::string error;
-        if (!dispatch(error)) {
-            SPDLOG_ERROR("节点 {} 分发失败: {}", name(), error);
-            return BT::NodeStatus::FAILURE;
-        }
-        return report_status(checkFinish());
+        dispatched_ = false;
+        return start_action();
     }
 
     BT::NodeStatus onRunning() override {
+        if (!flight_control_->control_can_advance()) {
+            return BT::NodeStatus::RUNNING;
+        }
+        if (!dispatched_) {
+            return start_action();
+        }
         ++tick_count_;
         if (timeout_enabled() && plane::core::now_ms() - start_ms_ > node_timeout_ms()) {
             SPDLOG_ERROR("节点 {} 超时（{} 毫秒）", name(), node_timeout_ms());
@@ -72,6 +68,28 @@ class FlightActionNode : public BT::StatefulActionNode {
     const plane::core::AppConfig* app_config_;
 
    private:
+    BT::NodeStatus start_action() {
+        if (!flight_control_->control_can_advance()) {
+            return BT::NodeStatus::RUNNING;
+        }
+        ++tick_count_;
+        start_ms_ = plane::core::now_ms();
+        last_running_log_ms_ = start_ms_;
+        if (config().blackboard) {
+            config().blackboard->set("current_node", std::string(name()));
+        }
+        std::string error;
+        dispatched_ = dispatch(error);
+        if (!flight_control_->control_can_advance()) {
+            return BT::NodeStatus::RUNNING;
+        }
+        if (!dispatched_) {
+            SPDLOG_ERROR("节点 {} 分发失败: {}", name(), error);
+            return BT::NodeStatus::FAILURE;
+        }
+        return report_status(checkFinish());
+    }
+
     /// 统一打印节点结果：RUNNING 每 5 秒一次心跳，SUCCESS/FAILURE 各打印一次。
     BT::NodeStatus report_status(BT::NodeStatus status) {
         switch (status) {
@@ -99,6 +117,7 @@ class FlightActionNode : public BT::StatefulActionNode {
     std::int64_t start_ms_ = 0;
     std::int64_t last_running_log_ms_ = 0;
     int tick_count_ = 0;
+    bool dispatched_ = false;
 };
 
 }  // namespace plane::task

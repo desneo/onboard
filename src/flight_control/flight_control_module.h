@@ -8,6 +8,7 @@
 #include <mavsdk/plugins/telemetry/telemetry.h>
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -20,6 +21,8 @@
 #include "core/event_bus.h"
 #include "core/module.h"
 #include "flight_control/flight_control_api.h"
+#include "flight_control/flight_control_events.h"
+#include "flight_control/manual_takeover.h"
 #include "state/state_store_api.h"
 
 namespace plane::flight_control {
@@ -36,6 +39,10 @@ class FlightControlModule final : public plane::core::IModule, public FlightCont
     bool start() override;
     void stop() override;
     void release() override;
+
+    void begin_control(std::uint64_t execution_id) override;
+    bool end_control(std::uint64_t execution_id, bool acknowledge_takeover = false) override;
+    bool control_can_advance() const override;
 
     bool arm(std::string& error) override;
     bool disarm(std::string& error) override;
@@ -80,17 +87,27 @@ class FlightControlModule final : public plane::core::IModule, public FlightCont
         int mission_current = 0;
         int mission_total = 0;
         float takeoff_altitude_m = 0.0F;
+        ManualTakeover::Clock::time_point position_updated{};
+        ManualTakeover::Clock::time_point mission_progress_updated{};
     };
 
     std::string connection_url() const;
     void monitor_loop();
     void state_loop();
     void offboard_loop();
+    void manual_takeover_loop();
     void attach_system(const std::shared_ptr<mavsdk::System>& system);
     void detach_system();
     void refresh_flight_control_params_cache_if_needed();
     void invalidate_flight_control_params_cache(const std::string& reason);
-    bool ensure_connected(std::string& error) const;
+    bool ensure_connected(std::string& error);
+    bool wait_for_control(std::string& error);
+    bool expect_action(ManualTakeover::Action action, std::string& error, float takeoff_height_m = 0.0F,
+                       int mission_total = 0);
+    void action_failed(ManualTakeover::Action action);
+    void update_takeover_evidence();
+    ManualTakeover::Evidence takeover_evidence_locked() const;
+    void apply_takeover_result_locked(const ManualTakeover::Result& result);
     bool upload_and_start_mission(const std::vector<plane::model::GeoPoint>& points, bool fly_through,
                                   std::string& error);
     bool set_velocity_setpoint(mavsdk::Offboard::VelocityNedYaw velocity,
@@ -113,6 +130,19 @@ class FlightControlModule final : public plane::core::IModule, public FlightCont
     mutable std::mutex cache_mutex_;
     TelemetryCache cache_;
     std::atomic<bool> connected_{false};
+    std::atomic<std::uint64_t> connection_generation_{0};
+
+    mutable std::mutex control_mutex_;
+    std::condition_variable control_cv_;
+    ManualTakeover manual_takeover_;
+    std::uint64_t execution_id_ = 0;
+    ManualTakeover::Clock::time_point takeoff_requested_at_{};
+    ManualTakeover::Clock::time_point mission_requested_at_{};
+    float control_takeoff_height_m_ = 0.0F;
+    int control_mission_total_ = 0;
+    std::optional<ManualTakeoverEvent> takeover_event_;
+    enum class ControlGate { Open, CheckingHold, Takeover };
+    std::atomic<ControlGate> control_gate_{ControlGate::Open};
 
     mutable std::mutex flight_control_params_mutex_;
     FlightControlParams flight_control_params_cache_;
@@ -132,6 +162,7 @@ class FlightControlModule final : public plane::core::IModule, public FlightCont
     std::thread monitor_thread_;
     std::thread state_thread_;
     std::thread offboard_thread_;
+    std::thread manual_takeover_thread_;
     std::atomic<bool> running_{false};
     std::int64_t last_wait_log_ms_ = 0;
 };

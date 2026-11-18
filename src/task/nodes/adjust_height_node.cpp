@@ -92,7 +92,7 @@ void AdjustHeightNode::stop_temporary_mission() {
     }
     temporary_mission_active_ = false;
     std::string error;
-    if (!flight_control_->hold(error)) {
+    if (flight_control_->control_can_advance() && !flight_control_->hold(error)) {
         SPDLOG_ERROR("停止临时高度航点失败: {}", error);
     }
 }

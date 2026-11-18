@@ -1,5 +1,6 @@
 #include "flight_control/flight_control_module.h"
 
+#include <mavsdk/mavlink_include.h>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -45,6 +46,46 @@ Result await_async(Register&& register_callback) {
     return future.get();
 }
 
+bool is_flight_output(const mavlink_message_t& message) {
+    switch (message.msgid) {
+        case MAVLINK_MSG_ID_COMMAND_LONG:
+        case MAVLINK_MSG_ID_COMMAND_INT: {
+            const auto command = message.msgid == MAVLINK_MSG_ID_COMMAND_LONG
+                                     ? mavlink_msg_command_long_get_command(&message)
+                                     : mavlink_msg_command_int_get_command(&message);
+            switch (command) {
+                case MAV_CMD_NAV_TAKEOFF:
+                case MAV_CMD_NAV_LAND:
+                case MAV_CMD_NAV_RETURN_TO_LAUNCH:
+                case MAV_CMD_COMPONENT_ARM_DISARM:
+                case MAV_CMD_DO_SET_MODE:
+                case MAV_CMD_DO_SET_STANDARD_MODE:
+                case MAV_CMD_DO_REPOSITION:
+                case MAV_CMD_DO_FLIGHTTERMINATION:
+                case MAV_CMD_DO_PAUSE_CONTINUE:
+                case MAV_CMD_MISSION_START:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+        case MAVLINK_MSG_ID_SET_MODE:
+        case MAVLINK_MSG_ID_MISSION_COUNT:
+        case MAVLINK_MSG_ID_MISSION_ITEM:
+        case MAVLINK_MSG_ID_MISSION_ITEM_INT:
+        case MAVLINK_MSG_ID_MISSION_SET_CURRENT:
+        // Takeoff 在切换模式前会先写入 PX4 的起飞高度。
+        case MAVLINK_MSG_ID_PARAM_SET:
+        case MAVLINK_MSG_ID_PARAM_EXT_SET:
+        case MAVLINK_MSG_ID_SET_POSITION_TARGET_LOCAL_NED:
+        case MAVLINK_MSG_ID_SET_POSITION_TARGET_GLOBAL_INT:
+        case MAVLINK_MSG_ID_SET_ATTITUDE_TARGET:
+            return true;
+        default:
+            return false;
+    }
+}
+
 }  // namespace
 
 FlightControlModule::FlightControlModule(plane::core::EventBus& event_bus, const plane::core::AppConfig& config,
@@ -73,6 +114,8 @@ bool FlightControlModule::start() {
     const mavsdk::ComponentType component_type =
         config_.is_sim ? mavsdk::ComponentType::GroundStation : mavsdk::ComponentType::CompanionComputer;
     mavsdk_ = std::make_unique<mavsdk::Mavsdk>(mavsdk::Mavsdk::Configuration{component_type});
+    mavsdk_->intercept_outgoing_messages_async(
+        [this](mavlink_message_t& message) { return control_can_advance() || !is_flight_output(message); });
     SPDLOG_INFO("飞控会话身份: {}{}", config_.is_sim ? "GroundStation" : "CompanionComputer",
                 config_.is_sim ? "（仿真提供 GCS 心跳）" : "（实机机载计算机）");
     mavsdk_->set_heartbeat_timeout_s(static_cast<double>(config_.fc_heartbeat_timeout_ms) / 1000.0);
@@ -86,6 +129,7 @@ bool FlightControlModule::start() {
     SPDLOG_INFO("飞控连接参数: url={} fc_heartbeat_timeout_ms={}", url, config_.fc_heartbeat_timeout_ms);
 
     running_ = true;
+    manual_takeover_thread_ = std::thread([this]() { manual_takeover_loop(); });
     monitor_thread_ = std::thread([this]() { monitor_loop(); });
     state_thread_ = std::thread([this]() { state_loop(); });
     offboard_thread_ = std::thread([this]() { offboard_loop(); });
@@ -96,6 +140,13 @@ bool FlightControlModule::start() {
 void FlightControlModule::stop() {
     if (!running_.exchange(false)) {
         return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(control_mutex_);
+        control_cv_.notify_all();
+    }
+    if (manual_takeover_thread_.joinable()) {
+        manual_takeover_thread_.join();
     }
     clear_offboard();
     if (offboard_thread_.joinable()) {
@@ -112,6 +163,127 @@ void FlightControlModule::stop() {
 }
 
 void FlightControlModule::release() {}
+
+void FlightControlModule::begin_control(std::uint64_t execution_id) {
+    std::lock_guard<std::mutex> lock(control_mutex_);
+    execution_id_ = execution_id;
+    control_takeoff_height_m_ = 0.0F;
+    control_mission_total_ = 0;
+    manual_takeover_.start();
+}
+
+bool FlightControlModule::end_control(std::uint64_t execution_id, bool acknowledge_takeover) {
+    std::unique_lock<std::mutex> lock(control_mutex_);
+    control_cv_.wait(lock, [this, execution_id]() {
+        return !running_ || execution_id_ != execution_id || control_gate_ != ControlGate::CheckingHold;
+    });
+    if (execution_id_ != execution_id) {
+        return true;
+    }
+    if (control_gate_ == ControlGate::Takeover && !acknowledge_takeover) {
+        return false;
+    }
+    execution_id_ = 0;
+    manual_takeover_.finish();
+    takeover_event_.reset();
+    control_gate_ = ControlGate::Open;
+    return true;
+}
+
+bool FlightControlModule::control_can_advance() const { return control_gate_ == ControlGate::Open; }
+
+bool FlightControlModule::wait_for_control(std::string& error) {
+    if (control_can_advance()) {
+        return true;
+    }
+    std::unique_lock<std::mutex> lock(control_mutex_);
+    control_cv_.wait(lock, [this]() { return !running_ || control_gate_ != ControlGate::CheckingHold; });
+    if (control_can_advance()) {
+        return true;
+    }
+    error = "当前执行因飞控模式切换已中止";
+    return false;
+}
+
+bool FlightControlModule::expect_action(ManualTakeover::Action action, std::string& error, float takeoff_height_m,
+                                        int mission_total) {
+    std::unique_lock<std::mutex> lock(control_mutex_);
+    control_cv_.wait(lock, [this]() { return !running_ || control_gate_ != ControlGate::CheckingHold; });
+    if (!control_can_advance()) {
+        error = "当前执行因飞控模式切换已中止";
+        return false;
+    }
+    if (execution_id_ != 0) {
+        const auto now = ManualTakeover::Clock::now();
+        if (action == ManualTakeover::Action::Takeoff) {
+            takeoff_requested_at_ = now;
+            control_takeoff_height_m_ = takeoff_height_m;
+        } else if (action == ManualTakeover::Action::Mission) {
+            mission_requested_at_ = now;
+            control_mission_total_ = mission_total;
+        }
+        manual_takeover_.expect(action, now);
+    }
+    return true;
+}
+
+void FlightControlModule::action_failed(ManualTakeover::Action action) {
+    std::lock_guard<std::mutex> lock(control_mutex_);
+    manual_takeover_.action_failed(action);
+    if (control_gate_ == ControlGate::CheckingHold) {
+        apply_takeover_result_locked(manual_takeover_.update(takeover_evidence_locked(), ManualTakeover::Clock::now()));
+    }
+}
+
+ManualTakeover::Evidence FlightControlModule::takeover_evidence_locked() const {
+    std::lock_guard<std::mutex> lock(cache_mutex_);
+    return {control_takeoff_height_m_ > 0.0F && cache_.position_updated >= takeoff_requested_at_ && cache_.in_air &&
+                cache_.relative_altitude_m >= control_takeoff_height_m_ - config_.bt_takeoff_tolerance_m,
+            control_mission_total_ > 0 && cache_.mission_progress_updated >= mission_requested_at_ &&
+                cache_.mission_total == control_mission_total_ && cache_.mission_current >= cache_.mission_total};
+}
+
+void FlightControlModule::apply_takeover_result_locked(const ManualTakeover::Result& result) {
+    if (control_gate_ == ControlGate::Takeover) {
+        return;
+    }
+    if (result.takeover && execution_id_ != 0) {
+        control_gate_ = ControlGate::Takeover;
+        takeover_event_ = ManualTakeoverEvent{execution_id_, std::string(magic_enum::enum_name(*result.takeover))};
+    } else {
+        control_gate_ = result.pending ? ControlGate::CheckingHold : ControlGate::Open;
+    }
+    control_cv_.notify_all();
+}
+
+void FlightControlModule::update_takeover_evidence() {
+    if (control_gate_ != ControlGate::CheckingHold) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(control_mutex_);
+    apply_takeover_result_locked(manual_takeover_.update(takeover_evidence_locked(), ManualTakeover::Clock::now()));
+}
+
+void FlightControlModule::manual_takeover_loop() {
+    std::unique_lock<std::mutex> lock(control_mutex_);
+    while (running_) {
+        if (takeover_event_) {
+            auto event = std::move(*takeover_event_);
+            takeover_event_.reset();
+            lock.unlock();
+            event_bus_.publish(events::kManualTakeover, event);
+            lock.lock();
+        } else if (const auto deadline = manual_takeover_.deadline();
+                   deadline && control_gate_ == ControlGate::CheckingHold) {
+            if (control_cv_.wait_until(lock, *deadline) == std::cv_status::timeout) {
+                apply_takeover_result_locked(
+                    manual_takeover_.update(takeover_evidence_locked(), ManualTakeover::Clock::now()));
+            }
+        } else {
+            control_cv_.wait(lock);
+        }
+    }
+}
 
 void FlightControlModule::monitor_loop() {
     while (running_) {
@@ -150,6 +322,7 @@ void FlightControlModule::monitor_loop() {
 
 void FlightControlModule::attach_system(const std::shared_ptr<mavsdk::System>& system) {
     system_ = system;
+    const auto generation = ++connection_generation_;
     // subscribe_is_connected 只保证通知后续变化；接入时系统可能已经连接，
     // 因此必须先同步当前状态，避免 connected_ 永久保留默认 false。
     connected_ = system_->is_connected();
@@ -162,12 +335,19 @@ void FlightControlModule::attach_system(const std::shared_ptr<mavsdk::System>& s
     }
     param_ = std::make_unique<mavsdk::Param>(system_);
 
-    telemetry_->subscribe_position([this](mavsdk::Telemetry::Position value) {
-        std::lock_guard<std::mutex> lock(cache_mutex_);
-        cache_.latitude_deg = value.latitude_deg;
-        cache_.longitude_deg = value.longitude_deg;
-        cache_.relative_altitude_m = value.relative_altitude_m;
-        cache_.absolute_altitude_m = value.absolute_altitude_m;
+    telemetry_->subscribe_position([this, generation](mavsdk::Telemetry::Position value) {
+        if (connection_generation_ != generation) {
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+            cache_.latitude_deg = value.latitude_deg;
+            cache_.longitude_deg = value.longitude_deg;
+            cache_.relative_altitude_m = value.relative_altitude_m;
+            cache_.absolute_altitude_m = value.absolute_altitude_m;
+            cache_.position_updated = ManualTakeover::Clock::now();
+        }
+        update_takeover_evidence();
     });
     telemetry_->subscribe_home([this](mavsdk::Telemetry::Position value) {
         std::lock_guard<std::mutex> lock(cache_mutex_);
@@ -196,7 +376,17 @@ void FlightControlModule::attach_system(const std::shared_ptr<mavsdk::System>& s
         std::lock_guard<std::mutex> lock(cache_mutex_);
         cache_.voltage_v = value.voltage_v;
     });
-    telemetry_->subscribe_flight_mode([this](mavsdk::Telemetry::FlightMode value) {
+    telemetry_->subscribe_flight_mode([this, generation](mavsdk::Telemetry::FlightMode value) {
+        if (connection_generation_ != generation) {
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(control_mutex_);
+            if (connected_ && connection_generation_ == generation) {
+                apply_takeover_result_locked(
+                    manual_takeover_.observe(value, takeover_evidence_locked(), ManualTakeover::Clock::now()));
+            }
+        }
         mavsdk::Telemetry::FlightMode previous = mavsdk::Telemetry::FlightMode::Unknown;
         {
             std::lock_guard<std::mutex> lock(cache_mutex_);
@@ -213,17 +403,46 @@ void FlightControlModule::attach_system(const std::shared_ptr<mavsdk::System>& s
         // SPDLOG_INFO("解锁状态变化: {}", value ? "解锁" : "上锁");
         cache_.armed = value;
     });
-    telemetry_->subscribe_in_air([this](bool value) {
-        std::lock_guard<std::mutex> lock(cache_mutex_);
-        cache_.in_air = value;
+    telemetry_->subscribe_in_air([this, generation](bool value) {
+        if (connection_generation_ != generation) {
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+            cache_.in_air = value;
+        }
+        update_takeover_evidence();
     });
-    mission_->subscribe_mission_progress([this](mavsdk::Mission::MissionProgress value) {
-        std::lock_guard<std::mutex> lock(cache_mutex_);
-        cache_.mission_current = value.current;
-        cache_.mission_total = value.total;
+    mission_->subscribe_mission_progress([this, generation](mavsdk::Mission::MissionProgress value) {
+        if (connection_generation_ != generation) {
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+            cache_.mission_current = value.current;
+            cache_.mission_total = value.total;
+            cache_.mission_progress_updated = ManualTakeover::Clock::now();
+        }
+        update_takeover_evidence();
     });
-    system_->subscribe_is_connected([this](bool connected) {
-        connected_ = connected;
+    system_->subscribe_is_connected([this, generation](bool connected) {
+        {
+            std::lock_guard<std::mutex> lock(control_mutex_);
+            if (connection_generation_ != generation) {
+                return;
+            }
+            connected_ = connected;
+            if (!connected) {
+                if (const auto deadline = manual_takeover_.deadline()) {
+                    apply_takeover_result_locked(manual_takeover_.update({}, *deadline));
+                }
+                std::lock_guard<std::mutex> cache_lock(cache_mutex_);
+                cache_.position_updated = {};
+                cache_.mission_progress_updated = {};
+            }
+            manual_takeover_.reset_link();
+            apply_takeover_result_locked({});
+        }
         if (!connected) {
             invalidate_flight_control_params_cache("飞控连接中断");
         } else {
@@ -239,6 +458,16 @@ void FlightControlModule::attach_system(const std::shared_ptr<mavsdk::System>& s
 
 void FlightControlModule::detach_system() {
     {
+        std::lock_guard<std::mutex> lock(control_mutex_);
+        ++connection_generation_;
+        connected_ = false;
+        if (const auto deadline = manual_takeover_.deadline()) {
+            apply_takeover_result_locked(manual_takeover_.update({}, *deadline));
+        }
+        manual_takeover_.reset_link();
+        apply_takeover_result_locked({});
+    }
+    {
         std::lock_guard<std::mutex> lock(offboard_mutex_);
         offboard_active_ = false;
         offboard_setpoint_kind_ = OffboardSetpointKind::None;
@@ -246,7 +475,6 @@ void FlightControlModule::detach_system() {
         last_offboard_start_ms_ = 0;
         offboard_.reset();
     }
-    connected_ = false;
     invalidate_flight_control_params_cache("飞控系统已移除");
     {
         std::lock_guard<std::mutex> lock(cache_mutex_);
@@ -254,6 +482,8 @@ void FlightControlModule::detach_system() {
         cache_.in_air = false;
         cache_.mission_current = 0;
         cache_.mission_total = 0;
+        cache_.position_updated = {};
+        cache_.mission_progress_updated = {};
     }
     mission_.reset();
     param_.reset();
@@ -366,7 +596,7 @@ void FlightControlModule::offboard_loop() {
     while (running_) {
         std::this_thread::sleep_for(std::chrono::milliseconds(kOffboardIntervalMs));
         std::lock_guard<std::mutex> lock(offboard_mutex_);
-        if (offboard_active_ && offboard_) {
+        if (offboard_active_ && offboard_ && control_can_advance()) {
             if (offboard_setpoint_kind_ == OffboardSetpointKind::VelocityNed) {
                 send_velocity_setpoint_locked();
             } else if (offboard_setpoint_kind_ == OffboardSetpointKind::Attitude) {
@@ -376,7 +606,10 @@ void FlightControlModule::offboard_loop() {
     }
 }
 
-bool FlightControlModule::ensure_connected(std::string& error) const {
+bool FlightControlModule::ensure_connected(std::string& error) {
+    if (!wait_for_control(error)) {
+        return false;
+    }
     if (!system_ || !action_ || !connected_) {
         error = "飞控未连接";
         return false;
@@ -435,9 +668,13 @@ bool FlightControlModule::takeoff(float height_m, std::string& error) {
         report_error(error);
         return false;
     }
+    if (!expect_action(ManualTakeover::Action::Takeoff, error, height_m) || !ensure_connected(error)) {
+        return false;
+    }
     const auto takeoff_result =
         await_action([this](mavsdk::Action::ResultCallback cb) { action_->takeoff_async(std::move(cb)); });
     if (takeoff_result != mavsdk::Action::Result::Success) {
+        action_failed(ManualTakeover::Action::Takeoff);
         error = "下发飞控Takeoff 失败: " + result_text(takeoff_result);
         report_error(error);
         return false;
@@ -480,11 +717,12 @@ bool FlightControlModule::return_to_launch(std::string& error) {
 }
 
 bool FlightControlModule::hold(std::string& error) {
-    if (!ensure_connected(error)) {
+    if (!ensure_connected(error) || !expect_action(ManualTakeover::Action::Hold, error)) {
         return false;
     }
     const auto result = await_action([this](mavsdk::Action::ResultCallback cb) { action_->hold_async(std::move(cb)); });
     if (result != mavsdk::Action::Result::Success) {
+        action_failed(ManualTakeover::Action::Hold);
         error = "下发飞控Hold 失败: " + result_text(result);
         report_error(error);
         return false;
@@ -530,6 +768,7 @@ bool FlightControlModule::upload_and_start_mission(const std::vector<plane::mode
         std::lock_guard<std::mutex> lock(cache_mutex_);
         cache_.mission_current = 0;
         cache_.mission_total = 0;
+        cache_.mission_progress_updated = {};
     }
     mavsdk::Mission::MissionPlan plan;
     for (const auto& point : points) {
@@ -552,9 +791,20 @@ bool FlightControlModule::upload_and_start_mission(const std::vector<plane::mode
     }
     SPDLOG_INFO("下发飞控指令成功: 上传任务（UploadMission） points.size={} fc_route_speed_m_s={:.1f} fly_through={}",
                 points.size(), config_.fc_route_speed_m_s, fly_through ? "true" : "false");
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        cache_.mission_current = 0;
+        cache_.mission_total = 0;
+        cache_.mission_progress_updated = {};
+    }
+    if (!ensure_connected(error) ||
+        !expect_action(ManualTakeover::Action::Mission, error, 0.0F, static_cast<int>(points.size()))) {
+        return false;
+    }
     const auto start_result = await_async<mavsdk::Mission::Result>(
         [this](mavsdk::Mission::ResultCallback cb) { mission_->start_mission_async(std::move(cb)); });
     if (start_result != mavsdk::Mission::Result::Success) {
+        action_failed(ManualTakeover::Action::Mission);
         error = "下发飞控StartMission 失败: " + result_text(start_result);
         report_error(error);
         return false;
@@ -563,8 +813,10 @@ bool FlightControlModule::upload_and_start_mission(const std::vector<plane::mode
     // 建立本次任务的初始进度，确保紧随其后的行为树 tick 必须等待新任务推进。
     {
         std::lock_guard<std::mutex> lock(cache_mutex_);
-        cache_.mission_current = 0;
-        cache_.mission_total = static_cast<int>(points.size());
+        if (cache_.mission_progress_updated == ManualTakeover::Clock::time_point{}) {
+            cache_.mission_current = 0;
+            cache_.mission_total = static_cast<int>(points.size());
+        }
     }
     SPDLOG_INFO("下发飞控指令成功: 启动任务（StartMission）");
     return true;
@@ -610,6 +862,9 @@ mavsdk::Offboard::Result FlightControlModule::send_velocity_setpoint_locked() {
 bool FlightControlModule::set_velocity_setpoint(mavsdk::Offboard::VelocityNedYaw velocity,
                                                std::optional<mavsdk::Offboard::AccelerationNed> acceleration,
                                                std::string& error) {
+    if (!wait_for_control(error)) {
+        return false;
+    }
     std::lock_guard<std::mutex> lock(offboard_mutex_);
     if (!offboard_ || !connected_) {
         error = "飞控未连接";
@@ -721,6 +976,8 @@ bool FlightControlModule::get_cached_flight_control_params(FlightControlParams& 
 }
 
 void FlightControlModule::clear_offboard() {
+    std::string error;
+    wait_for_control(error);
     std::lock_guard<std::mutex> lock(offboard_mutex_);
     offboard_setpoint_kind_ = OffboardSetpointKind::None;
     acceleration_setpoint_.reset();
@@ -728,9 +985,18 @@ void FlightControlModule::clear_offboard() {
     const bool stop_required = offboard_active_ || (offboard_ && offboard_->is_active());
     offboard_active_ = false;
     if (stop_required && offboard_) {
+        if (!expect_action(ManualTakeover::Action::Hold, error)) {
+            // 析构只撤销 MAVSDK 内部定时发送，保留飞手选定的飞行模式。
+            offboard_.reset();
+            if (connected_ && system_) {
+                offboard_ = std::make_unique<mavsdk::Offboard>(system_);
+            }
+            return;
+        }
         const auto stop_result = await_async<mavsdk::Offboard::Result>(
             [this](mavsdk::Offboard::ResultCallback cb) { offboard_->stop_async(std::move(cb)); });
         if (stop_result != mavsdk::Offboard::Result::Success) {
+            action_failed(ManualTakeover::Action::Hold);
             report_error("下发飞控OffboardStop 失败: " + result_text(stop_result));
         } else {
             SPDLOG_INFO("下发飞控指令成功: Offboard 停止");
