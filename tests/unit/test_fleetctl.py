@@ -222,14 +222,21 @@ class FleetCtlTest(unittest.TestCase):
             plane = dataclasses.replace(plane, host="uav1.local", runtime_dir=directory)
             config_dir = runtime / "config"
             config_dir.mkdir()
-            legacy = "[system]\nsafe_height_m = 25\n"
+            legacy = (
+                "[system]\nsafe_height_m = 25\n"
+                "[communication]\nzenoh_listen = tcp/0.0.0.0:7448\nzenoh_connect = tcp/10.0.0.7:7448\n"
+            )
             (runtime / fleetctl.LEGACY_PLANE_CONFIG).write_text(legacy, encoding="utf-8")
             self.assertEqual(fleetctl.read_plane_config(plane, remote, ROOT), (legacy, legacy))
+            direct = fleetctl.configure_plane(legacy, plane, "udpout://sitl:14580")
+            self.assertIn("zenoh_listen = tcp/0.0.0.0:7448", direct)
+            self.assertIn("zenoh_connect = tcp/10.0.0.7:7448", direct)
 
             profile_name = "config/site's preset.ini"
             original = (
                 f"[deployment]\nprofile = {profile_name}\n"
                 "[system]\nsafe_height_m = 30\n"
+                "[communication]\nzenoh_listen = tcp/0.0.0.0:7448\nzenoh_connect = tcp/10.0.0.7:7448\n"
                 "[camera]\npod_video_url = rtsp://ignored"
             )
             (runtime / fleetctl.PLANE_CONFIG).write_text(original, encoding="utf-8")
@@ -237,16 +244,21 @@ class FleetCtlTest(unittest.TestCase):
                 f"[aircraft-1]\nboard_ip = {board_ip}\nfc_url = serial:///dev/ttyS0:115200\n"
                 "pod_model = jielian_a2416a\npod_video_url = rtsp://camera/live?a=1&b=2\n"
                 "pod_control_url = udp://camera:8001\n"
-                f"[aircraft-2]\nboard_ip = {other_board_ip}\nfc_url = udpout://sitl:14281\n",
+                f"[aircraft-2]\nboard_ip = {other_board_ip}\nfc_url = udpout://sitl:14281\n"
+                "[groundstation]\nip = 192.168.1.41\n",
                 encoding="utf-8",
             )
             actual, effective = fleetctl.read_plane_config(plane, remote, ROOT)
             self.assertEqual(actual, original)
+            zenoh_endpoints = (
+                f"zenoh_listen = tcp/{board_ip}:7447",
+                f"zenoh_connect = tcp/192.168.1.41:7447,tcp/{other_board_ip}:7447",
+            )
             for setting in (
                 "safe_height_m = 30", "profile = \n", f"board_ip = {board_ip}", "plane_id = aircraft-1",
                 "link_type = serial", "serial_device = /dev/ttyS0", "serial_baud = 115200",
                 "pod_model = jielian_a2416a", "pod_video_url = rtsp://camera/live?a=1&b=2",
-                "pod_control_url = udp://camera:8001",
+                "pod_control_url = udp://camera:8001", *zenoh_endpoints,
             ):
                 self.assertIn(setting, effective)
             template = (ROOT / fleetctl.PLANE_CONFIG).read_text(encoding="utf-8")
@@ -260,6 +272,9 @@ class FleetCtlTest(unittest.TestCase):
             self.assertIn("udp_url = udpout://sitl:14580", rendered)
             self.assertIn("link_type = udp", rendered)
             self.assertIn("profile = \n", rendered)
+            for endpoint in zenoh_endpoints:
+                self.assertIn(endpoint, presence)
+                self.assertIn(endpoint, rendered)
 
             active_addresses.append({"family": "inet", "local": other_board_ip})
             with self.assertRaisesRegex(fleetctl.FleetError, "多个飞机 ID"):
@@ -267,6 +282,47 @@ class FleetCtlTest(unittest.TestCase):
             active_addresses.clear()
             with self.assertRaisesRegex(fleetctl.FleetError, "未匹配"):
                 fleetctl.read_plane_config(plane, remote, ROOT)
+
+    def test_profile_zenoh_endpoints_sort_peers_and_allow_optional_groundstation(self):
+        local_ip = "192.168.1.100"
+        single_aircraft = f"[uav1]\nboard_ip = {local_ip}\nfc_url = serial:///dev/ttyS0:115200\n"
+        aircraft = single_aircraft + (
+            "[uav2]\nboard_ip = 192.168.1.11\nfc_url = serial:///dev/ttyS0:115200\n"
+            "[uav3]\nboard_ip = 192.168.1.2\nfc_url = serial:///dev/ttyS0:115200\n"
+        )
+        peers = "tcp/192.168.1.2:7447,tcp/192.168.1.11:7447"
+        for groundstation, expected in (
+            ("", peers),
+            ("[groundstation]\nip =\n", peers),
+            ("[groundstation]\nip = 192.168.1.200\n", f"tcp/192.168.1.200:7447,{peers}"),
+        ):
+            with self.subTest(groundstation=groundstation):
+                settings = fleetctl.deployment_settings(
+                    "profile.ini", groundstation + aircraft, {local_ip}, allow_unmatched=False
+                )
+                self.assertIn(("communication", "zenoh_listen", f"tcp/{local_ip}:7447"), settings)
+                self.assertIn(("communication", "zenoh_connect", expected), settings)
+
+        only_one = fleetctl.deployment_settings(
+            "profile.ini", single_aircraft, {local_ip}, allow_unmatched=False
+        )
+        self.assertIn(("communication", "zenoh_connect", ""), only_one)
+
+    def test_profile_zenoh_rejects_invalid_or_conflicting_groundstation(self):
+        local_ip = "192.168.1.100"
+        peer_ip = "192.168.1.101"
+        aircraft = (
+            f"[uav1]\nboard_ip = {local_ip}\nfc_url = serial:///dev/ttyS0:115200\n"
+            f"[uav2]\nboard_ip = {peer_ip}\nfc_url = serial:///dev/ttyS0:115200\n"
+        )
+        for groundstation_ip in (
+            "groundstation", "::1", "0.1.2.3", "127.0.0.1", "224.0.0.1", "240.0.0.1",
+            "255.255.255.255", local_ip, peer_ip,
+        ):
+            with self.subTest(groundstation_ip=groundstation_ip):
+                text = aircraft + f"[groundstation]\nip = {groundstation_ip}\n"
+                with self.assertRaisesRegex(fleetctl.FleetError, r"groundstation\.ip"):
+                    fleetctl.deployment_settings("profile.ini", text, {local_ip}, allow_unmatched=False)
 
     def test_metadata_config_preserves_custom_addresses(self):
         plane = fleetctl.load_config(fleetctl.DEFAULT_CONFIG).planes[0]

@@ -238,9 +238,12 @@ cd build/plane
 profile = config/profiles/sitl_jielian_a2416a.ini
 ```
 
-预置中每个节名是飞机 ID，`board_ip` 和 `fc_url` 必填。UDP 飞控可填写 `udpout://192.168.1.56:14280`，串口可填写 `serial:///dev/ttyS0:57600`。以下为默认预置中的一号机。
+预置使用飞机 ID 作为飞机节名，`board_ip` 和 `fc_url` 必填。UDP 飞控可填写 `udpout://192.168.1.56:14280`，串口可填写 `serial:///dev/ttyS0:57600`。以下为默认预置中的地面站和一号机。
 
 ```ini
+[groundstation]
+ip = 192.168.1.41
+
 [uav1]
 board_ip = 192.168.1.100
 fc_url = udpout://192.168.1.56:14280
@@ -253,7 +256,12 @@ pod_control_url = udp://192.168.1.56:8001
 命中的节提供本机身份、飞控连接和吊舱配置，`pod_video_url` 随 `AgentInfo` 上报。
 `pod_model`、`pod_video_url` 和 `pod_control_url` 均可留空。
 
+程序在本机 `board_ip` 的 TCP `7447` 端口监听，主动连接 `groundstation.ip` 和按 IPv4 数值升序排列的所有其他飞机。
+这些端点覆盖主配置中的 `zenoh_listen` 和 `zenoh_connect`。`groundstation.ip` 可省略或留空，填写时须为单播 IPv4，且与所有板卡 IP 不同。
+同一机群的 `board_ip` 应是节点之间可达的地址。地面站使用现有的 `tcp/0.0.0.0:7447` 监听。
+
 随包预置文件按 `sitl_<pod_model>.ini` 命名，可选 `jielian_a2416a`、`two_axis`、`aisheng_asd2` 和 `zhongke_d80`。
+仿真预置的地面站为 `192.168.1.41`，`real_test.ini` 的地面站为 `192.168.1.200`。
 部署客户机群时，将对应 INI 放入运行目录的 `config/profiles/` 并修改 `profile`。单机直配时清空 `profile`，在主配置中填写板卡 IP、飞机 ID、飞控连接和吊舱配置。
 
 ### 系统与通信
@@ -269,13 +277,13 @@ pod_control_url = udp://192.168.1.56:8001
 | `system.state_report_period_ms` | 状态上报周期 |
 | `communication.plane_id` | 本机标识 |
 | `communication.zenoh_config_file` | Zenoh 原生配置文件，默认 `config/zenoh.json5` |
-| `communication.zenoh_connect` / `zenoh_listen` | Zenoh 连接或监听端点，默认留空使用自动发现 |
+| `communication.zenoh_connect` / `zenoh_listen` | 单机直配的 Zenoh 连接或监听端点，留空沿用 Zenoh 原生配置 |
 | `communication.ack_timeout_ms` / `ack_max_retries` | 可靠消息确认超时和重试次数 |
 | `communication.rx_queue_max` | 通信接收队列容量，满时丢弃最旧消息 |
 | `communication.gcs_link_timeout_ms` | 地面站链路超时阈值 |
 | `communication.debug_log` | 是否记录 Zenoh 消息目标端点 |
 
-默认 Zenoh 配置保留 peer 模式、组播发现和 gossip，不指定固定连接地址。
+Zenoh 使用 peer 模式。机群预置通过 TCP 单播建链，组播发现和 gossip 由 Zenoh 原生配置控制，默认开启。
 `config/zenoh.json5` 将 `transport/unicast/open_timeout` 设为 `2000` 毫秒，限制每次主动建链的等待时间；
 连接失败后仍按默认策略重试。该值不修改已建立连接的在线判定或业务消息确认超时。
 从运行目录根部启动时加载此文件；清空 `zenoh_config_file` 则使用 Zenoh 库的默认配置。

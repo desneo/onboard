@@ -83,6 +83,7 @@ int main() {
         std::ofstream file(path);
         file << "[deployment]\nprofile = " << cleanup.profile_path
              << "\n[system]\nboard_ip = 192.168.1.10\n[communication]\nplane_id = direct\n"
+                "zenoh_connect = tcp/192.168.1.11:9555\nzenoh_listen = tcp/192.168.1.10:9555\n"
                 "[camera]\npod_model = direct\npod_video_url = rtsp://direct/live\n"
                 "pod_control_url = udp://direct:8000\npod_state_report_hz = 8\n";
         if (!file) return 7;
@@ -92,7 +93,7 @@ int main() {
         "pod_model = jielian_a2416a\npod_video_url = rtsp://192.168.1.56:8554/jielian_a2416a\n"
         "pod_control_url = udp://192.168.1.56:8001\n";
     const std::string uav2 =
-        "[uav2]\nboard_ip = 192.168.1.101\nfc_url = udpin://:14281\n"
+        "[uav2]\nboard_ip = 192.168.1.9\nfc_url = udpin://:14281\n"
         "pod_video_url = rtsp://192.168.1.56:8555/jielian_a2416a\n";
     const std::string uav3 = "[uav3]\nboard_ip = 192.168.1.102\nfc_url = serial:///dev/ttyS0:57600\n";
     const auto write_profile = [&](const std::string& content) {
@@ -100,30 +101,38 @@ int main() {
         file << content;
         return static_cast<bool>(file);
     };
-    if (!write_profile(uav1 + uav2 + uav3)) return 8;
+    if (!write_profile("[groundstation]\nip = 192.168.1.41\n" + uav1 + uav3 + uav2)) return 8;
     const std::vector<std::string> first{"10.0.0.2", "192.168.1.100", "192.168.1.100"};
     if (!plane::core::load_config(path, config, &first) || config.plane_id != "uav1" ||
         config.board_ip != "192.168.1.100" || config.fc_link_type != "udp" ||
         config.fc_udp_url != "udpout://192.168.1.56:14280" || !config.is_sim ||
         config.pod_model != "jielian_a2416a" || config.pod_video_url != "rtsp://192.168.1.56:8554/jielian_a2416a" ||
-        config.pod_control_url != "udp://192.168.1.56:8001" || config.pod_state_report_hz != 8) {
+        config.pod_control_url != "udp://192.168.1.56:8001" || config.pod_state_report_hz != 8 ||
+        config.zenoh_listen != "tcp/192.168.1.100:7447" ||
+        config.zenoh_connect != "tcp/192.168.1.41:7447,tcp/192.168.1.9:7447,tcp/192.168.1.102:7447") {
         return 9;
     }
-    const std::vector<std::string> second{"192.168.1.101"};
-    if (!plane::core::load_config(path, config, &second) || config.plane_id != "uav2" ||
-        config.board_ip != "192.168.1.101" || config.fc_udp_url != "udpin://:14281" || !config.is_sim ||
+    const std::vector<std::string> second{"192.168.1.9"};
+    if (!write_profile(uav1 + uav2 + uav3) || !plane::core::load_config(path, config, &second) ||
+        config.plane_id != "uav2" || config.board_ip != "192.168.1.9" ||
+        config.fc_udp_url != "udpin://:14281" || !config.is_sim ||
         config.pod_video_url != "rtsp://192.168.1.56:8555/jielian_a2416a" ||
-        !config.pod_model.empty() || !config.pod_control_url.empty()) {
+        !config.pod_model.empty() || !config.pod_control_url.empty() ||
+        config.zenoh_listen != "tcp/192.168.1.9:7447" ||
+        config.zenoh_connect != "tcp/192.168.1.100:7447,tcp/192.168.1.102:7447") {
         return 10;
     }
     const std::vector<std::string> third{"192.168.1.102"};
-    if (!plane::core::load_config(path, config, &third) || config.plane_id != "uav3" ||
+    if (!write_profile(uav1 + "[groundstation]\nip = 192.168.1.200\n" + uav2 + uav3) ||
+        !plane::core::load_config(path, config, &third) || config.plane_id != "uav3" ||
         config.fc_link_type != "serial" || config.fc_serial_device != "/dev/ttyS0" ||
-        config.fc_serial_baud != 57600 || config.is_sim || !config.pod_video_url.empty()) {
+        config.fc_serial_baud != 57600 || config.is_sim || !config.pod_video_url.empty() ||
+        config.zenoh_listen != "tcp/192.168.1.102:7447" ||
+        config.zenoh_connect != "tcp/192.168.1.200:7447,tcp/192.168.1.9:7447,tcp/192.168.1.100:7447") {
         return 11;
     }
     const std::vector<std::string> unknown{"192.168.1.103"};
-    const std::vector<std::string> multiple{"192.168.1.100", "192.168.1.101"};
+    const std::vector<std::string> multiple{"192.168.1.100", "192.168.1.9"};
     if (plane::core::load_config(path, config, &unknown) || plane::core::load_config(path, config, &multiple)) {
         return 12;
     }
@@ -134,22 +143,38 @@ int main() {
         uav1 + "[other]\nboard_ip = 192.168.1.104\n",
         uav1 + "[other]\nboard_ip = 192.168.1.104\nfc_url = udpout://192.168.1.56:14280junk\n",
         uav1 + "[other]\nboard_ip = 192.168.1.104\nfc_url = serial:///dev/ttyS0:0\n",
+        uav1 + "[groundstation]\nip = station.local\n",
+        uav1 + "[groundstation]\nip = 224.0.0.224\n",
+        uav1 + "[groundstation]\nip = 255.255.255.255\n",
+        uav1 + "[groundstation]\nip = 0.0.0.0\n",
+        uav1 + "[groundstation]\nip = 127.0.0.1\n",
+        uav1 + uav2 + "[groundstation]\nip = 192.168.1.9\n",
     };
     for (const auto& invalid : invalid_profiles) {
         if (!write_profile(invalid) || plane::core::load_config(path, config, &first) || config.plane_id != "uav3") {
             return 13;
         }
     }
+    if (!write_profile(uav1 + "[groundstation]\nip =\n" + uav3) ||
+        !plane::core::load_config(path, config, &first) || config.zenoh_connect != "tcp/192.168.1.102:7447") {
+        return 25;
+    }
+    if (!write_profile(uav1 + "[groundstation]\nip =\n") || !plane::core::load_config(path, config, &first) ||
+        config.zenoh_listen != "tcp/192.168.1.100:7447" || !config.zenoh_connect.empty()) {
+        return 26;
+    }
     std::filesystem::remove(cleanup.profile_path);
     if (plane::core::load_config(path, config, &first)) return 14;
     {
         std::ofstream file(path);
         file << "[deployment]\nprofile =\n[communication]\nplane_id = direct\n"
+                "zenoh_connect = tcp/192.168.1.11:9555\nzenoh_listen = tcp/192.168.1.10:9555\n"
                 "[flight_control]\nlink_type = udp\nudp_url = udp://:14540\n";
         if (!file) return 15;
     }
     if (!plane::core::load_config(path, config, &first) || config.plane_id != "direct" ||
-        config.fc_udp_url != "udp://:14540" || config.is_sim || config.pod_state_report_hz != 5) {
+        config.fc_udp_url != "udp://:14540" || config.is_sim || config.pod_state_report_hz != 5 ||
+        config.zenoh_connect != "tcp/192.168.1.11:9555" || config.zenoh_listen != "tcp/192.168.1.10:9555") {
         return 16;
     }
     for (const auto* invalid : {"0", "-1", "5.5", "8Hz", "", "9999999999999999999"}) {

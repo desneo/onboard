@@ -95,9 +95,9 @@ python3 tools/fleetctl.py down --count 2
 3. 重启 SITL，解析飞控地址。
 4. 同步到 `/home/firefly/plane`，生成逐机配置，启动并持续分析日志。
 
-工具读取板端 `config/plane.ini`，首次升级可读取旧 `config/plane.conf` 迁移现场参数。需要注入逐机端点的测试先读取现场有效配置，再将生成的 `plane.ini` 的 `profile` 留空。
+工具读取板端 `config/plane.ini`，首次升级可读取旧 `config/plane.conf` 迁移现场参数。需要注入逐机参数的测试先展开现场预置，写入生成的 Zenoh TCP 单播端点，再将生成的 `plane.ini` 的 `profile` 留空。
 
-Zenoh 使用默认发现，不依赖 GCS 地址。测试证据写入 `logs/fleet/<run_id>/`；验证通过后环境保持运行，以便继续检查，失败时也保留现场并提示使用 `down` 停止。
+没有配置地面站时，Zenoh 仍可通过预置中的机间端点通信。测试证据写入 `logs/fleet/<run_id>/`；验证通过后环境保持运行，以便继续检查，失败时也保留现场并提示使用 `down` 停止。
 
 板端运行日志固定写入 `logs/plane.log`，不创建日期目录，单文件达到 50 MB 后轮转为
 `plane.1.log` 至 `plane.5.log`。`logs/plane.stdout.log` 保存本次启动的标准输出和错误输出。
@@ -135,11 +135,11 @@ cd build/plane
 ### 3.3 部署预置板端验收
 
 1. 确认捷联 A2416A SITL 一号机在 `192.168.1.56:14280` 提供飞控连接。
-2. 从 `tests/fleet.ini` 选取 `uav1`（`192.168.1.100`），备份板端现场配置。将运行包部署到 `/home/firefly/plane`，保留默认 `profile = config/profiles/sitl_jielian_a2416a.ini` 并执行 `./runplane.sh`。
-3. 从本机同一 Zenoh 网络查询板端信息并接收遥测。
+2. 从 `tests/fleet.ini` 选取 `uav1`（`192.168.1.100`），备份板端现场配置。将运行包和更新后的 `sitl_jielian_a2416a.ini` 部署到 `/home/firefly/plane`，选中该 profile 并执行 `./runplane.sh`。
+3. 确认机载监听 `192.168.1.100:7447`，主动连接正在 TCP `7447` 监听的地面站 `192.168.1.41`，以及其他飞机。检查地面站收到 `uav1` 的 `AgentInfo` 和持续的 `VehicleState`。可从同一网络显式连接机载并查询。
 
 ```bash
-./build/gcs_sim --query AgentInfo --agent-id uav1 --no-radar-udp --listen-seconds 5
+./build/gcs_sim --connect tcp/192.168.1.100:7447 --query AgentInfo --agent-id uav1 --no-radar-udp --listen-seconds 5
 ```
 
 通过标准为启动日志显示匹配 `uav1`、飞控实际连接到 `14280`，收到 `fcLinkState=connected` 的有效位置遥测。
@@ -164,13 +164,13 @@ cd build/plane
 
 ### 4.2 核心回归
 
-`zenoh_liveliness` 在本机 TCP 回环网络上验证已有存活标记发现、退出下线和重连上线，不连接飞机。
+`zenoh_liveliness` 在本机关闭组播和 gossip，使用两个互相拨号的机载 peer 和一个地面站 peer 验证 TCP 单播收发、`AgentInfo` 查询、退出下线和重连上线。
 `state_store_quiet` 验证连续状态更新仍发布内部事件并更新缓存，但不产生日志。
 部署工具按最新运行中的上下线事件验证在线状态，不再把日志条数当作收到的位置样本数。
 
 默认运行包须包含 `config/zenoh.json5`，由 `plane.ini` 的 `zenoh_config_file` 加载，
-`transport/unicast/open_timeout` 为 `2000` 毫秒；`zenoh_connect` 留空，保留组播和 gossip 自动发现。
-修改该配置后，在一号机验证自动发现的 AgentInfo 上报与查询、正常停止及恢复启动，
+`transport/unicast/open_timeout` 为 `2000` 毫秒。机群预置生成 `zenoh_connect`，原生配置默认开启组播发现和 gossip。
+修改该配置后，在一号机验证 AgentInfo 上报与查询、正常停止及恢复启动，
 记录实际停止耗时，并确认没有触发停止脚本的强制结束。
 
 运行日志检查须确认项目人工编写的消息和业务描述均使用中文，不出现英文句子；API 名、协议名、

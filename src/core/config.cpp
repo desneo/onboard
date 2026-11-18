@@ -9,13 +9,14 @@
 #include <cerrno>
 #include <charconv>
 #include <cmath>
+#include <cstdint>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 
 namespace plane::core {
@@ -92,7 +93,7 @@ std::unordered_map<std::string, IniOptions> read_profile(const std::string& path
                 throw std::runtime_error("飞机 ID 无效，行号=" + std::to_string(line_number));
             }
             if (!entries.try_emplace(section).second) {
-                throw std::runtime_error("plane_id 重复: " + section);
+                throw std::runtime_error("配置节重复: [" + section + "]");
             }
             continue;
         }
@@ -141,16 +142,23 @@ FlightEndpoint parse_flight_url(const std::string& url, const std::string& plane
     throw std::runtime_error("fc_url 无效，plane_id=" + plane_id);
 }
 
+std::string zenoh_tcp_endpoint(const std::string& ip) {
+    return "tcp/" + ip + ":7447";
+}
+
 void apply_profile(const std::string& path, const std::vector<std::string>& local_addresses, AppConfig& config) {
-    std::unordered_set<std::string> board_ips;
+    auto entries = read_profile(path);
+    const auto groundstation = entries.extract("groundstation");
+    const auto groundstation_ip = groundstation.empty() ? std::string{} : profile_value(groundstation.mapped(), "ip");
+    std::map<std::uint32_t, std::string> board_ips;
     std::string matched_id;
-    for (const auto& [plane_id, options] : read_profile(path)) {
+    for (const auto& [plane_id, options] : entries) {
         const auto board_ip = profile_value(options, "board_ip");
         in_addr address{};
         if (inet_pton(AF_INET, board_ip.c_str(), &address) != 1) {
             throw std::runtime_error("board_ip 无效，plane_id=" + plane_id);
         }
-        if (!board_ips.insert(board_ip).second) {
+        if (!board_ips.emplace(ntohl(address.s_addr), board_ip).second) {
             throw std::runtime_error("board_ip 重复: " + board_ip);
         }
 
@@ -177,9 +185,34 @@ void apply_profile(const std::string& path, const std::vector<std::string>& loca
             config.fc_serial_baud = endpoint.serial_baud;
         }
     }
+    std::string zenoh_connect;
+    if (!groundstation_ip.empty()) {
+        in_addr address{};
+        const bool valid_ip = inet_pton(AF_INET, groundstation_ip.c_str(), &address) == 1;
+        const auto ipv4 = ntohl(address.s_addr);
+        const auto first_octet = ipv4 >> 24;
+        if (!valid_ip || first_octet == 0 || first_octet == 127 || first_octet >= 224) {
+            throw std::runtime_error("groundstation.ip 须为有效的单播 IPv4: " + groundstation_ip);
+        }
+        if (board_ips.count(ipv4) != 0) {
+            throw std::runtime_error("groundstation.ip 与 board_ip 重复: " + groundstation_ip);
+        }
+        zenoh_connect = zenoh_tcp_endpoint(groundstation_ip);
+    }
     if (matched_id.empty()) {
         throw std::runtime_error("本机 IPv4 未匹配任何飞机");
     }
+    for (const auto& [address, ip] : board_ips) {
+        if (ip == config.board_ip) {
+            continue;
+        }
+        if (!zenoh_connect.empty()) {
+            zenoh_connect += ',';
+        }
+        zenoh_connect += zenoh_tcp_endpoint(ip);
+    }
+    config.zenoh_listen = zenoh_tcp_endpoint(config.board_ip);
+    config.zenoh_connect = std::move(zenoh_connect);
     SPDLOG_INFO("部署预置已匹配: profile={} plane_id={} board_ip={} pod_model={}", path, config.plane_id,
                 config.board_ip, config.pod_model);
 }

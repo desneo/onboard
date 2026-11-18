@@ -701,8 +701,6 @@ def configure_plane(base: str, plane: Plane, flight_url: str) -> str:
         ("system", "board_ip", plane.host),
         ("communication", "plane_id", plane.plane_id),
         ("communication", "zenoh_config_file", "config/zenoh.json5"),
-        ("communication", "zenoh_connect", ""),
-        ("communication", "zenoh_listen", ""),
         ("flight_control", "link_type", "udp"),
         ("flight_control", "udp_url", flight_url),
     ]
@@ -733,17 +731,22 @@ def deployment_settings(
     parser.optionxform = str
     parser.SECTCRE = re.compile(r"\[(?P<header>[^\[\]]+)\]$")
     parser.read_string("\n".join(line.strip() for line in text.splitlines()), source=path)
-    selected = None
-    plane_ids = set()
-    board_ips = set()
+    selected: list[tuple[str, str, str]] = []
+    selected_ip: ipaddress.IPv4Address | None = None
+    section_names = set()
+    board_ips: set[ipaddress.IPv4Address] = set()
+    groundstation_ip = ""
     for section in parser.sections():
         plane_id = section.strip()
-        if not plane_id or re.search(r"[/\*?#$\s]", plane_id) or plane_id in plane_ids:
+        if not plane_id or re.search(r"[/\*?#$\s]", plane_id) or plane_id in section_names:
             raise FleetError(f"部署预置 {path} 的飞机 ID 无效或重复: [{section}]")
-        plane_ids.add(plane_id)
+        section_names.add(plane_id)
         entry = parser[section]
+        if plane_id == "groundstation":
+            groundstation_ip = entry.get("ip", "")
+            continue
         try:
-            board_ip = str(ipaddress.IPv4Address(entry.get("board_ip", "")))
+            board_ip = ipaddress.IPv4Address(entry.get("board_ip", ""))
         except ipaddress.AddressValueError as exc:
             raise FleetError(f"部署预置 {path} 的 [{plane_id}] 缺少有效 board_ip") from exc
         if board_ip in board_ips:
@@ -774,19 +777,39 @@ def deployment_settings(
             ]
         else:
             raise FleetError(f"部署预置 {path} 的 [{plane_id}] 缺少有效 fc_url")
-        if board_ip not in local_addresses:
+        if str(board_ip) not in local_addresses:
             continue
-        if selected is not None:
+        if selected_ip is not None:
             raise FleetError(f"部署预置 {path} 中有多个飞机 ID 匹配本机 IPv4")
+        selected_ip = board_ip
         selected = [
             ("communication", "plane_id", plane_id),
-            ("system", "board_ip", board_ip),
+            ("system", "board_ip", str(board_ip)),
             *flight_settings,
             *(("camera", key, entry.get(key, "")) for key in ("pod_model", "pod_video_url", "pod_control_url")),
         ]
-    if selected is None and not allow_unmatched:
-        raise FleetError(f"部署预置 {path} 未匹配本机 IPv4")
-    return selected or []
+    connect_endpoints = []
+    if groundstation_ip:
+        try:
+            station_ip = ipaddress.IPv4Address(groundstation_ip)
+        except ipaddress.AddressValueError as exc:
+            raise FleetError(f"部署预置 {path} 的 groundstation.ip 无效: {groundstation_ip}") from exc
+        if station_ip.packed[0] in (0, 127) or station_ip.packed[0] >= 224:
+            raise FleetError(f"部署预置 {path} 的 groundstation.ip 须为单播 IPv4: {groundstation_ip}")
+        if station_ip in board_ips:
+            raise FleetError(f"部署预置 {path} 的 groundstation.ip 与 board_ip 重复: {groundstation_ip}")
+        connect_endpoints.append(f"tcp/{station_ip}:7447")
+
+    if selected_ip is None:
+        if not allow_unmatched:
+            raise FleetError(f"部署预置 {path} 未匹配本机 IPv4")
+        return []
+    connect_endpoints.extend(f"tcp/{peer_ip}:7447" for peer_ip in sorted(board_ips - {selected_ip}))
+    selected.extend([
+        ("communication", "zenoh_listen", f"tcp/{selected_ip}:7447"),
+        ("communication", "zenoh_connect", ",".join(connect_endpoints)),
+    ])
+    return selected
 
 
 def read_plane_config(
