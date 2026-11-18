@@ -11,6 +11,8 @@ std::vector<std::string> command_node_names(plane::model::CommandType type,
             return {"Arm"};
         case plane::model::CommandType::Disarm:
             return {"Disarm"};
+        case plane::model::CommandType::SelfCheck:
+            return {"SelfCheck"};
         case plane::model::CommandType::Land:
             return {"Land"};
         case plane::model::CommandType::RTL:

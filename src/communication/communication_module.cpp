@@ -64,6 +64,11 @@ struct MessageTypeOf<plane::model::PodState> {
     static constexpr auto value = plane::model::MessageType::PodState;
 };
 
+template <>
+struct MessageTypeOf<plane::model::SelfCheckResult> {
+    static constexpr auto value = plane::model::MessageType::SelfCheckResult;
+};
+
 bool make_message(const std::string& sender_id, const OutgoingMessage& value, plane::model::Message& out,
                   std::string& error) {
     static std::atomic<std::uint64_t> counter{0};
@@ -310,7 +315,7 @@ void CommunicationModule::on_wire_message(const IncomingMessage& incoming) {
         handle_pod_command(envelope, incoming);
         return;
     }
-    handle_envelope(envelope, incoming.received_at);
+    handle_envelope(envelope, incoming);
 }
 
 void CommunicationModule::handle_pod_command(const plane::model::Message& envelope, const IncomingMessage& incoming) {
@@ -359,8 +364,7 @@ bool CommunicationModule::remember_flight_control(const plane::model::Message& e
     return true;
 }
 
-void CommunicationModule::handle_envelope(const plane::model::Message& envelope,
-                                          std::chrono::steady_clock::time_point received_at) {
+void CommunicationModule::handle_envelope(const plane::model::Message& envelope, const IncomingMessage& incoming) {
     std::string error;
     switch (envelope.type) {
         case plane::model::MessageType::TaskInfo: {
@@ -372,7 +376,7 @@ void CommunicationModule::handle_envelope(const plane::model::Message& envelope,
             state_store_.notify_station_seen();
             if (remember_flight_control(envelope)) {
                 event_bus_.publish(events::kTaskInfoReceived,
-                                   ReceivedControl<plane::model::TaskInfo>{std::move(value), received_at});
+                                   ReceivedControl<plane::model::TaskInfo>{std::move(value), incoming.received_at});
             }
             send_ack(envelope.messageId);
             break;
@@ -383,10 +387,14 @@ void CommunicationModule::handle_envelope(const plane::model::Message& envelope,
                 report_error("Command 解码失败: " + error);
                 return;
             }
+            if (value.type == plane::model::CommandType::SelfCheck &&
+                (!incoming.unicast || !is_valid_agent_id(envelope.senderId) || envelope.messageId.empty())) {
+                return;
+            }
             state_store_.notify_station_seen();
             if (remember_flight_control(envelope)) {
                 event_bus_.publish(events::kCommandReceived,
-                                   ReceivedControl<plane::model::Command>{std::move(value), received_at});
+                                   ReceivedControl<plane::model::Command>{std::move(value), incoming.received_at});
             }
             send_ack(envelope.messageId);
             break;

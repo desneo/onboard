@@ -54,7 +54,9 @@ class TaskExecutionEngine final : public plane::core::IModule, public TaskExecut
     void tick_loop();
     void publish_progress(const std::string& node);
     void finish(plane::model::TaskStatus status, const std::string& detail);
-    void halt_tree();
+    bool is_self_check_tree() const;
+    bool stop_control(bool acknowledge_takeover, bool restore_self_check);
+    void halt_tree(bool restore_self_check = false);
     void cleanup_control();
 
     plane::core::EventBus& event_bus_;

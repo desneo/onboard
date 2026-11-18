@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -15,6 +16,7 @@
 #include <cstring>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -64,8 +66,9 @@ struct Options {
     std::string board_ip;
     std::string peer_plane_id;
     bool no_ack = false;
-    int listen_seconds = 0;
+    std::optional<int> listen_seconds;
     int ack_timeout_ms = 2000;
+    int self_check_timeout_ms = 35000;
     int control_settle_ms = 0;
     bool help = false;
     std::string query_type;
@@ -109,6 +112,7 @@ void print_usage() {
         "\n"
         "控制指令 (按出现顺序发往 sendToPlane/<plane-id>):\n"
         "  --arm                    解锁 (Arm)\n"
+        "  --self-check             自检 (SelfCheck)，等待执行结果\n"
         "  --disarm                 上锁 (Disarm)\n"
         "  --takeoff                起飞 (Takeoff)，高度取 --takeoff-height\n"
         "  --land                   降落 (Land)\n"
@@ -144,8 +148,9 @@ void print_usage() {
         "  --listen <endpoint>      本地监听端点\n"
         "\n"
         "其他:\n"
-        "  --listen-seconds <s>     运行时长；0 表示持续运行 (默认: 0)\n"
+        "  --listen-seconds <s>     额外监听时间；0 表示持续运行，执行自检后默认退出\n"
         "  --ack-timeout-ms <ms>    等待 Ack 超时 (默认: 2000)\n"
+        "  --self-check-timeout-ms <ms>  等待 SelfCheckResult 超时 (默认: 35000)\n"
         "  --control-settle-ms <ms> 控制报文发送前等待 Zenoh 路由匹配 (默认: 0)\n"
         "  --no-ack                 不回复收到的告警/Ack\n"
         "  --send-gcs-target <id>   下发地面站目标轨迹\n"
@@ -264,6 +269,11 @@ Options parse_options(int argc, char** argv) {
             options.listen_seconds = std::stoi(argv[++i]);
         } else if (arg == "--ack-timeout-ms" && i + 1 < argc) {
             options.ack_timeout_ms = std::stoi(argv[++i]);
+        } else if (arg == "--self-check-timeout-ms" && i + 1 < argc) {
+            options.self_check_timeout_ms = std::stoi(argv[++i]);
+            if (options.self_check_timeout_ms <= 0) {
+                throw std::invalid_argument("--self-check-timeout-ms 必须大于 0");
+            }
         } else if (arg == "--control-settle-ms" && i + 1 < argc) {
             options.control_settle_ms = std::stoi(argv[++i]);
         } else if (arg == "--takeoff-height" && i + 1 < argc) {
@@ -288,6 +298,8 @@ Options parse_options(int argc, char** argv) {
             options.waypoints.push_back(point);
         } else if (arg == "--arm") {
             options.actions.push_back({ActionKind::Command, "Arm", {}});
+        } else if (arg == "--self-check") {
+            options.actions.push_back({ActionKind::Command, "SelfCheck", {}});
         } else if (arg == "--disarm") {
             options.actions.push_back({ActionKind::Command, "Disarm", {}});
         } else if (arg == "--takeoff") {
@@ -374,13 +386,11 @@ void send_wire(plane::communication::ZenohTransport& session, const std::string&
     if (!session.put(topic, wire, error)) throw std::runtime_error(error);
 }
 
-std::string send_typed(plane::communication::ZenohTransport& session, const Options& options, const std::string& type,
-                       const std::string& payload, std::uint64_t sequence) {
-    const std::string message_id = options.sender_id + "-" + std::to_string(sequence);
+void send_typed(plane::communication::ZenohTransport& session, const Options& options, const std::string& type,
+                const std::string& payload, const std::string& message_id) {
     const std::string topic = "sendToPlane/" + options.plane_id;
     send_wire(session, topic, build_wire(options.sender_id, message_id, type, payload));
     SPDLOG_INFO("已发送 {}: messageId={}", type, message_id);
-    return message_id;
 }
 
 }  // namespace
@@ -406,6 +416,8 @@ int main(int argc, char** argv) {
     std::mutex mutex;
     std::condition_variable cv;
     std::set<std::string> acked_ids;
+    std::string pending_self_check;
+    std::optional<plane::model::SelfCheckResult> self_check_result;
     std::atomic<std::uint64_t> sequence{100};
 
     plane::communication::ZenohTransport session;
@@ -497,6 +509,23 @@ int main(int argc, char** argv) {
             }
             pod_state_count.fetch_add(1);
             SPDLOG_INFO("收到 PodState: {}", envelope.payload);
+            return;
+        }
+        if (envelope.type == "SelfCheckResult") {
+            if (from_broadcast || envelope.sender_id != options.plane_id) return;
+            plane::model::SelfCheckResult result;
+            std::string decode_error;
+            if (!plane::communication::from_payload(envelope.payload, result, decode_error)) {
+                SPDLOG_WARN("SelfCheckResult 解码失败: senderId={} {}", envelope.sender_id, decode_error);
+                return;
+            }
+            SPDLOG_INFO("收到 SelfCheckResult: senderId={} commandId={} success={} detail={}", envelope.sender_id,
+                        result.commandId, result.success, result.detail);
+            std::lock_guard<std::mutex> lock(mutex);
+            if (pending_self_check == result.commandId && !self_check_result) {
+                self_check_result = std::move(result);
+                cv.notify_all();
+            }
             return;
         }
         if (envelope.type == "Ack") {
@@ -730,9 +759,11 @@ int main(int argc, char** argv) {
     };
 
     bool all_acked = true;
+    bool self_check_executed = false;
     std::size_t command_index = 0;
     std::size_t task_index = 0;
     for (const auto& action : options.actions) {
+        if (g_stop_requested != 0) return 1;
         if (g_stop_requested != 0) break;
         if (action.kind == ActionKind::PodCommand) {
             try {
@@ -771,20 +802,32 @@ int main(int argc, char** argv) {
         }
         std::string type;
         std::string payload;
+        const auto sequence_suffix = std::to_string(++sequence);
+        const bool self_check = action.kind == ActionKind::Command && action.type == "SelfCheck";
+        std::string message_id = options.sender_id + "-" + sequence_suffix;
         if (action.kind == ActionKind::Command) {
             type = "Command";
-            nlohmann::json waypoints = nlohmann::json::array();
-            for (const auto& point : options.waypoints) {
-                waypoints.push_back({{"latitude", point.latitude},
-                                     {"longitude", point.longitude},
-                                     {"height", point.height},
-                                     {"altitude", point.altitude}});
+            if (self_check) {
+                message_id = options.sender_id + "-self-check-" + std::to_string(unix_now_ms()) + "-" +
+                             std::to_string(::getpid()) + "-" + sequence_suffix;
+                payload = nlohmann::json{{"commandId", message_id}, {"type", action.type}}.dump();
+                std::lock_guard<std::mutex> lock(mutex);
+                pending_self_check = message_id;
+                self_check_result.reset();
+            } else {
+                nlohmann::json waypoints = nlohmann::json::array();
+                for (const auto& point : options.waypoints) {
+                    waypoints.push_back({{"latitude", point.latitude},
+                                         {"longitude", point.longitude},
+                                         {"height", point.height},
+                                         {"altitude", point.altitude}});
+                }
+                payload = nlohmann::json{{"commandId", "cmd-" + std::to_string(++command_index)},
+                                         {"type", action.type},
+                                         {"takeoffHeight_m", options.takeoff_height_m},
+                                         {"waypoints", std::move(waypoints)}}
+                              .dump();
             }
-            payload = nlohmann::json{{"commandId", "cmd-" + std::to_string(++command_index)},
-                                     {"type", action.type},
-                                     {"takeoffHeight_m", options.takeoff_height_m},
-                                     {"waypoints", std::move(waypoints)}}
-                          .dump();
         } else {
             type = "TaskInfo";
             const std::string task_id =
@@ -795,12 +838,29 @@ int main(int argc, char** argv) {
                                      {"taskAction", action.task_action}}
                           .dump();
         }
-        const std::string message_id = send_typed(session, options, type, payload, ++sequence);
+        send_typed(session, options, type, payload, message_id);
         std::unique_lock<std::mutex> lock(mutex);
         const bool acked = cv.wait_for(lock, std::chrono::milliseconds(options.ack_timeout_ms),
                                        [&]() { return acked_ids.count(message_id) > 0; });
         SPDLOG_INFO("{} {} 确认结果: {}", type, action.type, acked ? "成功" : "失败");
-        all_acked = all_acked && acked;
+        if (!self_check) {
+            all_acked = all_acked && acked;
+        } else {
+            const auto deadline = std::chrono::steady_clock::now() +
+                                  std::chrono::milliseconds(options.self_check_timeout_ms);
+            while (!self_check_result && g_stop_requested == 0 && std::chrono::steady_clock::now() < deadline) {
+                const auto next_poll = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+                cv.wait_until(lock, std::min(next_poll, deadline));
+            }
+            if (!self_check_result) {
+                SPDLOG_ERROR("未收到 SelfCheckResult: commandId={}，{}", message_id,
+                             g_stop_requested == 0 ? "等待超时" : "等待已中止");
+                return 1;
+            }
+            if (g_stop_requested != 0 || !self_check_result->success) return 1;
+            pending_self_check.clear();
+            self_check_executed = true;
+        }
     }
     if (options.actions.empty()) {
         SPDLOG_INFO("未指定控制指令或任务，仅监听上报");
@@ -853,10 +913,11 @@ int main(int argc, char** argv) {
     }
 
     const auto listen_start = std::chrono::steady_clock::now();
-    while (g_stop_requested == 0) {
+    const int listen_seconds = options.listen_seconds.value_or(0);
+    while (g_stop_requested == 0 && (!self_check_executed || options.listen_seconds.has_value())) {
         if (agent_info_pending.exchange(false)) publish_agent_info();
-        if (options.listen_seconds > 0 &&
-            std::chrono::steady_clock::now() - listen_start >= std::chrono::seconds(options.listen_seconds)) {
+        if (listen_seconds > 0 &&
+            std::chrono::steady_clock::now() - listen_start >= std::chrono::seconds(listen_seconds)) {
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(100));

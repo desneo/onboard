@@ -18,6 +18,7 @@
 #include "task/nodes/midcourse_node.h"
 #include "task/nodes/mission_node.h"
 #include "task/nodes/rtl_node.h"
+#include "task/nodes/self_check_node.h"
 #include "task/nodes/stop_motor_node.h"
 #include "task/nodes/takeoff_node.h"
 #include "task/task_events.h"
@@ -67,7 +68,7 @@ bool TaskExecutionEngine::start() {
     return true;
 }
 
-void TaskExecutionEngine::stop() { abort(true); }
+void TaskExecutionEngine::stop() { stop_control(true, true); }
 
 void TaskExecutionEngine::release() {}
 
@@ -119,7 +120,9 @@ bool TaskExecutionEngine::start_command(std::uint64_t execution_id, const plane:
     float height = command.type == plane::model::CommandType::Takeoff ? command.takeoffHeight_m : 0.0F;
     if (height <= 0.0F) {
         height = static_cast<float>(system_param_.current().safeHeight_m);
-        SPDLOG_INFO("起飞指令未指定高度，使用安全高度: {} 米", height);
+        if (command.type == plane::model::CommandType::Takeoff) {
+            SPDLOG_INFO("起飞指令未指定高度，使用安全高度: {} 米", height);
+        }
     }
     command_context_.takeoffHeight_m = height;
 
@@ -143,6 +146,7 @@ BT::Tree TaskExecutionEngine::build_command_tree(const std::vector<std::string>&
     BT::BehaviorTreeFactory factory;
     factory.registerNodeType<ArmNode>("Arm", &flight_control_, &state_store_, &config_);
     factory.registerNodeType<DisarmNode>("Disarm", &flight_control_, &state_store_, &config_);
+    factory.registerNodeType<SelfCheckNode>("SelfCheck", &flight_control_, &ticking_);
     factory.registerNodeType<TakeoffNode>("Takeoff", &flight_control_, &state_store_, &config_, &system_param_,
                                           &command_context_);
     factory.registerNodeType<LandNode>("Land", &flight_control_, &state_store_, &config_);
@@ -212,8 +216,14 @@ BT::Tree TaskExecutionEngine::build_task_tree(const std::vector<std::string>& no
 }
 
 bool TaskExecutionEngine::abort(bool acknowledge_takeover) {
-    halt_tree();
-    cleanup_control();
+    return stop_control(acknowledge_takeover, false);
+}
+
+bool TaskExecutionEngine::stop_control(bool acknowledge_takeover, bool restore_self_check) {
+    halt_tree(restore_self_check);
+    if (!is_self_check_tree()) {
+        cleanup_control();
+    }
     if (execution_id_ != 0 && !flight_control_.end_control(execution_id_, acknowledge_takeover)) {
         return false;
     }
@@ -223,8 +233,12 @@ bool TaskExecutionEngine::abort(bool acknowledge_takeover) {
 
 bool TaskExecutionEngine::control_can_advance() const { return flight_control_.control_can_advance(); }
 
-void TaskExecutionEngine::halt_tree() {
-    ticking_ = false;
+bool TaskExecutionEngine::is_self_check_tree() const {
+    return !is_task_tree_ && command_context_.type == plane::model::CommandType::SelfCheck;
+}
+
+void TaskExecutionEngine::halt_tree(bool restore_self_check) {
+    const bool was_ticking = ticking_.exchange(false);
     if (tick_thread_.joinable()) {
         tick_thread_.join();
     }
@@ -233,6 +247,14 @@ void TaskExecutionEngine::halt_tree() {
         std::lock_guard<std::mutex> lock(mutex_);
         had_tree = tree_ready_;
         if (tree_ready_) {
+            if (restore_self_check && was_ticking && is_self_check_tree()) {
+                for (const auto& node : tree_.subtrees.front()->nodes) {
+                    if (auto* self_check = dynamic_cast<SelfCheckNode*>(node.get())) {
+                        self_check->restore_on_shutdown();
+                        break;
+                    }
+                }
+            }
             tree_.haltTree();
         }
         tree_ready_ = false;
@@ -253,13 +275,16 @@ void TaskExecutionEngine::tick_loop() {
         BT::NodeStatus status = BT::NodeStatus::IDLE;
         bool changed = false;
         bool exception_thrown = false;
+        bool is_self_check = false;
         std::string exception_text;
+        std::string self_check_detail;
         std::string node;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (!tree_ready_) {
                 break;
             }
+            is_self_check = is_self_check_tree();
             try {
                 status = tree_.tickOnce();
             } catch (const std::exception& e) {
@@ -267,10 +292,17 @@ void TaskExecutionEngine::tick_loop() {
                 exception_text = e.what();
             }
             if (!exception_thrown && !tree_.subtrees.empty() && tree_.subtrees.front()->blackboard) {
-                const bool has_node = tree_.subtrees.front()->blackboard->get("current_node", node);
+                const auto& blackboard = tree_.subtrees.front()->blackboard;
+                const bool has_node = blackboard->get("current_node", node);
                 if (has_node && !node.empty() && node != current_node_) {
                     current_node_ = node;
                     changed = true;
+                }
+                if (is_self_check && (status == BT::NodeStatus::SUCCESS || status == BT::NodeStatus::FAILURE)) {
+                    if (!blackboard->get(SelfCheckNode::kResultDetail, self_check_detail)) {
+                        status = BT::NodeStatus::FAILURE;
+                        self_check_detail = "未获得自检结果详情，未确认恢复上锁";
+                    }
                 }
             }
         }
@@ -278,6 +310,9 @@ void TaskExecutionEngine::tick_loop() {
             return;
         }
         if (exception_thrown) {
+            if (is_self_check) {
+                exception_text += "，未确认恢复上锁";
+            }
             finish(plane::model::TaskStatus::Failed, "行为树异常: " + exception_text);
             return;
         }
@@ -285,11 +320,12 @@ void TaskExecutionEngine::tick_loop() {
             publish_progress(node);
         }
         if (status == BT::NodeStatus::SUCCESS) {
-            finish(plane::model::TaskStatus::Completed, "");
+            finish(plane::model::TaskStatus::Completed, self_check_detail);
             return;
         }
         if (status == BT::NodeStatus::FAILURE) {
-            finish(plane::model::TaskStatus::Failed, "节点执行失败: " + node);
+            finish(plane::model::TaskStatus::Failed,
+                   self_check_detail.empty() ? "节点执行失败: " + node : self_check_detail);
             return;
         }
         std::this_thread::sleep_for(interval);
@@ -307,7 +343,9 @@ void TaskExecutionEngine::publish_progress(const std::string& node) {
 
 void TaskExecutionEngine::finish(plane::model::TaskStatus status, const std::string& detail) {
     ticking_ = false;
-    cleanup_control();
+    if (!is_self_check_tree()) {
+        cleanup_control();
+    }
     if (!flight_control_.end_control(execution_id_)) {
         return;
     }

@@ -83,6 +83,10 @@ OpenCV、RGA、Pluma 或 RKNN。
 
 - 任意时刻只允许一个 Task 或独立 Command 执行，不维护等待队列。
 - 新控制内容由 Task Scheduler 先中止当前内容，再启动最新内容。
+- `SelfCheck` 只占用空闲的调度槽，执行期间保留人工接管、`Disarm` 和 `StopMotor` 的优先级。
+  执行引擎通过自检节点确认两次飞控状态，调度器按飞行指令 ID 上报 `SelfCheckResult`。
+  Flight Control 请求 PX4 发送 `EXTENDED_SYS_STATE`，用于确认当前连接中的着地状态。
+  实机请求 2 Hz，SITL 请求 10 Hz 以适应仿真 MAVLink 链路的限速。
 - Task Scheduler 不创建 BehaviorTree，也不直接控制 PX4。
 - Task Execution Engine 可同步调用 Flight Control 和 State 能力。
 - Task 不包含 Command 序列，GCS 不定义机载 BehaviorTree。

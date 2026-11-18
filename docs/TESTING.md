@@ -253,6 +253,7 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 | 仿真 GCS 预检 | 场景 02 或旧 SITL 中启动 plane 后，PX4 不再报告 `Preflight Fail: No connection to the GCS`；日志包含 `GroundStation` 身份，随后 Arm 可被接受 |
 | 串口连接 | 使用配置的设备和波特率连接 PX4 |
 | Arm/Disarm | 指令成功且以真实 armed 状态判定完成 |
+| SelfCheck | 实际解锁后自动恢复上锁，飞机保持在地面，地面端收到可关联的成功或失败结果 |
 | Takeoff | 使用指定高度；未指定时使用安全高度；达到容差后完成 |
 | Land/RTL | 以实际离地状态判定完成 |
 | Hover | PX4 接受 Hold 指令 |
@@ -284,12 +285,29 @@ mavlink stream -u <机载链路的PX4本地UDP端口> -s HEARTBEAT -r 20
 | 快速拨动 `Loiter → Stabilized → Position` | 第一次符合接管条件即中止。同一次执行只产生一条 `manual_takeover` 告警，Task 上报 `Aborted`。旧报文重传只回 `Ack`，清理完成后新的 Task 或 Command 可以执行。 |
 | 地面站界面 | 提示条显示飞机、实际模式和被中止的 Task 或 Command。重复收包或轮询时，界面只提示一次。 |
 
+### 6.2 起飞前自检
+
+`self_check_node` 覆盖解锁和上锁遥测、飞控拒绝、超时、重连与安全清理。`task_scheduler_takeover`
+覆盖忙碌、优先中止和结果单次上报。`agent_info` 使用 Zenoh 回环验证单播、自检指令去重和结果关联。
+
+部署到 `uav1` 的 `/home/firefly/plane` 后，先确认连接到 `192.168.1.56` 的 PX4 SITL
+并收到实际遥测。将仿真飞机设置为地面上锁状态和 `Posctl` 模式。若 PX4 配置要求摇杆输入，
+用模拟摇杆提供零油门输入，并确认 PX4 预检通过。从同一 Zenoh 网络运行以下命令。
+
+```bash
+./build/gcs_sim --plane-id uav1 --no-radar-udp --control-settle-ms 1000 --command-type SelfCheck
+```
+
+核对 `SelfCheckResult` 中的 `senderId`、`commandId`、`success` 和 `detail`。通过时核对
+PX4 实际遥测的 `armed` 顺序为 `false → true → false`，自检全程保持在地面。用不支持的飞行模式
+验证失败原因，确认机载未下发解锁。
+
 ## 7. 任务与通信验收
 
 | 场景 | 通过标准 |
 | --- | --- |
 | 单一控制内容 | 任意时刻只有一个 Task 或 Command 执行 |
-| 最新内容替换 | 新 Task/Command 中止当前执行并立即启动最新内容 |
+| 最新内容替换 | 新 Task/Command 按调度优先级中止并替换当前执行，自检只在空闲时启动 |
 | 任务中止 | 只有匹配 taskId 的 Stop 生效，后续节点不再执行 |
 | 控制报文 | 不同发送方的合法 TaskInfo 和 Command 均进入任务调度 |
 | 接收确认 | 收到合法 TaskInfo 或 Command 后向 sendToStation 返回对应 messageId 的 Ack |

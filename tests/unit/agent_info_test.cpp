@@ -81,6 +81,7 @@ int main() {
     using plane::model::PodCommand;
     using plane::model::PodCommandType;
     using plane::model::PodState;
+    using plane::model::SelfCheckResult;
     static_assert(static_cast<int>(MessageType::VehicleState) == 7, "既有类型序号改变");
     static_assert(static_cast<int>(MessageType::AgentInfo) == 8, "AgentInfo 序号错误");
     char path[] = "/tmp/plane-agent-info-XXXXXX";
@@ -126,7 +127,9 @@ int main() {
     std::vector<std::string> ack_ids;
     std::vector<PodState> pod_states;
     std::vector<std::chrono::steady_clock::time_point> pod_report_times;
+    std::vector<SelfCheckResult> self_check_results;
     int command_count = 0;
+    int self_check_count = 0;
     int task_count = 0;
     bool expected_flight_command_received = false;
     bool expected_task_received = false;
@@ -152,6 +155,7 @@ int main() {
                     std::string error;
                     plane::model::Ack ack;
                     PodState pod_state;
+                    SelfCheckResult self_check_result;
                     if (!decode_envelope(wire, envelope, error) || envelope.senderId != config.plane_id) return;
                     std::lock_guard<std::mutex> lock(mutex);
                     if (envelope.type == MessageType::Ack && from_payload(envelope.payload, ack, error)) {
@@ -160,6 +164,9 @@ int main() {
                                from_payload(envelope.payload, pod_state, error)) {
                         pod_states.push_back(std::move(pod_state));
                         pod_report_times.push_back(std::chrono::steady_clock::now());
+                    } else if (envelope.type == MessageType::SelfCheckResult &&
+                               from_payload(envelope.payload, self_check_result, error)) {
+                        self_check_results.push_back(std::move(self_check_result));
                     } else {
                         return;
                     }
@@ -210,6 +217,10 @@ int main() {
     bus.subscribe<ReceivedCommand>(events::kCommandReceived, [&](const ReceivedCommand& request) {
         const auto& command = request.value;
         std::lock_guard<std::mutex> lock(mutex);
+        if (command.type == plane::model::CommandType::SelfCheck) {
+            ++self_check_count;
+            return;
+        }
         expected_flight_command_received = command.commandId == "control-1" &&
                                            command.type == plane::model::CommandType::Hover;
         ++command_count;
@@ -255,6 +266,33 @@ int main() {
                 "飞行指令或任务未送达，或重传报文再次进入调度");
     }
     require(store.gcs_link().connected, "valid controls did not update station activity");
+
+    const Message self_check{"check-station", "self-check", MessageType::Command,
+                             R"({"commandId":"check-1","type":"SelfCheck"})"};
+    require(observer.put("sendToAll", encode_envelope(self_check), error), error);
+    require(observer.put(command_topic,
+                         encode_envelope({"check-station", "bad-self-check", MessageType::Command,
+                                          R"({"commandId":"","type":"SelfCheck"})"}), error),
+            error);
+    send_and_wait_for_ack(self_check);
+    send_and_wait_for_ack(self_check);
+    require(module.sendToStation(SelfCheckResult{"check-1", false, "飞控拒绝解锁"}), "自检失败结果发送失败");
+    require(module.sendToStation(SelfCheckResult{"check-2", true, "解锁已确认"}), "自检成功结果发送失败");
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        require(changed.wait_for(lock, std::chrono::seconds(4), [&]() { return self_check_results.size() >= 2; }),
+                "未收到自检结果");
+        require(self_check_count == 1, "自检重传或广播再次进入调度");
+        require(self_check_results[0].commandId == "check-1" && !self_check_results[0].success &&
+                    self_check_results[0].detail == "飞控拒绝解锁" &&
+                    self_check_results[1].commandId == "check-2" && self_check_results[1].success &&
+                    self_check_results[1].detail == "解锁已确认",
+                "自检结果未保留 commandId、success 或 detail");
+    }
+    SelfCheckResult invalid_result;
+    require(!from_payload(R"({"commandId":"check-1","success":"false","detail":"失败"})", invalid_result,
+                          error),
+            "接受字符串作为自检结果的 success");
 
     PodCommand decoded_pod_command;
     require(!from_payload(R"({"type":"SetRate","pitchRate_deg_s":true,"yawRate_deg_s":0})", decoded_pod_command,
@@ -304,8 +342,8 @@ int main() {
                     camera.received_times[4] >= camera.received_times[3],
                 "吊舱指令单播、解码、去重或顺序有误");
         require(ack_ids == std::vector<std::string>{"command-message", "task-message", "command-message",
-                                                    "task-message", "zero-pitch", "zero-pitch", "zero-pitch",
-                                                    "zero-yaw", "angles"},
+                                                    "task-message", "self-check", "self-check", "zero-pitch",
+                                                    "zero-pitch", "zero-pitch", "zero-yaw", "angles"},
                 "飞行控制或吊舱指令回执有误");
         require(command_count == 1 && task_count == 1, "吊舱操作误入飞行指令或任务流程");
         require(pod_states.back().planeId == expected_pod_state.planeId &&

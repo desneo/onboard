@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -16,7 +18,39 @@ struct FlightStatus {
     int mission_current = 0;
     int mission_total = 0;
     float takeoff_altitude_m = 0.0F;  ///< 最近一次 Takeoff 指令高度
+    bool connected = false;
+    bool on_ground = false;
+    std::chrono::steady_clock::time_point armed_updated{};
+    std::chrono::steady_clock::time_point ground_updated{};
+    std::chrono::steady_clock::time_point mode_updated{};
+    std::string flight_mode;
+    std::uint64_t link_generation = 0;
 };
+
+inline constexpr auto kSelfCheckTelemetryMaxAge = std::chrono::seconds(3);
+
+inline bool self_check_telemetry_fresh(std::chrono::steady_clock::time_point updated,
+                                       std::chrono::steady_clock::time_point now) {
+    return updated != std::chrono::steady_clock::time_point{} && updated <= now &&
+           now - updated <= kSelfCheckTelemetryMaxAge;
+}
+
+inline std::string self_check_ground_error(const FlightStatus& status, std::chrono::steady_clock::time_point now,
+                                          bool require_fresh_mode = true) {
+    if (!status.connected) return "飞控未连接";
+    if (!self_check_telemetry_fresh(status.ground_updated, now) || !status.on_ground || status.in_air) {
+        return "未确认飞机在地面";
+    }
+    if (require_fresh_mode && !self_check_telemetry_fresh(status.mode_updated, now)) return "飞行模式遥测未就绪";
+    if (status.mode_updated != std::chrono::steady_clock::time_point{} &&
+        status.flight_mode != "Posctl" && status.flight_mode != "Altctl" &&
+        status.flight_mode != "Stabilized" && status.flight_mode != "Manual") {
+        return "飞行模式不允许执行自检（flight_mode=" + status.flight_mode + "）";
+    }
+    return {};
+}
+
+enum class SelfCheckArmResult { Accepted, Rejected, Uncertain };
 
 /// 飞控连接后缓存的 PX4 飞控系统参数；业务层不直接依赖 MAVSDK 参数类型。
 struct FlightControlParams {
@@ -41,6 +75,14 @@ class FlightControlApi {
 
     virtual bool arm(std::string& error) = 0;
     virtual bool disarm(std::string& error) = 0;
+    virtual SelfCheckArmResult self_check_arm(const FlightStatus&, const std::atomic<bool>*, std::string& error) {
+        error = "飞控不支持自检解锁";
+        return SelfCheckArmResult::Rejected;
+    }
+    virtual bool self_check_disarm(const FlightStatus&, const std::atomic<bool>*, std::string& error) {
+        error = "飞控不支持自检上锁";
+        return false;
+    }
     virtual bool takeoff(float height_m, std::string& error) = 0;
     virtual bool land(std::string& error) = 0;
     virtual bool return_to_launch(std::string& error) = 0;

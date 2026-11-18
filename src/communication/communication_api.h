@@ -9,7 +9,8 @@ namespace plane::communication {
 
 /// 出站载荷（Ack 仅供 Communication 内部使用）。
 using OutgoingMessage = std::variant<plane::model::VehicleState, plane::model::TaskState, plane::model::Alert,
-                                     plane::model::Ack, plane::model::AgentInfo, plane::model::PodState>;
+                                     plane::model::Ack, plane::model::AgentInfo, plane::model::PodState,
+                                     plane::model::SelfCheckResult>;
 
 /// Communication 对业务模块暴露的稳定能力接口。
 class CommunicationApi {

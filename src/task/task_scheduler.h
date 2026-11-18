@@ -31,11 +31,11 @@ class TaskScheduler final : public plane::core::IModule, public TaskStateProvide
 
     plane::model::TaskState current_task_state() const override;
 
-    /// 两阶段接线：Communication 构造完成后注入，用于告警发送。
+    /// 两阶段接线：Communication 构造完成后注入，用于告警和自检结果发送。
     void set_communication(plane::communication::CommunicationApi& communication);
 
    private:
-    enum class ControlKind { None, Command, Task };
+    enum class ControlKind { None, Command, Task, SelfCheck };
 
     using ControlTime = std::chrono::steady_clock::time_point;
 
@@ -46,6 +46,7 @@ class TaskScheduler final : public plane::core::IModule, public TaskStateProvide
     void on_execution_progress(const TaskProgress& progress);
     bool prepare_control(ControlTime received_at);
     void clear_control_locked();
+    void report_self_check_result(const plane::model::SelfCheckResult& result);
     void send_alert(const std::string& detail, const std::string& type = "command_dispatch_failed");
     void report_error(const std::string& detail) const;
 

@@ -307,6 +307,10 @@ bool from_payload(const std::string& payload, plane::model::Command& out, std::s
             error = "未知 CommandType";
             return false;
         }
+        if (out.type == plane::model::CommandType::SelfCheck && out.commandId.empty()) {
+            error = "SelfCheck 缺少 commandId";
+            return false;
+        }
         out.takeoffHeight_m = in.value("takeoffHeight_m", 0.0F);
         out.waypoints.clear();
         for (const auto& item : in.value("waypoints", json::array())) {
@@ -314,6 +318,32 @@ bool from_payload(const std::string& payload, plane::model::Command& out, std::s
             geo_point_from_json(item, point);
             out.waypoints.push_back(point);
         }
+        return true;
+    } catch (const json::exception& e) {
+        error = e.what();
+        return false;
+    }
+}
+
+bool to_payload(const plane::model::SelfCheckResult& value, std::string& out, std::string& error) {
+    try {
+        out = json{{"commandId", value.commandId}, {"success", value.success}, {"detail", value.detail}}.dump();
+        return true;
+    } catch (const json::exception& e) {
+        error = e.what();
+        return false;
+    }
+}
+
+bool from_payload(const std::string& payload, plane::model::SelfCheckResult& out, std::string& error) {
+    try {
+        const json in = json::parse(payload);
+        auto command_id = in.at("commandId").get<std::string>();
+        if (command_id.empty()) {
+            error = "SelfCheckResult 缺少 commandId";
+            return false;
+        }
+        out = {std::move(command_id), in.at("success").get<bool>(), in.at("detail").get<std::string>()};
         return true;
     } catch (const json::exception& e) {
         error = e.what();

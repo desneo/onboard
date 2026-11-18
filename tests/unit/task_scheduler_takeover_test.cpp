@@ -26,8 +26,13 @@ class TestEngine final : public task::TaskExecutionEngineApi {
         return true;
     }
 
-    bool start_command(std::uint64_t execution_id, const model::Command&, std::string&) override {
+    bool start_command(std::uint64_t execution_id, const model::Command& command, std::string& error) override {
+        if (command.type == model::CommandType::SelfCheck && !self_check_start_error.empty()) {
+            error = self_check_start_error;
+            return false;
+        }
         starts.push_back(execution_id);
+        commands.push_back(command.type);
         return true;
     }
 
@@ -37,6 +42,7 @@ class TestEngine final : public task::TaskExecutionEngineApi {
             gate_open = true;
             return true;
         }
+        ++aborts;
         if (takeover_during_abort) {
             takeover_during_abort = false;
             gate_open = false;
@@ -47,8 +53,11 @@ class TestEngine final : public task::TaskExecutionEngineApi {
     bool control_can_advance() const override { return gate_open; }
 
     std::vector<std::uint64_t> starts;
+    std::vector<model::CommandType> commands;
+    std::string self_check_start_error;
     bool gate_open = true;
     bool takeover_during_abort = false;
+    int aborts = 0;
     int takeover_aborts = 0;
 };
 
@@ -61,6 +70,9 @@ class TestCommunication final : public communication::CommunicationApi {
         if (const auto* state = std::get_if<model::TaskState>(&message)) {
             states.push_back(*state);
         }
+        if (const auto* result = std::get_if<model::SelfCheckResult>(&message)) {
+            self_check_results.push_back(*result);
+        }
         return true;
     }
 
@@ -70,6 +82,7 @@ class TestCommunication final : public communication::CommunicationApi {
 
     std::vector<model::Alert> alerts;
     std::vector<model::TaskState> states;
+    std::vector<model::SelfCheckResult> self_check_results;
 };
 
 void task_scheduler_reports_takeover_once() {
@@ -147,11 +160,115 @@ void task_scheduler_reports_takeover_once() {
             "完成两次接管后未正常启动新任务");
 }
 
+void task_scheduler_arbitrates_self_check() {
+    using model::CommandType;
+    using model::TaskStatus;
+    core::AppConfig config;
+    core::EventBus bus;
+    TestEngine engine;
+    TestCommunication communication;
+    task::TaskScheduler scheduler(bus, config, &engine);
+    scheduler.set_communication(communication);
+    require(scheduler.start(), "任务调度器启动失败");
+
+    auto send_task = [&](const std::string& id) {
+        model::TaskInfo request;
+        request.taskId = id;
+        request.taskCode = model::TaskCode::AntiUav;
+        request.taskAction = model::TaskAction::Start;
+        bus.publish(communication::events::kTaskInfoReceived,
+                    communication::ReceivedControl<model::TaskInfo>{request, Clock::now()});
+    };
+    auto send_command = [&](const std::string& id, CommandType type) {
+        model::Command request;
+        request.commandId = id;
+        request.type = type;
+        bus.publish(communication::events::kCommandReceived,
+                    communication::ReceivedControl<model::Command>{request, Clock::now()});
+    };
+    auto finish = [&](std::uint64_t id, TaskStatus status, const std::string& detail = {}) {
+        bus.publish(task::events::kEngineResult, task::TaskEngineResult{id, status, detail});
+    };
+    auto expect_result = [&](std::size_t count, const std::string& id, bool success, const std::string& detail) {
+        const auto& results = communication.self_check_results;
+        require(results.size() == count, "自检结果应只上报一次");
+        const auto& result = results.back();
+        require(result.commandId == id && result.success == success && result.detail.find(detail) != std::string::npos,
+                "自检结果的 commandId、状态或原因错误");
+    };
+
+    send_task("task-active");
+    const auto aborts_before_rejection = engine.aborts;
+    send_command("check-busy", CommandType::SelfCheck);
+    require(engine.starts.size() == 1 && engine.aborts == aborts_before_rejection &&
+                scheduler.current_task_state().taskId == "task-active",
+            "自检打断了当前任务");
+    expect_result(1, "check-busy", false, "正在执行");
+    finish(engine.starts.back(), TaskStatus::Completed);
+
+    send_command("check-pass", CommandType::SelfCheck);
+    const auto pass_execution = engine.starts.back();
+    const auto aborts_before_conflict = engine.aborts;
+    send_command("check-concurrent", CommandType::SelfCheck);
+    send_command("takeoff-concurrent", CommandType::Takeoff);
+    send_task("task-concurrent");
+    require(engine.starts.size() == 2 && engine.aborts == aborts_before_conflict &&
+                engine.commands.back() == CommandType::SelfCheck &&
+                scheduler.current_task_state().status == TaskStatus::None,
+            "自检期间启动了其他自动控制，或错误上报了任务状态");
+    expect_result(2, "check-concurrent", false, "正在执行");
+    finish(pass_execution, TaskStatus::Completed);
+    finish(pass_execution, TaskStatus::Failed, "旧执行的迟到结果");
+    expect_result(3, "check-pass", true, "恢复上锁");
+
+    send_command("check-failed", CommandType::SelfCheck);
+    finish(engine.starts.back(), TaskStatus::Failed, "PX4 拒绝解锁");
+    expect_result(4, "check-failed", false, "PX4 拒绝解锁");
+
+    engine.self_check_start_error = "自检行为树创建失败";
+    send_command("check-not-started", CommandType::SelfCheck);
+    expect_result(5, "check-not-started", false, engine.self_check_start_error);
+    engine.self_check_start_error.clear();
+
+    send_command("check-replaced", CommandType::SelfCheck);
+    auto old_execution = engine.starts.back();
+    send_command("disarm-priority", CommandType::Disarm);
+    require(engine.starts.back() != old_execution && engine.commands.back() == CommandType::Disarm,
+            "显式 Disarm 未抢占自检");
+    finish(old_execution, TaskStatus::Completed);
+    expect_result(6, "check-replaced", false, "Disarm 指令中止，未确认恢复上锁");
+    finish(engine.starts.back(), TaskStatus::Completed);
+
+    send_command("check-stopped", CommandType::SelfCheck);
+    old_execution = engine.starts.back();
+    send_command("stop-motor-priority", CommandType::StopMotor);
+    require(engine.starts.back() != old_execution && engine.commands.back() == CommandType::StopMotor,
+            "显式 StopMotor 未抢占自检");
+    finish(old_execution, TaskStatus::Completed);
+    expect_result(7, "check-stopped", false, "StopMotor 指令中止，未确认恢复上锁");
+    finish(engine.starts.back(), TaskStatus::Completed);
+
+    send_command("check-takeover", CommandType::SelfCheck);
+    old_execution = engine.starts.back();
+    engine.gate_open = false;
+    const flight_control::ManualTakeoverEvent takeover{old_execution, "Stabilized"};
+    bus.publish(flight_control::events::kManualTakeover, takeover);
+    bus.publish(flight_control::events::kManualTakeover, takeover);
+    finish(old_execution, TaskStatus::Completed);
+    expect_result(8, "check-takeover", false, "Stabilized，自检中止，未确认恢复上锁");
+    require(engine.takeover_aborts == 1 && communication.alerts.back().type == "manual_takeover",
+            "自检被人工接管时未保留接管告警，或重复中止");
+
+    send_task("task-after-check");
+    require(scheduler.current_task_state().taskId == "task-after-check", "自检中止后不能启动新任务");
+}
+
 }  // namespace
 
 int main() {
     try {
         task_scheduler_reports_takeover_once();
+        task_scheduler_arbitrates_self_check();
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

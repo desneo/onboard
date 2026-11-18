@@ -67,8 +67,7 @@ class CommunicationModule final : public plane::core::IModule, public Communicat
     void on_peer_liveliness(const std::string& key_expr, bool online);
     void worker_loop();
     void on_wire_message(const IncomingMessage& incoming);
-    void handle_envelope(const plane::model::Message& envelope,
-                         std::chrono::steady_clock::time_point received_at);
+    void handle_envelope(const plane::model::Message& envelope, const IncomingMessage& incoming);
     bool remember_flight_control(const plane::model::Message& envelope);
     void handle_pod_command(const plane::model::Message& envelope, const IncomingMessage& incoming);
     void handle_ack(const plane::model::Message& envelope);

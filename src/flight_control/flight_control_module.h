@@ -2,6 +2,7 @@
 
 #include <mavsdk/mavsdk.h>
 #include <mavsdk/plugins/action/action.h>
+#include <mavsdk/plugins/mavlink_passthrough/mavlink_passthrough.h>
 #include <mavsdk/plugins/mission/mission.h>
 #include <mavsdk/plugins/offboard/offboard.h>
 #include <mavsdk/plugins/param/param.h>
@@ -46,6 +47,9 @@ class FlightControlModule final : public plane::core::IModule, public FlightCont
 
     bool arm(std::string& error) override;
     bool disarm(std::string& error) override;
+    SelfCheckArmResult self_check_arm(const FlightStatus& expected, const std::atomic<bool>* active,
+                                     std::string& error) override;
+    bool self_check_disarm(const FlightStatus& expected, const std::atomic<bool>* active, std::string& error) override;
     bool takeoff(float height_m, std::string& error) override;
     bool land(std::string& error) override;
     bool return_to_launch(std::string& error) override;
@@ -84,11 +88,24 @@ class FlightControlModule final : public plane::core::IModule, public FlightCont
         mavsdk::Telemetry::FlightMode flight_mode = mavsdk::Telemetry::FlightMode::Unknown;
         bool armed = false;
         bool in_air = false;
+        mavsdk::Telemetry::LandedState landed_state = mavsdk::Telemetry::LandedState::Unknown;
         int mission_current = 0;
         int mission_total = 0;
         float takeoff_altitude_m = 0.0F;
         ManualTakeover::Clock::time_point position_updated{};
         ManualTakeover::Clock::time_point mission_progress_updated{};
+        ManualTakeover::Clock::time_point armed_updated{};
+        ManualTakeover::Clock::time_point ground_updated{};
+        ManualTakeover::Clock::time_point mode_updated{};
+    };
+
+    struct SelfCheckAction {
+        std::uint64_t link_generation;
+        std::string flight_mode;
+        bool arming;
+        const std::atomic<bool>* active;
+        bool allowed_send = false;
+        std::string blocked_reason;
     };
 
     std::string connection_url() const;
@@ -98,9 +115,16 @@ class FlightControlModule final : public plane::core::IModule, public FlightCont
     void manual_takeover_loop();
     void attach_system(const std::shared_ptr<mavsdk::System>& system);
     void detach_system();
+    void request_landed_state_stream_if_needed();
     void refresh_flight_control_params_cache_if_needed();
     void invalidate_flight_control_params_cache(const std::string& reason);
     bool ensure_connected(std::string& error);
+    FlightStatus flight_status_locked() const;
+    void update_link_state_locked(bool connected);
+    bool allow_outgoing_message(const mavlink_message_t& message);
+    std::string self_check_action_error_locked(const SelfCheckAction& action) const;
+    SelfCheckArmResult run_self_check_action(const FlightStatus& expected, bool arming,
+                                            const std::atomic<bool>* active, std::string& error);
     bool wait_for_control(std::string& error);
     bool expect_action(ManualTakeover::Action action, std::string& error, float takeoff_height_m = 0.0F,
                        int mission_total = 0);
@@ -129,6 +153,10 @@ class FlightControlModule final : public plane::core::IModule, public FlightCont
 
     mutable std::mutex cache_mutex_;
     TelemetryCache cache_;
+    std::shared_ptr<mavsdk::MavlinkPassthrough> self_check_link_;
+    std::uint64_t link_generation_ = 0;
+    ManualTakeover::Clock::time_point last_landed_state_stream_request_{};
+    std::optional<SelfCheckAction> self_check_action_;
     std::atomic<bool> connected_{false};
     std::atomic<std::uint64_t> connection_generation_{0};
 

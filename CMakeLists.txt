@@ -64,6 +64,7 @@ add_executable(plane
   src/task/nodes/takeoff_node.cpp
   src/task/nodes/land_node.cpp
   src/task/nodes/rtl_node.cpp
+  src/task/nodes/self_check_node.cpp
   src/task/nodes/hover_node.cpp
   src/task/nodes/stop_motor_node.cpp
   src/task/nodes/midcourse_controller.cpp
@@ -188,6 +189,12 @@ if(BUILD_TESTING)
     spdlog::spdlog
   )
   add_test(NAME mission_node_timeout COMMAND mission_node_timeout_test)
+
+  add_executable(self_check_node_test tests/unit/self_check_node_test.cpp src/task/nodes/self_check_node.cpp)
+  target_include_directories(self_check_node_test PRIVATE src)
+  target_compile_options(self_check_node_test PRIVATE -Wall -Wextra)
+  target_link_libraries(self_check_node_test PRIVATE plane::common_include plane::behaviortree spdlog::spdlog)
+  add_test(NAME self_check_node COMMAND self_check_node_test)
 
   add_executable(route_preflight_test
     tests/unit/route_preflight_test.cpp

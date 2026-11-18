@@ -29,6 +29,10 @@ constexpr int kOffboardIntervalMs = 50;
 constexpr int kOffboardRestartIntervalMs = 1000;
 constexpr int kWaitLogIntervalMs = 5000;
 constexpr int kFlightControlParamsRetryIntervalMs = 5000;
+constexpr double kLandedStateRateHz = 2.0;
+// 场景 02 的机载 MAVLink 链路会按带宽压低遥测速率。
+constexpr double kSimLandedStateRateHz = 10.0;
+constexpr auto kLandedStateStreamRetryInterval = std::chrono::seconds(5);
 constexpr double kPi = 3.14159265358979323846;
 
 template <typename Result>
@@ -115,7 +119,7 @@ bool FlightControlModule::start() {
         config_.is_sim ? mavsdk::ComponentType::GroundStation : mavsdk::ComponentType::CompanionComputer;
     mavsdk_ = std::make_unique<mavsdk::Mavsdk>(mavsdk::Mavsdk::Configuration{component_type});
     mavsdk_->intercept_outgoing_messages_async(
-        [this](mavlink_message_t& message) { return control_can_advance() || !is_flight_output(message); });
+        [this](mavlink_message_t& message) { return allow_outgoing_message(message); });
     SPDLOG_INFO("飞控会话身份: {}{}", config_.is_sim ? "GroundStation" : "CompanionComputer",
                 config_.is_sim ? "（仿真提供 GCS 心跳）" : "（实机机载计算机）");
     mavsdk_->set_heartbeat_timeout_s(static_cast<double>(config_.fc_heartbeat_timeout_ms) / 1000.0);
@@ -316,6 +320,7 @@ void FlightControlModule::monitor_loop() {
             detach_system();
             continue;
         }
+        request_landed_state_stream_if_needed();
         refresh_flight_control_params_cache_if_needed();
     }
 }
@@ -325,7 +330,6 @@ void FlightControlModule::attach_system(const std::shared_ptr<mavsdk::System>& s
     const auto generation = ++connection_generation_;
     // subscribe_is_connected 只保证通知后续变化；接入时系统可能已经连接，
     // 因此必须先同步当前状态，避免 connected_ 永久保留默认 false。
-    connected_ = system_->is_connected();
     action_ = std::make_unique<mavsdk::Action>(system_);
     telemetry_ = std::make_unique<mavsdk::Telemetry>(system_);
     mission_ = std::make_unique<mavsdk::Mission>(system_);
@@ -334,6 +338,13 @@ void FlightControlModule::attach_system(const std::shared_ptr<mavsdk::System>& s
         offboard_ = std::make_unique<mavsdk::Offboard>(system_);
     }
     param_ = std::make_unique<mavsdk::Param>(system_);
+    auto self_check_link = std::make_shared<mavsdk::MavlinkPassthrough>(system_);
+    const bool connected = system_->is_connected();
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        self_check_link_ = std::move(self_check_link);
+        update_link_state_locked(connected);
+    }
 
     telemetry_->subscribe_position([this, generation](mavsdk::Telemetry::Position value) {
         if (connection_generation_ != generation) {
@@ -377,31 +388,48 @@ void FlightControlModule::attach_system(const std::shared_ptr<mavsdk::System>& s
         cache_.voltage_v = value.voltage_v;
     });
     telemetry_->subscribe_flight_mode([this, generation](mavsdk::Telemetry::FlightMode value) {
-        if (connection_generation_ != generation) {
-            return;
-        }
+        mavsdk::Telemetry::FlightMode previous;
         {
             std::lock_guard<std::mutex> lock(control_mutex_);
-            if (connected_ && connection_generation_ == generation) {
-                apply_takeover_result_locked(
-                    manual_takeover_.observe(value, takeover_evidence_locked(), ManualTakeover::Clock::now()));
+            if (!connected_ || connection_generation_ != generation) {
+                return;
             }
-        }
-        mavsdk::Telemetry::FlightMode previous = mavsdk::Telemetry::FlightMode::Unknown;
-        {
-            std::lock_guard<std::mutex> lock(cache_mutex_);
-            previous = cache_.flight_mode;
-            cache_.flight_mode = value;
+            const auto now = ManualTakeover::Clock::now();
+            {
+                std::lock_guard<std::mutex> cache_lock(cache_mutex_);
+                previous = cache_.flight_mode;
+                cache_.flight_mode = value;
+                cache_.mode_updated = now;
+            }
+            apply_takeover_result_locked(manual_takeover_.observe(value, takeover_evidence_locked(), now));
         }
         if (value != previous) {
             SPDLOG_INFO("飞控飞行模式变化: previous={} value={}", magic_enum::enum_name(previous),
                         magic_enum::enum_name(value));
         }
     });
-    telemetry_->subscribe_armed([this](bool value) {
+    telemetry_->subscribe_armed([this, generation](bool value) {
         std::lock_guard<std::mutex> lock(cache_mutex_);
-        // SPDLOG_INFO("解锁状态变化: {}", value ? "解锁" : "上锁");
+        if (!connected_ || connection_generation_ != generation) {
+            return;
+        }
         cache_.armed = value;
+        cache_.armed_updated = ManualTakeover::Clock::now();
+    });
+    telemetry_->subscribe_landed_state([this, generation](mavsdk::Telemetry::LandedState value) {
+        mavsdk::Telemetry::LandedState previous;
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+            if (!connected_ || connection_generation_ != generation) {
+                return;
+            }
+            previous = cache_.landed_state;
+            cache_.landed_state = value;
+            cache_.ground_updated = ManualTakeover::Clock::now();
+        }
+        if (value != previous) {
+            SPDLOG_INFO("飞控着地状态变化：landed_state={}", magic_enum::enum_name(value));
+        }
     });
     telemetry_->subscribe_in_air([this, generation](bool value) {
         if (connection_generation_ != generation) {
@@ -431,7 +459,10 @@ void FlightControlModule::attach_system(const std::shared_ptr<mavsdk::System>& s
             if (connection_generation_ != generation) {
                 return;
             }
-            connected_ = connected;
+            {
+                std::lock_guard<std::mutex> cache_lock(cache_mutex_);
+                update_link_state_locked(connected);
+            }
             if (!connected) {
                 if (const auto deadline = manual_takeover_.deadline()) {
                     apply_takeover_result_locked(manual_takeover_.update({}, *deadline));
@@ -453,14 +484,20 @@ void FlightControlModule::attach_system(const std::shared_ptr<mavsdk::System>& s
     });
 
     SPDLOG_INFO("飞控系统已接入: system_id={} connected={}", system_->get_system_id(), connected_ ? "true" : "false");
+    request_landed_state_stream_if_needed();
     refresh_flight_control_params_cache_if_needed();
 }
 
 void FlightControlModule::detach_system() {
+    std::shared_ptr<mavsdk::MavlinkPassthrough> self_check_link;
     {
         std::lock_guard<std::mutex> lock(control_mutex_);
         ++connection_generation_;
-        connected_ = false;
+        {
+            std::lock_guard<std::mutex> cache_lock(cache_mutex_);
+            update_link_state_locked(false);
+            self_check_link = std::move(self_check_link_);
+        }
         if (const auto deadline = manual_takeover_.deadline()) {
             apply_takeover_result_locked(manual_takeover_.update({}, *deadline));
         }
@@ -493,6 +530,41 @@ void FlightControlModule::detach_system() {
         SPDLOG_INFO("飞控系统已移除");
         system_.reset();
     }
+}
+
+void FlightControlModule::update_link_state_locked(bool connected) {
+    if (connected_ == connected) {
+        return;
+    }
+    connected_ = connected;
+    ++link_generation_;
+    cache_.landed_state = mavsdk::Telemetry::LandedState::Unknown;
+    cache_.armed_updated = {};
+    cache_.ground_updated = {};
+    cache_.mode_updated = {};
+    last_landed_state_stream_request_ = {};
+}
+
+void FlightControlModule::request_landed_state_stream_if_needed() {
+    const auto now = ManualTakeover::Clock::now();
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        if (!connected_ || self_check_action_) {
+            return;
+        }
+        if (last_landed_state_stream_request_ != ManualTakeover::Clock::time_point{} &&
+            (self_check_telemetry_fresh(cache_.ground_updated, now) ||
+             now - last_landed_state_stream_request_ < kLandedStateStreamRetryInterval)) {
+            return;
+        }
+        last_landed_state_stream_request_ = now;
+    }
+    const double rate_hz = config_.is_sim ? kSimLandedStateRateHz : kLandedStateRateHz;
+    telemetry_->set_rate_landed_state_async(rate_hz, [](mavsdk::Telemetry::Result result) {
+        if (result != mavsdk::Telemetry::Result::Success) {
+            SPDLOG_WARN("请求飞控着地遥测失败（{}）", result_text(result));
+        }
+    });
 }
 
 void FlightControlModule::invalidate_flight_control_params_cache(const std::string& reason) {
@@ -653,6 +725,122 @@ bool FlightControlModule::disarm(std::string& error) {
         return false;
     }
     SPDLOG_INFO("下发飞控指令成功: 上锁（Disarm）");
+    return true;
+}
+
+SelfCheckArmResult FlightControlModule::self_check_arm(const FlightStatus& expected, const std::atomic<bool>* active,
+                                                     std::string& error) {
+    return run_self_check_action(expected, true, active, error);
+}
+
+bool FlightControlModule::self_check_disarm(const FlightStatus& expected, const std::atomic<bool>* active,
+                                           std::string& error) {
+    return run_self_check_action(expected, false, active, error) == SelfCheckArmResult::Accepted;
+}
+
+SelfCheckArmResult FlightControlModule::run_self_check_action(const FlightStatus& expected, bool arming,
+                                                             const std::atomic<bool>* active, std::string& error) {
+    std::shared_ptr<mavsdk::MavlinkPassthrough> link;
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        if (self_check_action_) {
+            error = "自检飞控指令仍在下发";
+            return SelfCheckArmResult::Rejected;
+        }
+        SelfCheckAction action{expected.link_generation, expected.flight_mode, arming, active, false, {}};
+        error = self_check_action_error_locked(action);
+        if (!error.empty()) {
+            return SelfCheckArmResult::Rejected;
+        }
+        link = self_check_link_;
+        self_check_action_ = std::move(action);
+    }
+
+    // MAVSDK Action::Arm 可能先切换飞行模式，自检仅发送常规解锁或上锁指令。
+    mavsdk::MavlinkPassthrough::CommandLong command{};
+    command.command = MAV_CMD_COMPONENT_ARM_DISARM;
+    command.target_sysid = link->get_target_sysid();
+    command.target_compid = link->get_target_compid();
+    command.param1 = arming ? 1.0F : 0.0F;
+    command.param2 = 0.0F;
+    const auto result = link->send_command_long(command);
+
+    SelfCheckAction action = [&]() {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        SelfCheckAction completed = std::move(*self_check_action_);
+        self_check_action_.reset();
+        return completed;
+    }();
+    using Result = mavsdk::MavlinkPassthrough::Result;
+    if (action.allowed_send && result == Result::Success) {
+        SPDLOG_INFO("自检飞控指令已确认（{}）", arming ? "Arm" : "Disarm");
+        return SelfCheckArmResult::Accepted;
+    }
+
+    error = arming ? "飞控自检解锁指令失败" : "飞控自检上锁指令失败";
+    error += "（" + result_text(result) + "）";
+    if (!action.blocked_reason.empty()) {
+        error += "，" + action.blocked_reason;
+    }
+    report_error(error);
+    if (!action.allowed_send || result == Result::CommandDenied || result == Result::CommandTemporarilyRejected ||
+        result == Result::CommandUnsupported || result == Result::CommandFailed) {
+        return SelfCheckArmResult::Rejected;
+    }
+    return SelfCheckArmResult::Uncertain;
+}
+
+std::string FlightControlModule::self_check_action_error_locked(const SelfCheckAction& action) const {
+    if (action.active && !action.active->load()) {
+        return "自检已中止";
+    }
+    if (!control_can_advance()) {
+        return "飞控控制权不可用";
+    }
+    const FlightStatus status = flight_status_locked();
+    if (!status.connected || !self_check_link_) {
+        return "飞控未连接";
+    }
+    if (status.link_generation != action.link_generation) {
+        return "飞控连接已变化";
+    }
+    const auto now = ManualTakeover::Clock::now();
+    if (auto error = self_check_ground_error(status, now, action.arming); !error.empty()) {
+        return error;
+    }
+    if (status.mode_updated != ManualTakeover::Clock::time_point{} && status.flight_mode != action.flight_mode) {
+        return "自检期间飞行模式已变化（flight_mode=" + status.flight_mode + "）";
+    }
+    if (action.arming && (!self_check_telemetry_fresh(status.armed_updated, now) || status.armed)) {
+        return "未确认飞机处于上锁状态";
+    }
+    return {};
+}
+
+bool FlightControlModule::allow_outgoing_message(const mavlink_message_t& message) {
+    std::optional<float> arm_param;
+    if (message.msgid == MAVLINK_MSG_ID_COMMAND_LONG &&
+        mavlink_msg_command_long_get_command(&message) == MAV_CMD_COMPONENT_ARM_DISARM) {
+        arm_param = mavlink_msg_command_long_get_param1(&message);
+    }
+    if (!arm_param) {
+        return control_can_advance() || !is_flight_output(message);
+    }
+
+    std::lock_guard<std::mutex> lock(cache_mutex_);
+    if (!self_check_action_) {
+        return control_can_advance();
+    }
+    auto& action = *self_check_action_;
+    if (*arm_param != (action.arming ? 1.0F : 0.0F) ||
+        mavlink_msg_command_long_get_param2(&message) != 0.0F || !action.blocked_reason.empty()) {
+        return false;
+    }
+    action.blocked_reason = self_check_action_error_locked(action);
+    if (!action.blocked_reason.empty()) {
+        return false;
+    }
+    action.allowed_send = true;
     return true;
 }
 
@@ -1008,12 +1196,23 @@ std::string FlightControlModule::link_state() const { return connected_ ? "conne
 
 plane::flight_control::FlightStatus FlightControlModule::flight_status() const {
     std::lock_guard<std::mutex> lock(cache_mutex_);
-    plane::flight_control::FlightStatus status;
+    return flight_status_locked();
+}
+
+FlightStatus FlightControlModule::flight_status_locked() const {
+    FlightStatus status;
     status.armed = cache_.armed;
     status.in_air = cache_.in_air;
     status.mission_current = cache_.mission_current;
     status.mission_total = cache_.mission_total;
     status.takeoff_altitude_m = cache_.takeoff_altitude_m;
+    status.connected = connected_;
+    status.on_ground = cache_.landed_state == mavsdk::Telemetry::LandedState::OnGround;
+    status.armed_updated = cache_.armed_updated;
+    status.ground_updated = cache_.ground_updated;
+    status.mode_updated = cache_.mode_updated;
+    status.flight_mode = magic_enum::enum_name(cache_.flight_mode);
+    status.link_generation = link_generation_;
     return status;
 }
 
