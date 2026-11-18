@@ -134,11 +134,9 @@ void TaskScheduler::on_task_info(const plane::model::TaskInfo& task, ControlTime
         SPDLOG_INFO("任务接收并启动: taskId={}", task.taskId);
         return;
     }
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        clear_control_locked();
-    }
-    report_error("任务启动失败: " + error);
+    const std::string detail = "任务启动失败: " + error;
+    on_engine_result({execution_id, plane::model::TaskStatus::Failed, detail});
+    report_error(detail);
 }
 
 void TaskScheduler::on_command(const plane::model::Command& command, ControlTime received_at) {
@@ -251,9 +249,7 @@ void TaskScheduler::on_manual_takeover(const plane::flight_control::ManualTakeov
     std::string detail = "已切入接管模式 " + event.flight_mode;
     if (aborted_task.status == plane::model::TaskStatus::Aborted) {
         detail += "，当前任务已中止（taskId=" + aborted_task.taskId + "）";
-        if (communication_ != nullptr && !communication_->sendToStation(aborted_task)) {
-            SPDLOG_ERROR("接管中止状态发送失败: taskId={}", aborted_task.taskId);
-        }
+        report_task_state(aborted_task);
     } else {
         detail += "，当前指令已中止（commandId=" + aborted_command_id + "）";
     }
@@ -267,6 +263,7 @@ void TaskScheduler::on_manual_takeover(const plane::flight_control::ManualTakeov
 
 void TaskScheduler::on_engine_result(const TaskEngineResult& result) {
     bool command_failed = false;
+    std::optional<plane::model::TaskState> finished_task;
     std::optional<plane::model::SelfCheckResult> self_check_result;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -274,6 +271,8 @@ void TaskScheduler::on_engine_result(const TaskEngineResult& result) {
             return;
         }
         if (control_ == ControlKind::Task) {
+            task_state_.status = result.status;
+            finished_task = task_state_;
             SPDLOG_INFO("任务结束: taskId={} status={} detail={}", task_state_.taskId,
                         std::string(magic_enum::enum_name(result.status)), result.detail);
         } else if (control_ == ControlKind::SelfCheck) {
@@ -291,7 +290,9 @@ void TaskScheduler::on_engine_result(const TaskEngineResult& result) {
         }
         clear_control_locked();
     }
-    if (self_check_result) {
+    if (finished_task) {
+        report_task_state(*finished_task);
+    } else if (self_check_result) {
         report_self_check_result(*self_check_result);
     } else if (command_failed) {
         const std::string detail = "指令执行失败: " + result.detail;
@@ -307,6 +308,12 @@ void TaskScheduler::on_execution_progress(const TaskProgress& progress) {
     }
     task_state_.currentBehaviorTree = progress.currentBehaviorTree;
     task_state_.currentNode = progress.currentNode;
+}
+
+void TaskScheduler::report_task_state(const plane::model::TaskState& state) {
+    if (communication_ == nullptr || !communication_->sendToStation(state)) {
+        SPDLOG_ERROR("任务状态发送失败: taskId={} status={}", state.taskId, magic_enum::enum_name(state.status));
+    }
 }
 
 void TaskScheduler::report_self_check_result(const plane::model::SelfCheckResult& result) {

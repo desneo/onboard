@@ -277,7 +277,7 @@ void TaskExecutionEngine::tick_loop() {
         bool exception_thrown = false;
         bool is_self_check = false;
         std::string exception_text;
-        std::string self_check_detail;
+        std::string result_detail;
         std::string node;
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -299,10 +299,12 @@ void TaskExecutionEngine::tick_loop() {
                     changed = true;
                 }
                 if (is_self_check && (status == BT::NodeStatus::SUCCESS || status == BT::NodeStatus::FAILURE)) {
-                    if (!blackboard->get(SelfCheckNode::kResultDetail, self_check_detail)) {
+                    if (!blackboard->get(SelfCheckNode::kResultDetail, result_detail)) {
                         status = BT::NodeStatus::FAILURE;
-                        self_check_detail = "未获得自检结果详情，未确认恢复上锁";
+                        result_detail = "未获得自检结果详情，未确认恢复上锁";
                     }
+                } else if (is_task_tree_ && status == BT::NodeStatus::FAILURE) {
+                    static_cast<void>(blackboard->get(MidcourseNode::kFailureDetail, result_detail));
                 }
             }
         }
@@ -320,12 +322,12 @@ void TaskExecutionEngine::tick_loop() {
             publish_progress(node);
         }
         if (status == BT::NodeStatus::SUCCESS) {
-            finish(plane::model::TaskStatus::Completed, self_check_detail);
+            finish(plane::model::TaskStatus::Completed, result_detail);
             return;
         }
         if (status == BT::NodeStatus::FAILURE) {
             finish(plane::model::TaskStatus::Failed,
-                   self_check_detail.empty() ? "节点执行失败: " + node : self_check_detail);
+                   result_detail.empty() ? "节点执行失败: " + node : result_detail);
             return;
         }
         std::this_thread::sleep_for(interval);

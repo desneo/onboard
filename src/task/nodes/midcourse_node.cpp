@@ -5,18 +5,18 @@
 namespace plane::task {
 
 bool MidcourseNode::dispatch(std::string& error) {
-    return controller_->begin(context_->targetTrackId, error);
+    if (controller_->begin(context_->targetTrackId, error)) {
+        return true;
+    }
+    record_failure(error);
+    return false;
 }
 
 BT::NodeStatus MidcourseNode::checkFinish() {
     std::string error;
     if (controller_->tick(error) == MidcourseController::TickResult::Failure) {
-        if (!flight_control_->control_can_advance()) {
-            return BT::NodeStatus::RUNNING;
-        }
         SPDLOG_ERROR("中段制导失败: {}", error);
-        controller_->stop();
-        flight_control_->clear_offboard();
+        record_failure(error);
         return BT::NodeStatus::FAILURE;
     }
     return BT::NodeStatus::RUNNING;
@@ -29,5 +29,11 @@ void MidcourseNode::onHalted() {
 }
 
 bool MidcourseNode::timeout_enabled() const { return false; }
+
+void MidcourseNode::record_failure(const std::string& error) {
+    if (config().blackboard) {
+        config().blackboard->set(kFailureDetail, error);
+    }
+}
 
 }  // namespace plane::task

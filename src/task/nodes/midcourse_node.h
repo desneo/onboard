@@ -6,7 +6,7 @@
 
 namespace plane::task {
 
-/// 中段制导：持续执行目标估计、规划和 Attitude Offboard，直到任务被外部中止。
+/// 中制导：持续执行目标估计、规划和 Offboard，直到失败或被外部中止。
 class MidcourseNode final : public FlightActionNode {
    public:
     MidcourseNode(const std::string& name, const BT::NodeConfig& config,
@@ -18,6 +18,7 @@ class MidcourseNode final : public FlightActionNode {
           controller_(controller) {}
 
     static BT::PortsList providedPorts() { return {}; }
+    static constexpr char kFailureDetail[] = "midcourse_failure_detail";
 
    protected:
     bool dispatch(std::string& error) override;
@@ -26,6 +27,8 @@ class MidcourseNode final : public FlightActionNode {
     bool timeout_enabled() const override;
 
    private:
+    void record_failure(const std::string& error);
+
     const SuicideTaskContext* context_;
     MidcourseController* controller_;
 };

@@ -164,6 +164,16 @@ int main() {
         require(controller.tick(error) == plane::task::MidcourseController::TickResult::Failure,
                 "PX4 参数缓存未就绪应终止中制导");
         controller.stop();
+
+        config.midcourse_use_px4_limits = false;
+        config.midcourse_algorithm.r_capture_max_m = config.midcourse_algorithm.r_capture_min_m;
+        require(controller.begin("无历史航迹", error), "非法捕获窗口场景未启动");
+        error.clear();
+        require(controller.tick(error) == plane::task::MidcourseController::TickResult::Failure &&
+                    error == "中制导 setConfig 失败: r_capture 窗口非法",
+                "非法捕获窗口应在等待雷达历史前终止中制导: " + error);
+        require(flight.velocity_calls == 67 && flight.attitude_calls == 1, "规划器配置失败后仍下发了 Offboard 指令");
+        controller.stop();
     } catch (const std::exception& exception) {
         SPDLOG_ERROR("中制导控制器测试失败: {}", exception.what());
         return 1;

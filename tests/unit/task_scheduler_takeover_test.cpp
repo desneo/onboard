@@ -21,7 +21,11 @@ void require(bool condition, const char* detail) {
 
 class TestEngine final : public task::TaskExecutionEngineApi {
    public:
-    bool start(std::uint64_t execution_id, const model::TaskInfo&, std::string&) override {
+    bool start(std::uint64_t execution_id, const model::TaskInfo&, std::string& error) override {
+        if (!task_start_error.empty()) {
+            error = task_start_error;
+            return false;
+        }
         starts.push_back(execution_id);
         return true;
     }
@@ -54,6 +58,7 @@ class TestEngine final : public task::TaskExecutionEngineApi {
 
     std::vector<std::uint64_t> starts;
     std::vector<model::CommandType> commands;
+    std::string task_start_error;
     std::string self_check_start_error;
     bool gate_open = true;
     bool takeover_during_abort = false;
@@ -263,12 +268,56 @@ void task_scheduler_arbitrates_self_check() {
     require(scheduler.current_task_state().taskId == "task-after-check", "自检中止后不能启动新任务");
 }
 
+void task_scheduler_reports_task_failure_once() {
+    core::AppConfig config;
+    core::EventBus bus;
+    TestEngine engine;
+    TestCommunication communication;
+    task::TaskScheduler scheduler(bus, config, &engine);
+    scheduler.set_communication(communication);
+    require(scheduler.start(), "任务调度器启动失败");
+
+    auto send_task = [&](const std::string& task_id) {
+        const model::TaskInfo request{task_id, model::TaskCode::AntiUav, "target", model::TaskAction::Start};
+        bus.publish(communication::events::kTaskInfoReceived,
+                    communication::ReceivedControl<model::TaskInfo>{request, Clock::now()});
+    };
+
+    send_task("task-failed");
+    require(engine.starts.size() == 1, "未启动待验证的任务");
+    const auto failed_execution = engine.starts.back();
+    bus.publish(task::events::kExecutionProgress, task::TaskProgress{failed_execution, "AntiUav", "Midcourse"});
+    const task::TaskEngineResult failure{failed_execution, model::TaskStatus::Failed, "中制导 setConfig 失败"};
+    bus.publish(task::events::kEngineResult, failure);
+    bus.publish(task::events::kEngineResult, failure);
+    require(communication.states.size() == 1 && communication.states.back().taskId == "task-failed" &&
+                communication.states.back().status == model::TaskStatus::Failed &&
+                communication.states.back().currentBehaviorTree == "AntiUav" &&
+                communication.states.back().currentNode == "Midcourse" &&
+                scheduler.current_task_state().status == model::TaskStatus::None,
+            "中制导失败后应上报一次完整的任务失败状态并恢复空闲");
+
+    send_task("task-next");
+    bus.publish(task::events::kEngineResult, failure);
+    require(communication.states.size() == 1 && scheduler.current_task_state().taskId == "task-next" &&
+                scheduler.current_task_state().status == model::TaskStatus::InProgress,
+            "迟到的任务失败结果影响了新任务");
+
+    engine.task_start_error = "AntiUav 行为树创建失败";
+    send_task("task-not-started");
+    require(communication.states.size() == 2 && communication.states.back().taskId == "task-not-started" &&
+                communication.states.back().status == model::TaskStatus::Failed &&
+                scheduler.current_task_state().status == model::TaskStatus::None,
+            "任务启动失败时未上报任务失败状态并恢复空闲");
+}
+
 }  // namespace
 
 int main() {
     try {
         task_scheduler_reports_takeover_once();
         task_scheduler_arbitrates_self_check();
+        task_scheduler_reports_task_failure_once();
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

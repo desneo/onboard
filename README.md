@@ -84,7 +84,8 @@ docs/                 需求、架构和测试说明
 - 历史视觉插件和模型本版本不参与打包或运行。
 
 中制导以 imported target 直接链接 `libmidcourse_alg.so`，运行包按其 SONAME 分发。
-编译仅引用 `common_include/algorithm/midcourse_alg.h`，最终程序不得依赖
+算法库与机载需使用同一版本的 `common_include/algorithm/midcourse_alg.h`；公共结构体变更后需重建算法库。
+如通过 `PLANE_MIDCOURSE_ALG_LIBRARY` 指定库路径，运行包使用该路径下的库。最终程序不得依赖
 `libpluma`。主要依赖还包括 MAVSDK、Zenoh、
 BehaviorTree.CPP、eventpp、GeographicLib、spdlog、fmt、nlohmann-json 和 magic_enum。
 
@@ -176,8 +177,8 @@ tail -f logs/plane.log
 `[error]` 等原始英文标识，线程 ID 直接显示为数字方括号（如 `[701742]`）。API、协议、类型、枚举、
 配置键、函数参数名、结构体及其字段名和第三方库
 原始错误等代码标识保留原文。PX4 参数使用 `MPC_XY_VEL_MAX`、`MPC_Z_VEL_MAX_UP`、
-`MPC_Z_VEL_MAX_DN`、`MPC_ACC_HOR_MAX` 原名。中制导日志记录规划器的限值来源和实际限值、
-初始化历史帧数和周期、首次目标增量更新以及 Offboard 启动。
+`MPC_Z_VEL_MAX_DN`、`MPC_ACC_HOR_MAX` 原名。中制导在调用 `setConfig` 前记录限值来源和 `MidCourseConfig` 全部字段的实际值，
+并记录初始化历史帧数和周期、首次目标增量更新以及 Offboard 启动。
 多机部署同样使用此目录，不再为每次启动创建日期目录。
 `plane.stdout.log` 单独记录标准输出和错误输出，包含重复的程序日志以及第三方库、插件和启动脚本输出；
 它不参与主日志轮转，后台启动时覆盖。

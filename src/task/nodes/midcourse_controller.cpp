@@ -123,18 +123,42 @@ struct MidcourseController::Impl {
                 algorithm_config.cmd_accel_max_m_s2 = flight_params.mpc_acc_hor_max;
             }
             algorithm_config.update_dt_s = static_cast<double>(config.bt_tick_interval_ms) / 1000.0;
+            SPDLOG_INFO(
+                "中制导规划器调用 setConfig 前的配置: trackId={} use_px4_limits={} "
+                "max_horizontal_speed_m_s={} max_climb_speed_m_s={} max_descent_speed_m_s={} "
+                "vehicle_mass_kg={} max_thrust_n={} v_cruise_m_s={} tau_ff_s={} r_min_m={} "
+                "cmd_accel_max_m_s2={} update_dt_s={} target_invalid_grace_s={} control_output_mode={} "
+                "hover_brake_accel_m_s2={} yaw_mode={} yaw_rate_max_deg_s={} enable_internal_terminal_confirmation={} "
+                "half_fov_deg={} r_capture_min_m={} r_capture_max_m={} r_capture_nominal_m={} capture_discount={} "
+                "sigma_dot_max_deg_s={} speed_ratio={} tol_pos_m={} tol_vel_m={} tol_accel_m_s2={} min_altitude_m={} "
+                "use_cost_search={} w_time={} w_speed={} w_accel={} replan_stitch_s={} "
+                "track_gain_k={} track_gain_d={} track_max_corr={} recovery_gain_k={} recovery_margin_m={} "
+                "recovery_exit_hold_s={} follow_gain_k={} follow_filter_a={} follow_vel_tau_s={} "
+                "confirm_boresight_deg={} confirm_rate_deg_s={} confirm_hold_s={}",
+                locked_track_id, config.midcourse_use_px4_limits,
+                algorithm_config.max_horizontal_speed_m_s, algorithm_config.max_climb_speed_m_s,
+                algorithm_config.max_descent_speed_m_s, algorithm_config.vehicle_mass_kg, algorithm_config.max_thrust_n,
+                algorithm_config.v_cruise_m_s, algorithm_config.tau_ff_s, algorithm_config.r_min_m,
+                algorithm_config.cmd_accel_max_m_s2, algorithm_config.update_dt_s, algorithm_config.target_invalid_grace_s,
+                static_cast<int>(algorithm_config.control_output_mode), algorithm_config.hover_brake_accel_m_s2,
+                algorithm_config.yaw_mode, algorithm_config.yaw_rate_max_deg_s,
+                algorithm_config.enable_internal_terminal_confirmation, algorithm_config.half_fov_deg,
+                algorithm_config.r_capture_min_m, algorithm_config.r_capture_max_m, algorithm_config.r_capture_nominal_m,
+                algorithm_config.capture_discount, algorithm_config.sigma_dot_max_deg_s, algorithm_config.speed_ratio,
+                algorithm_config.tol_pos_m, algorithm_config.tol_vel_m, algorithm_config.tol_accel_m_s2,
+                algorithm_config.min_altitude_m, algorithm_config.use_cost_search, algorithm_config.w_time,
+                algorithm_config.w_speed, algorithm_config.w_accel, algorithm_config.replan_stitch_s,
+                algorithm_config.track_gain_k, algorithm_config.track_gain_d, algorithm_config.track_max_corr,
+                algorithm_config.recovery_gain_k, algorithm_config.recovery_margin_m,
+                algorithm_config.recovery_exit_hold_s, algorithm_config.follow_gain_k, algorithm_config.follow_filter_a,
+                algorithm_config.follow_vel_tau_s, algorithm_config.confirm_boresight_deg,
+                algorithm_config.confirm_rate_deg_s, algorithm_config.confirm_hold_s);
             if (!session->planner.setConfig(algorithm_config, error)) {
                 error = "中制导 setConfig 失败: " + error;
                 return false;
             }
             planner_configured = true;
-            SPDLOG_INFO(
-                "中制导规划器配置完成: trackId={} update_dt_s={:.3f} use_px4_limits={} "
-                "max_horizontal_speed_m_s={:.2f} max_climb_speed_m_s={:.2f} "
-                "max_descent_speed_m_s={:.2f} cmd_accel_max_m_s2={:.2f}",
-                locked_track_id, algorithm_config.update_dt_s, config.midcourse_use_px4_limits,
-                algorithm_config.max_horizontal_speed_m_s, algorithm_config.max_climb_speed_m_s,
-                algorithm_config.max_descent_speed_m_s, algorithm_config.cmd_accel_max_m_s2);
+            SPDLOG_INFO("中制导规划器配置完成: trackId={}", locked_track_id);
         }
         const std::vector<plane::model::GcsTarget> history = target_store.gcs_target_history(locked_track_id);
         if (history.size() < kRequiredHistorySize) {

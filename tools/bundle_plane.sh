@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # 组装 build/plane 独立运行目录（供 CMake 构建时自动调用）。
-# 用法: bundle_plane.sh <build_dir> <project_root>
+# 用法: bundle_plane.sh <build_dir> <project_root> <midcourse_alg_library>
 set -euo pipefail
 
 BUILD_DIR="${1:?需要 build 目录}"
 ROOT="${2:?需要工程根目录}"
+MIDCOURSE_ALG_LIB="${3:?需要构建使用的中制导算法库路径}"
 PLANE_DIR="${BUILD_DIR}/plane"
 
 if [ ! -x "${PLANE_DIR}/plane" ]; then
@@ -52,9 +53,7 @@ awk '/=>/ {print $3}' "${LDD_SNAPSHOT}" \
 rm -f "${PLANE_DIR}"/lib/*
 cp -a "${LIB_STAGE}/private/." "${PLANE_DIR}/lib/"
 
-# 中制导库带有 libmidcourse_alg.so SONAME，按该名称分发。
-# 公共接口来自 common_include，不复制算法源码或 Pluma 兼容插件。
-MIDCOURSE_ALG_LIB="${ROOT}/../algorithm/midcourse_alg/build/libmidcourse_alg.so"
+# 按 SONAME 分发构建时链接的算法库，保证与公共接口匹配。
 install -m 0644 "${MIDCOURSE_ALG_LIB}" "${PLANE_DIR}/lib/libmidcourse_alg.so"
 
 rm -f "${LDD_SNAPSHOT}"

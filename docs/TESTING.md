@@ -193,7 +193,7 @@ cd build/plane
 INI／PX4 限值来源、两种输出模式、会话重置和错误路径；
 `attitude_conversion` 验证四元数归一化与姿态转换。
 按板端 `logs/plane.log` 的时间顺序检查规划器配置、估计器初始化、Offboard 启动和首次增量更新。
-规划器配置日志包含限值来源和实际传入的四项限值。接口失败时保留原始错误字符串。
+规划器在调用 `setConfig` 前记录限值来源和传入的全部字段。接口失败时保留原始错误字符串。
 
 ```bash
 ctest --test-dir build --output-on-failure
@@ -335,6 +335,9 @@ PX4 实际遥测的 `armed` 顺序为 `false → true → false`，自检全程�
    校验 body→NED 四元数及推力，横向推力接近零，使用换算后的姿态和推力设定值。
 7. 雷达中断超过 3 秒后任务仍运行；Task Stop、新控制内容和异常退出均停止 Offboard 并重置会话。
 8. GCS 从 Zenoh 获取防守机状态，只过滤 50 米内实际匹配到的雷达航迹；雷达帧没有友机航迹时仍转发靶机，状态缺失或过期时暂停整帧。
+9. 使用非法捕获窗口触发 `setConfig` 失败。验证日志在调用前打印 `MidCourseConfig` 全部字段及其实际值，
+   会话结束后清空 Offboard 设定值，`gcs_sim` 收到一次关联原 `taskId` 的 `TaskState`，
+   其中 `status = "Failed"`、`currentBehaviorTree = "AntiUav"`、`currentNode = "Midcourse"`。
 
 板端验收只有在用户确认 SITL 已启动后才允许发送控制；网络、权限或仿真环境缺失时必须报告阻塞。
 报告保存在 `logs/fleet/<run_id>/midcourse-report.json`，并保留各阶段 GCS 和机载原始日志。

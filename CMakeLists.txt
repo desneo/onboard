@@ -215,6 +215,7 @@ endif()
 # 默认构建即组装 build/plane 独立运行目录：复制三方库、改写 rpath；不分发图像插件。
 add_custom_target(package_plane ALL
   COMMAND bash "${CMAKE_SOURCE_DIR}/tools/bundle_plane.sh" "${CMAKE_BINARY_DIR}" "${CMAKE_SOURCE_DIR}"
+    "${PLANE_MIDCOURSE_ALG_LIBRARY}"
   DEPENDS plane
   COMMENT "组装 build/plane 独立运行目录（三方库 + rpath）"
   VERBATIM
