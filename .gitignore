@@ -9,3 +9,4 @@ dist/
 .opencode/
 specs
 docs/plans/
+.vscode/launch.json
