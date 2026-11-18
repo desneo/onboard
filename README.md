@@ -301,11 +301,20 @@ SITL 测试统一使用 `tests/fleet.ini` 的 `simulator.host`（当前为 `192.
 | `midcourse_algorithm.max_horizontal_speed_m_s` | 水平速度限值，默认 60 m/s |
 | `midcourse_algorithm.max_climb_speed_m_s` / `max_descent_speed_m_s` | 爬升、下降速度限值，默认均为 20 m/s |
 | `midcourse_algorithm.cmd_accel_max_m_s2` | 指令加速度限值，默认 20 m/s² |
+| `midcourse_algorithm.v_cruise_m_s` | 逼近段巡航速度，默认 55 m/s |
+| `midcourse_algorithm.approach_brake_k` | 逼近段到点减速增益，默认 0.5 s⁻¹ |
+| `midcourse_algorithm.tau_ff_s` / `r_min_m` | 视线角速率前馈增益和距离保护，默认 1 秒和 50 米 |
+| `midcourse_algorithm.update_dt_s` | 规划器调用周期，默认 0.05 秒，须与 `behavior_tree.tick_interval_ms` 对应 |
 | `midcourse_algorithm.target_invalid_grace_s` | 目标预测宽限期，默认 3 秒 |
 | `midcourse_algorithm.control_output_mode` | 默认 `VelocityAcceleration`，可选 `Attitude` |
+| `midcourse_algorithm.hover_brake_accel_m_s2` | 速度档触发悬停时的减速度，默认 5 m/s² |
 | `midcourse_algorithm.yaw_mode` / `yaw_rate_max_deg_s` | 默认 `1` 按速度方向调整期望航向，变化率上限 45 deg/s；`0` 保持当前航向 |
+| `midcourse_algorithm.track_gain_d` | 轨迹跟踪速度误差反馈增益，默认 `0.0`，仅使用位置反馈 |
+| `midcourse_algorithm.enable_internal_terminal_confirmation` | 允许算法内部确认，默认 `false`。开启后达到确认条件时算法输出悬停设定值，任务继续运行 |
+| `midcourse_algorithm.confirm_boresight_deg` / `confirm_rate_deg_s` / `confirm_hold_s` | 内部确认的离轴角上限、弹轴角速率上限和持续时长，默认 5 度、5 度/秒和 2 秒 |
 
-规划器调用周期取自 `behavior_tree.tick_interval_ms`；目标估计器周期取自雷达历史时间戳间隔的中位数。
+省略 `update_dt_s` 时，规划器调用周期取自 `behavior_tree.tick_interval_ms`。
+目标估计器周期取自雷达历史时间戳间隔的中位数。
 
 UDP 飞控端口位于场景 02 的 PX4 远端端口 `14030`～`14039`、本地端口
 `14280`～`14289`，或旧 SITL 的 `14580`～`14589`（`1458*`）时，程序将本机视为仿真飞机，

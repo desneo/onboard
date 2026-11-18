@@ -53,18 +53,19 @@ struct AppConfig {
 
     int midcourse_init_timeout_ms = 30000;
     bool midcourse_use_px4_limits = false;
-    plane::algorithm::MidCourseConfig midcourse_algorithm = [] {
+    plane::algorithm::MidCourseConfig midcourse_algorithm = [](int tick_interval_ms) {
         plane::algorithm::MidCourseConfig config;
         config.max_horizontal_speed_m_s = 60.0;
         config.max_climb_speed_m_s = 20.0;
         config.max_descent_speed_m_s = 20.0;
         config.cmd_accel_max_m_s2 = 20.0;
+        config.update_dt_s = tick_interval_ms / 1000.0;
         config.target_invalid_grace_s = 3.0;
         config.control_output_mode = plane::algorithm::MidcourseControlMode::VelocityAcceleration;
         config.yaw_mode = 1;
         config.enable_internal_terminal_confirmation = false;
         return config;
-    }();
+    }(bt_tick_interval_ms);
 };
 
 /// 加载主配置和可选部署预置。加载失败时保留原配置并返回 false。

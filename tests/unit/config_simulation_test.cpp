@@ -61,6 +61,7 @@ int main() {
         file << "[midcourse]\ninit_timeout_ms = 12345\ntarget_invalid_grace_s = 2.0\nr_min_m = 75.0\n"
                 "[midcourse_algorithm]\nuse_px4_limits = true\nmax_horizontal_speed_m_s = 30.0\n"
                 "max_climb_speed_m_s = 8.0\nmax_descent_speed_m_s = 4.0\ncmd_accel_max_m_s2 = 7.0\n"
+                "approach_brake_k = 0.75\nhover_brake_accel_m_s2 = 4.0\ntrack_gain_d = 0.25\n"
                 "control_output_mode = Attitude\nyaw_mode = 0\n";
         if (!file) return 4;
     }
@@ -70,6 +71,8 @@ int main() {
     if (config.midcourse_init_timeout_ms != 12345 || !config.midcourse_use_px4_limits ||
         algorithm.max_horizontal_speed_m_s != 30.0 || algorithm.max_climb_speed_m_s != 8.0 ||
         algorithm.max_descent_speed_m_s != 4.0 || algorithm.cmd_accel_max_m_s2 != 7.0 ||
+        algorithm.approach_brake_k != 0.75 || algorithm.hover_brake_accel_m_s2 != 4.0 ||
+        algorithm.track_gain_d != 0.25 ||
         algorithm.target_invalid_grace_s != 2.0 || algorithm.r_min_m != 75.0 ||
         algorithm.control_output_mode != plane::algorithm::MidcourseControlMode::Attitude ||
         algorithm.yaw_mode != 0) {
@@ -158,5 +161,34 @@ int main() {
         config.pod_state_report_hz = 8;
         if (!plane::core::load_config(path, config) || config.pod_state_report_hz != 5) return 18;
     }
+    {
+        std::ofstream file(path);
+        file << "[midcourse_algorithm]\nv_cruise_m_s = 45.0\ntau_ff_s = 1.5\nr_min_m = 60.0\n"
+                "update_dt_s = 0.08\nenable_internal_terminal_confirmation = true\n"
+                "confirm_boresight_deg = 6.0\nconfirm_rate_deg_s = 7.0\nconfirm_hold_s = 2.5\n"
+                "[behavior_tree]\ntick_interval_ms = 80\n";
+        if (!file) return 19;
+    }
+    if (!plane::core::load_config(path, config) || config.bt_tick_interval_ms != 80 ||
+        algorithm.v_cruise_m_s != 45.0 || algorithm.tau_ff_s != 1.5 || algorithm.r_min_m != 60.0 ||
+        algorithm.update_dt_s != 0.08 || !algorithm.enable_internal_terminal_confirmation ||
+        algorithm.confirm_boresight_deg != 6.0 || algorithm.confirm_rate_deg_s != 7.0 ||
+        algorithm.confirm_hold_s != 2.5) {
+        return 20;
+    }
+    for (const auto* invalid : {"0.05", "0", "nan"}) {
+        {
+            std::ofstream file(path);
+            file << "[behavior_tree]\ntick_interval_ms = 80\n[midcourse_algorithm]\nupdate_dt_s = " << invalid << '\n';
+            if (!file) return 21;
+        }
+        if (plane::core::load_config(path, config) || algorithm.update_dt_s != 0.08) return 22;
+    }
+    {
+        std::ofstream file(path);
+        file << "[behavior_tree]\ntick_interval_ms = 25\n";
+        if (!file) return 23;
+    }
+    if (!plane::core::load_config(path, config) || algorithm.update_dt_s != 0.025) return 24;
     return 0;
 }

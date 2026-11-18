@@ -122,11 +122,10 @@ struct MidcourseController::Impl {
                 algorithm_config.max_descent_speed_m_s = flight_params.mpc_z_vel_max_dn;
                 algorithm_config.cmd_accel_max_m_s2 = flight_params.mpc_acc_hor_max;
             }
-            algorithm_config.update_dt_s = static_cast<double>(config.bt_tick_interval_ms) / 1000.0;
             SPDLOG_INFO(
                 "中制导规划器调用 setConfig 前的配置: trackId={} use_px4_limits={} "
                 "max_horizontal_speed_m_s={} max_climb_speed_m_s={} max_descent_speed_m_s={} "
-                "vehicle_mass_kg={} max_thrust_n={} v_cruise_m_s={} tau_ff_s={} r_min_m={} "
+                "vehicle_mass_kg={} max_thrust_n={} v_cruise_m_s={} approach_brake_k={} tau_ff_s={} r_min_m={} "
                 "cmd_accel_max_m_s2={} update_dt_s={} target_invalid_grace_s={} control_output_mode={} "
                 "hover_brake_accel_m_s2={} yaw_mode={} yaw_rate_max_deg_s={} enable_internal_terminal_confirmation={} "
                 "half_fov_deg={} r_capture_min_m={} r_capture_max_m={} r_capture_nominal_m={} capture_discount={} "
@@ -138,7 +137,8 @@ struct MidcourseController::Impl {
                 locked_track_id, config.midcourse_use_px4_limits,
                 algorithm_config.max_horizontal_speed_m_s, algorithm_config.max_climb_speed_m_s,
                 algorithm_config.max_descent_speed_m_s, algorithm_config.vehicle_mass_kg, algorithm_config.max_thrust_n,
-                algorithm_config.v_cruise_m_s, algorithm_config.tau_ff_s, algorithm_config.r_min_m,
+                algorithm_config.v_cruise_m_s, algorithm_config.approach_brake_k, algorithm_config.tau_ff_s,
+                algorithm_config.r_min_m,
                 algorithm_config.cmd_accel_max_m_s2, algorithm_config.update_dt_s, algorithm_config.target_invalid_grace_s,
                 static_cast<int>(algorithm_config.control_output_mode), algorithm_config.hover_brake_accel_m_s2,
                 algorithm_config.yaw_mode, algorithm_config.yaw_rate_max_deg_s,
@@ -190,8 +190,7 @@ struct MidcourseController::Impl {
         last_measurement_timestamp_ms = init_history.back().timestamp_ms;
         initialized = true;
         SPDLOG_INFO("中制导初始化完成: trackId={} history_size={} estimator_dt_s={:.3f} update_dt_s={:.3f}",
-                    locked_track_id, init_history.size(), estimator_dt_s,
-                    static_cast<double>(config.bt_tick_interval_ms) / 1000.0);
+                    locked_track_id, init_history.size(), estimator_dt_s, config.midcourse_algorithm.update_dt_s);
         return true;
     }
 

@@ -194,8 +194,13 @@ bool load_midcourse_algorithm_option(const std::string& key, const std::string& 
         {"cmd_accel_max_m_s2", &MidCourseConfig::cmd_accel_max_m_s2},
         {"vehicle_mass_kg", &MidCourseConfig::vehicle_mass_kg},
         {"max_thrust_n", &MidCourseConfig::max_thrust_n},
+        {"v_cruise_m_s", &MidCourseConfig::v_cruise_m_s},
+        {"approach_brake_k", &MidCourseConfig::approach_brake_k},
+        {"tau_ff_s", &MidCourseConfig::tau_ff_s},
         {"r_min_m", &MidCourseConfig::r_min_m},
+        {"update_dt_s", &MidCourseConfig::update_dt_s},
         {"target_invalid_grace_s", &MidCourseConfig::target_invalid_grace_s},
+        {"hover_brake_accel_m_s2", &MidCourseConfig::hover_brake_accel_m_s2},
         {"yaw_rate_max_deg_s", &MidCourseConfig::yaw_rate_max_deg_s},
         {"half_fov_deg", &MidCourseConfig::half_fov_deg},
         {"r_capture_min_m", &MidCourseConfig::r_capture_min_m},
@@ -213,6 +218,7 @@ bool load_midcourse_algorithm_option(const std::string& key, const std::string& 
         {"w_accel", &MidCourseConfig::w_accel},
         {"replan_stitch_s", &MidCourseConfig::replan_stitch_s},
         {"track_gain_k", &MidCourseConfig::track_gain_k},
+        {"track_gain_d", &MidCourseConfig::track_gain_d},
         {"track_max_corr", &MidCourseConfig::track_max_corr},
         {"recovery_gain_k", &MidCourseConfig::recovery_gain_k},
         {"recovery_margin_m", &MidCourseConfig::recovery_margin_m},
@@ -220,6 +226,9 @@ bool load_midcourse_algorithm_option(const std::string& key, const std::string& 
         {"follow_gain_k", &MidCourseConfig::follow_gain_k},
         {"follow_filter_a", &MidCourseConfig::follow_filter_a},
         {"follow_vel_tau_s", &MidCourseConfig::follow_vel_tau_s},
+        {"confirm_boresight_deg", &MidCourseConfig::confirm_boresight_deg},
+        {"confirm_rate_deg_s", &MidCourseConfig::confirm_rate_deg_s},
+        {"confirm_hold_s", &MidCourseConfig::confirm_hold_s},
     };
     const auto field = numeric_fields.find(key);
     try {
@@ -241,12 +250,15 @@ bool load_midcourse_algorithm_option(const std::string& key, const std::string& 
                 out.midcourse_algorithm.yaw_mode = value == "1" ? 1 : 0;
                 return true;
             }
-        } else if (key == "use_px4_limits" || key == "use_cost_search") {
+        } else if (key == "use_px4_limits" || key == "use_cost_search" ||
+                   key == "enable_internal_terminal_confirmation") {
             if (value == "true" || value == "false") {
                 if (key == "use_px4_limits") {
                     out.midcourse_use_px4_limits = value == "true";
-                } else {
+                } else if (key == "use_cost_search") {
                     out.midcourse_algorithm.use_cost_search = value == "true";
+                } else {
+                    out.midcourse_algorithm.enable_internal_terminal_confirmation = value == "true";
                 }
                 return true;
             }
@@ -321,6 +333,7 @@ std::string read_main_config(const std::string& path, AppConfig& out) {
 
     std::string profile;
     bool profile_configured = false;
+    bool midcourse_update_dt_configured = false;
     std::string line;
     std::string section;
     while (std::getline(file, line)) {
@@ -352,6 +365,8 @@ std::string read_main_config(const std::string& path, AppConfig& out) {
         if (section == "midcourse_algorithm") {
             if (!load_midcourse_algorithm_option(raw_key, value, out)) {
                 SPDLOG_WARN("未知配置项: {}.{}", section, raw_key);
+            } else if (raw_key == "update_dt_s") {
+                midcourse_update_dt_configured = true;
             }
             continue;
         }
@@ -431,6 +446,16 @@ std::string read_main_config(const std::string& path, AppConfig& out) {
     }
     if (file.bad()) {
         throw std::runtime_error("读取文件失败");
+    }
+    const double tick_interval_s = out.bt_tick_interval_ms / 1000.0;
+    if (midcourse_update_dt_configured) {
+        if (out.midcourse_algorithm.update_dt_s <= 0.0 ||
+            std::abs(out.midcourse_algorithm.update_dt_s - tick_interval_s) > 1e-9) {
+            throw std::invalid_argument(
+                "midcourse_algorithm.update_dt_s 必须为正数并与 behavior_tree.tick_interval_ms 对应");
+        }
+    } else {
+        out.midcourse_algorithm.update_dt_s = tick_interval_s;
     }
     return profile;
 }
