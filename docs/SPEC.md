@@ -55,6 +55,7 @@
 - 必须支持通过 UDP 或串口连接 PX4。
 - 必须监测飞控连接建立、异常和恢复，并向业务模块提供当前链路状态。
 - 飞控异常不得导致业务模块直接依赖 MAVSDK 或 PX4 细节。
+- 必须将 MAVSDK 接收的 `STATUSTEXT` 以 `[info]` 写入运行日志，保留原始 `type` 和 `text`，不翻译飞控文本。
 - 场景 02 与旧 SITL 判定为仿真时，必须持续提供 MAVSDK `GroundStation` 心跳，以满足 PX4 的 GCS 预检；其他连接保持 `CompanionComputer` 身份。
 
 ### 3.2 飞机状态

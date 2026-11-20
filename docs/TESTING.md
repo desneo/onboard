@@ -252,6 +252,7 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 | 场景 | 通过标准 |
 | --- | --- |
 | UDP 连接 | 能发现 PX4，状态变为 connected，断开和恢复可识别 |
+| 飞控状态文本 | 飞控连接后产生 `STATUSTEXT`，在 `logs/plane.log` 中检查 `[info]` 的 `飞控 STATUSTEXT` 日志，`type` 和 `text` 与飞控消息一致，原文不翻译；不同类型的消息均输出 |
 | 仿真 GCS 预检 | 场景 02 或旧 SITL 中启动 plane 后，PX4 不再报告 `Preflight Fail: No connection to the GCS`；日志包含 `GroundStation` 身份，随后 Arm 可被接受 |
 | 串口连接 | 使用配置的设备和波特率连接 PX4 |
 | Arm/Disarm | 指令成功且以真实 armed 状态判定完成 |

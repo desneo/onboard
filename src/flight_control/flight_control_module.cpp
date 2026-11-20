@@ -346,6 +346,12 @@ void FlightControlModule::attach_system(const std::shared_ptr<mavsdk::System>& s
         update_link_state_locked(connected);
     }
 
+    telemetry_->subscribe_status_text([this, generation](mavsdk::Telemetry::StatusText value) {
+        if (connection_generation_ != generation) {
+            return;
+        }
+        SPDLOG_INFO("飞控 STATUSTEXT：type={} text={}", magic_enum::enum_name(value.type), value.text);
+    });
     telemetry_->subscribe_position([this, generation](mavsdk::Telemetry::Position value) {
         if (connection_generation_ != generation) {
             return;
