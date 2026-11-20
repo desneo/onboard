@@ -59,6 +59,7 @@ BT::NodeStatus AdjustHeightNode::checkFinish() {
     const float error_m = target_relative_height_m_ - state.geoPos.height;
     const float tolerance_m = static_cast<float>(app_config_->bt_height_adjust_tolerance_m);
     if (!flight_control_->flight_status().in_air) {
+        record_failure("调整高度期间飞机离地状态丢失");
         SPDLOG_ERROR("调整高度期间飞机离地状态丢失");
         stop_temporary_mission();
         return BT::NodeStatus::FAILURE;

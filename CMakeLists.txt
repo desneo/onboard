@@ -92,6 +92,20 @@ include(CTest)
 add_subdirectory(tools/gcs_sim)
 
 if(BUILD_TESTING)
+  add_executable(flight_control_diagnostics_test tests/unit/flight_control_diagnostics_test.cpp)
+  target_include_directories(flight_control_diagnostics_test PRIVATE src)
+  target_compile_options(flight_control_diagnostics_test PRIVATE -Wall -Wextra)
+  target_link_libraries(flight_control_diagnostics_test PRIVATE plane::common_include)
+  add_test(NAME flight_control_diagnostics COMMAND flight_control_diagnostics_test)
+
+  add_executable(alert_queue_test tests/unit/alert_queue_test.cpp
+    src/communication/communication_module.cpp src/core/time_utils.cpp src/state/state_store.cpp)
+  target_include_directories(alert_queue_test PRIVATE src)
+  target_compile_options(alert_queue_test PRIVATE -Wall -Wextra)
+  target_link_libraries(alert_queue_test PRIVATE plane_protocol plane::deps)
+  add_test(NAME alert_queue COMMAND alert_queue_test)
+  set_tests_properties(alert_queue PROPERTIES TIMEOUT 20)
+
   add_executable(manual_takeover_test tests/unit/manual_takeover_test.cpp)
   target_include_directories(manual_takeover_test PRIVATE src)
   target_compile_options(manual_takeover_test PRIVATE -Wall -Wextra)

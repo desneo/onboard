@@ -14,6 +14,7 @@ class FakeFlightControl final : public plane::flight_control::FlightControlApi {
    public:
     plane::flight_control::FlightStatus status;
     bool dispatch_ok = true;
+    std::string dispatch_error = "PX4 拒绝航线：Denied";
     int route_calls = 0;
     int waypoint_calls = 0;
 
@@ -24,12 +25,14 @@ class FakeFlightControl final : public plane::flight_control::FlightControlApi {
     bool return_to_launch(std::string&) override { return false; }
     bool hold(std::string&) override { return false; }
     bool stop_motor(std::string&) override { return false; }
-    bool goto_waypoint(const plane::model::GeoPoint&, std::string&) override {
+    bool goto_waypoint(const plane::model::GeoPoint&, std::string& error) override {
         ++waypoint_calls;
+        if (!dispatch_ok) error = dispatch_error;
         return dispatch_ok;
     }
-    bool execute_route(const std::vector<plane::model::GeoPoint>&, std::string&) override {
+    bool execute_route(const std::vector<plane::model::GeoPoint>&, std::string& error) override {
         ++route_calls;
+        if (!dispatch_ok) error = dispatch_error;
         return dispatch_ok;
     }
     bool set_ned_velocity(const plane::model::NedVelocity&, std::string&) override { return false; }
@@ -82,7 +85,9 @@ void waypoint_keeps_timeout() {
     context.waypoints.resize(1);
     FakeFlightControl flight;
     flight.status.mission_total = 1;
-    plane::task::MissionNode node("Mission", BT::NodeConfig{}, &flight, nullptr, &config, &context);
+    BT::NodeConfig node_config;
+    node_config.blackboard = BT::Blackboard::create();
+    plane::task::MissionNode node("Mission", node_config, &flight, nullptr, &config, &context);
 
     require(node.executeTick() == BT::NodeStatus::RUNNING, "航点下发后等待完成");
     test_now_ms += 29000;
@@ -90,6 +95,14 @@ void waypoint_keeps_timeout() {
     test_now_ms += 2000;
     require(node.executeTick() == BT::NodeStatus::FAILURE, "航点仍遵守普通节点超时");
     require(flight.waypoint_calls == 1 && flight.route_calls == 0, "单航点分发保持不变");
+    std::string detail;
+    require(node_config.blackboard->get(plane::task::FlightActionNode::kFailureDetail, detail) &&
+                detail == "节点 Mission 超时（30000 毫秒）", "节点超时的具体详情没有传给执行引擎");
+    node.haltNode();
+    flight.status.mission_current = 1;
+    require(node.executeTick() == BT::NodeStatus::SUCCESS &&
+                node_config.blackboard->get(plane::task::FlightActionNode::kFailureDetail, detail) && detail.empty(),
+            "重新执行时没有清除前次节点失败原因");
 }
 
 void route_can_be_halted() {
@@ -117,8 +130,14 @@ void route_dispatch_failure_is_preserved() {
     context.waypoints.resize(1);
     FakeFlightControl flight;
     flight.dispatch_ok = false;
-    plane::task::MissionNode node("Mission", BT::NodeConfig{}, &flight, nullptr, &config, &context);
+    BT::NodeConfig node_config;
+    node_config.blackboard = BT::Blackboard::create();
+    plane::task::MissionNode node("Mission", node_config, &flight, nullptr, &config, &context);
     require(node.executeTick() == BT::NodeStatus::FAILURE, "取消超时后仍报告飞控分发失败");
+    std::string detail;
+    require(node_config.blackboard->get(plane::task::FlightActionNode::kFailureDetail, detail) &&
+                detail.find("Mission") != std::string::npos && detail.find(flight.dispatch_error) != std::string::npos,
+            "飞控派发失败的具体原因没有传给执行引擎");
 }
 
 }  // namespace

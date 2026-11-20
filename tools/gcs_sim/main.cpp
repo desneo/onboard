@@ -528,7 +528,16 @@ int main(int argc, char** argv) {
             }
             return;
         }
-        if (envelope.type == "Ack") {
+        if (envelope.type == "Alert") {
+            const nlohmann::json payload = nlohmann::json::parse(envelope.payload, nullptr, false);
+            if (payload.is_discarded() || !payload.is_object() || !payload.contains("type") ||
+                !payload.at("type").is_string() || !payload.contains("detail") || !payload.at("detail").is_string()) {
+                SPDLOG_WARN("Alert 解码失败: senderId={}", envelope.sender_id);
+                return;
+            }
+            SPDLOG_INFO("收到 Alert: senderId={} type={} detail={}", envelope.sender_id,
+                        payload.at("type").get<std::string>(), payload.at("detail").get<std::string>());
+        } else if (envelope.type == "Ack") {
             const nlohmann::json payload = nlohmann::json::parse(envelope.payload, nullptr, false);
             if (!payload.is_discarded() && payload.contains("ackId")) {
                 std::lock_guard<std::mutex> lock(mutex);
@@ -536,7 +545,9 @@ int main(int argc, char** argv) {
                 cv.notify_all();
             }
         }
-        SPDLOG_INFO("收到 {}: senderId={} messageId={}", envelope.type, envelope.sender_id, envelope.message_id);
+        if (envelope.type != "Alert") {
+            SPDLOG_INFO("收到 {}: senderId={} messageId={}", envelope.type, envelope.sender_id, envelope.message_id);
+        }
         if (!options.no_ack && (envelope.type == "Alert" || envelope.type == "Ack")) {
             const nlohmann::json payload{{"ackId", envelope.message_id}};
             const std::string message_id = options.sender_id + "-ack-" + std::to_string(++sequence);

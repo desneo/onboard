@@ -22,6 +22,7 @@
 #include "core/event_bus.h"
 #include "core/module.h"
 #include "flight_control/flight_control_api.h"
+#include "flight_control/flight_control_diagnostics.h"
 #include "flight_control/flight_control_events.h"
 #include "flight_control/manual_takeover.h"
 #include "state/state_store_api.h"
@@ -118,9 +119,9 @@ class FlightControlModule final : public plane::core::IModule, public FlightCont
     void request_landed_state_stream_if_needed();
     void refresh_flight_control_params_cache_if_needed();
     void invalidate_flight_control_params_cache(const std::string& reason);
-    bool ensure_connected(std::string& error);
+    bool ensure_connected(std::string& error, const std::string& operation);
     FlightStatus flight_status_locked() const;
-    void update_link_state_locked(bool connected);
+    std::optional<plane::model::Alert> update_link_state_locked(bool connected);
     bool allow_outgoing_message(const mavlink_message_t& message);
     std::string self_check_action_error_locked(const SelfCheckAction& action) const;
     SelfCheckArmResult run_self_check_action(const FlightStatus& expected, bool arming,
@@ -137,11 +138,17 @@ class FlightControlModule final : public plane::core::IModule, public FlightCont
     bool set_velocity_setpoint(mavsdk::Offboard::VelocityNedYaw velocity,
                               std::optional<mavsdk::Offboard::AccelerationNed> acceleration, std::string& error);
     mavsdk::Offboard::Result send_velocity_setpoint_locked();
+    void publish_diagnostic(const std::optional<plane::model::Alert>& alert) const;
+    void report_command_started(const std::string& operation) const;
+    void report_command_failed(const std::string& detail) const;
+    void report_offboard_error(const std::string& operation, const std::string& error, bool invalid_input = false);
+    void report_offboard_result(const std::string& operation, mavsdk::Offboard::Result result);
     void report_error(const std::string& detail) const;
 
     plane::core::EventBus& event_bus_;
     const plane::core::AppConfig& config_;
     plane::state::StateStoreApi& state_store_;
+    FlightControlDiagnostics diagnostics_;
 
     std::unique_ptr<mavsdk::Mavsdk> mavsdk_;
     std::shared_ptr<mavsdk::System> system_;

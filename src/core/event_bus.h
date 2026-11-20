@@ -13,7 +13,7 @@
 
 namespace plane::core {
 
-/// 进程内异步事件总线（ARCHITECTURE §3.2/§22）。
+/// 进程内同步事件总线，publish 在发布线程执行订阅回调（ARCHITECTURE §3.2）。
 /// 事件标识为字符串常量；载荷类型由 subscribe<T>/publish<T> 决定。
 class EventBus {
    public:

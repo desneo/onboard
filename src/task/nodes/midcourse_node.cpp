@@ -30,10 +30,4 @@ void MidcourseNode::onHalted() {
 
 bool MidcourseNode::timeout_enabled() const { return false; }
 
-void MidcourseNode::record_failure(const std::string& error) {
-    if (config().blackboard) {
-        config().blackboard->set(kFailureDetail, error);
-    }
-}
-
 }  // namespace plane::task

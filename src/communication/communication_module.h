@@ -62,6 +62,7 @@ class CommunicationModule final : public plane::core::IModule, public Communicat
     };
 
     void enqueue_wire(std::string raw, bool unicast);
+    bool enqueue_alert(const plane::model::Alert& alert);
     plane::model::AgentInfo agent_info() const;
     bool update_agent_liveliness(const std::string& key_expr, bool online);
     void on_peer_liveliness(const std::string& key_expr, bool online);
@@ -91,6 +92,10 @@ class CommunicationModule final : public plane::core::IModule, public Communicat
     std::mutex rx_mutex_;
     std::condition_variable rx_cv_;
     std::deque<IncomingMessage> rx_queue_;
+    // 与接收队列共用唤醒机制；初始化后接收启动早期诊断，停止后拒绝入队。
+    std::deque<plane::model::Alert> alert_queue_;
+    bool accepting_alerts_ = false;
+    bool diagnostic_subscribed_ = false;
     std::deque<std::pair<std::string, std::string>> recent_pod_commands_;
     std::deque<std::pair<std::string, std::string>> recent_flight_controls_;
     std::mutex pending_mutex_;

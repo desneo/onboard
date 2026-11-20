@@ -16,6 +16,7 @@
 #include "communication/plane_query.h"
 #include "communication/serialization.h"
 #include "core/time_utils.h"
+#include "flight_control/flight_control_events.h"
 
 namespace plane::communication {
 
@@ -26,6 +27,7 @@ namespace {
 constexpr int kWorkerTickMs = 50;
 constexpr std::size_t kRecentPodCommandLimit = 1024;
 constexpr std::size_t kRecentFlightControlLimit = 1024;
+constexpr std::size_t kAlertQueueLimit = 256;
 
 bool is_reliable(plane::model::MessageType type) {
     return type == plane::model::MessageType::Alert || type == plane::model::MessageType::Ack;
@@ -102,6 +104,16 @@ CommunicationModule::~CommunicationModule() { stop(); }
 std::string CommunicationModule::name() const { return "通信"; }
 
 bool CommunicationModule::init() {
+    {
+        std::lock_guard<std::mutex> lock(rx_mutex_);
+        accepting_alerts_ = true;
+    }
+    if (!diagnostic_subscribed_) {
+        event_bus_.subscribe<plane::model::Alert>(
+            plane::flight_control::events::kDiagnostic,
+            [this](const plane::model::Alert& alert) { enqueue_alert(alert); });
+        diagnostic_subscribed_ = true;
+    }
     SPDLOG_INFO("模块初始化完成: {}", name());
     return true;
 }
@@ -175,17 +187,20 @@ bool CommunicationModule::start() {
 
 void CommunicationModule::stop() {
     {
+        std::lock_guard<std::mutex> lock(rx_mutex_);
+        accepting_alerts_ = false;
+        alert_queue_.clear();
+        running_ = false;
+    }
+    rx_cv_.notify_all();
+    {
         std::lock_guard<std::mutex> lock(presence_mutex_);
         presence_active_ = false;
         online_agents_.clear();
         agent_info_pending_ = false;
     }
-    const bool was_running = running_.exchange(false);
-    if (was_running) {
-        rx_cv_.notify_all();
-        if (worker_.joinable()) {
-            worker_.join();
-        }
+    if (worker_.joinable()) {
+        worker_.join();
     }
     transport_.close();
     {
@@ -201,6 +216,9 @@ void CommunicationModule::stop() {
 void CommunicationModule::release() {}
 
 bool CommunicationModule::sendToStation(const OutgoingMessage& message) {
+    if (const auto* alert = std::get_if<plane::model::Alert>(&message)) {
+        return enqueue_alert(*alert);
+    }
     return send_message(std::string(plane::model::topic_sendToStation), message);
 }
 
@@ -247,6 +265,26 @@ void CommunicationModule::enqueue_wire(std::string raw, bool unicast) {
     rx_cv_.notify_one();
 }
 
+bool CommunicationModule::enqueue_alert(const plane::model::Alert& alert) {
+    bool dropped = false;
+    {
+        std::lock_guard<std::mutex> lock(rx_mutex_);
+        if (!accepting_alerts_) {
+            return false;
+        }
+        if (alert_queue_.size() >= kAlertQueueLimit) {
+            alert_queue_.pop_front();
+            dropped = true;
+        }
+        alert_queue_.push_back(alert);
+    }
+    rx_cv_.notify_one();
+    if (dropped) {
+        SPDLOG_WARN("告警发送队列已满，丢弃最旧告警");
+    }
+    return true;
+}
+
 void CommunicationModule::on_peer_liveliness(const std::string& key_expr, bool online) {
     static const std::string prefix = plane_liveliness_key("");
     if (key_expr.compare(0, prefix.size(), prefix) != 0) {
@@ -272,16 +310,38 @@ void CommunicationModule::worker_loop() {
     auto next_pod_report = Clock::now();
     while (running_) {
         std::deque<IncomingMessage> batch;
+        std::deque<plane::model::Alert> alerts;
         {
             std::unique_lock<std::mutex> lock(rx_mutex_);
             const auto worker_deadline = Clock::now() + worker_period;
             const auto deadline = camera_ ? std::min(worker_deadline, next_pod_report) : worker_deadline;
             rx_cv_.wait_until(lock, deadline,
-                              [this]() { return !rx_queue_.empty() || agent_info_pending_ || !running_; });
+                              [this]() {
+                                  return !rx_queue_.empty() || !alert_queue_.empty() || agent_info_pending_ || !running_;
+                              });
+            if (!running_) {
+                break;
+            }
             batch.swap(rx_queue_);
+            alerts.swap(alert_queue_);
+        }
+        for (const auto& alert : alerts) {
+            if (!running_) {
+                break;
+            }
+            // 直接使用发送入口，避免 Alert 经 sendToStation 再次进入队列。
+            if (!send_message(std::string(plane::model::topic_sendToStation), alert)) {
+                SPDLOG_ERROR("告警发送失败: type={} detail={}", alert.type, alert.detail);
+            }
         }
         for (const auto& incoming : batch) {
+            if (!running_) {
+                break;
+            }
             on_wire_message(incoming);
+        }
+        if (!running_) {
+            break;
         }
         if (agent_info_pending_.exchange(false)) {
             if (sendToAll(agent_info())) {

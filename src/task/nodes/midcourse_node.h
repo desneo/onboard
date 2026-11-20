@@ -18,7 +18,6 @@ class MidcourseNode final : public FlightActionNode {
           controller_(controller) {}
 
     static BT::PortsList providedPorts() { return {}; }
-    static constexpr char kFailureDetail[] = "midcourse_failure_detail";
 
    protected:
     bool dispatch(std::string& error) override;
@@ -27,8 +26,6 @@ class MidcourseNode final : public FlightActionNode {
     bool timeout_enabled() const override;
 
    private:
-    void record_failure(const std::string& error);
-
     const SuicideTaskContext* context_;
     MidcourseController* controller_;
 };

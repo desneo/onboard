@@ -71,7 +71,7 @@ class TaskExecutionEngine final : public plane::core::IModule, public TaskExecut
     BT::Tree tree_;
     std::uint64_t execution_id_ = 0;
     bool tree_ready_ = false;
-    bool is_task_tree_ = false;  ///< 当前树是否为任务树（任务才发布进度）
+    bool is_task_tree_ = false;  ///< 当前树是否为任务树
     std::string current_node_;
     std::string current_tree_name_;
     CommandContext command_context_;

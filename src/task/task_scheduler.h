@@ -37,6 +37,15 @@ class TaskScheduler final : public plane::core::IModule, public TaskStateProvide
    private:
     enum class ControlKind { None, Command, Task, SelfCheck };
 
+    struct ControlSnapshot {
+        ControlKind kind = ControlKind::None;
+        plane::model::TaskState task_state;
+        std::string command_id;
+        std::string type;
+        std::string current_tree;
+        std::string current_node;
+    };
+
     using ControlTime = std::chrono::steady_clock::time_point;
 
     void on_task_info(const plane::model::TaskInfo& task, ControlTime received_at);
@@ -44,7 +53,11 @@ class TaskScheduler final : public plane::core::IModule, public TaskStateProvide
     void on_manual_takeover(const plane::flight_control::ManualTakeoverEvent& event);
     void on_engine_result(const TaskEngineResult& result);
     void on_execution_progress(const TaskProgress& progress);
-    bool prepare_control(ControlTime received_at);
+    bool prepare_control(ControlTime received_at, const std::string& interruption);
+    bool claim_control_locked(std::uint64_t execution_id, ControlSnapshot& snapshot);
+    bool finish_control(const TaskEngineResult& result);
+    void report_finished(ControlSnapshot snapshot, plane::model::TaskStatus status, const std::string& detail);
+    void report_rejected_command(const plane::model::Command& command, const std::string& detail);
     void clear_control_locked();
     void report_task_state(const plane::model::TaskState& state);
     void report_self_check_result(const plane::model::SelfCheckResult& result);
@@ -65,6 +78,9 @@ class TaskScheduler final : public plane::core::IModule, public TaskStateProvide
     std::uint64_t next_execution_id_ = 0;
     std::uint64_t execution_id_ = 0;
     std::string command_id_;
+    std::string control_type_;
+    std::string current_tree_;
+    std::string current_node_;
     plane::model::TaskState task_state_;
 };
 

@@ -20,6 +20,8 @@ struct ManualTakeoverEvent {
 namespace events {
 
 inline constexpr std::string_view kError = "flight_control.error";
+// 载荷为 plane::model::Alert，通信模块只入队并由通信工作线程发送。
+inline constexpr std::string_view kDiagnostic = "flight_control.diagnostic";
 inline constexpr std::string_view kManualTakeover = "flight_control.manual_takeover";
 
 }  // namespace events

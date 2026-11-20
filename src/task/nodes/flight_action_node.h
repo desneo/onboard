@@ -27,9 +27,13 @@ class FlightActionNode : public BT::StatefulActionNode {
     /// 该节点被 tick 的次数（首帧 onStart + 之后每次 onRunning）。
     int tick_count() const noexcept { return tick_count_; }
 
+    static constexpr char kFailureDetail[] = "failure_detail";
+
    protected:
     BT::NodeStatus onStart() override {
         dispatched_ = false;
+        failure_detail_.clear();
+        if (config().blackboard) config().blackboard->set(kFailureDetail, std::string{});
         return start_action();
     }
 
@@ -42,7 +46,8 @@ class FlightActionNode : public BT::StatefulActionNode {
         }
         ++tick_count_;
         if (timeout_enabled() && plane::core::now_ms() - start_ms_ > node_timeout_ms()) {
-            SPDLOG_ERROR("节点 {} 超时（{} 毫秒）", name(), node_timeout_ms());
+            record_failure("节点 " + name() + " 超时（" + std::to_string(node_timeout_ms()) + " 毫秒）");
+            SPDLOG_ERROR("{}", failure_detail_);
             onTimeout();
             return BT::NodeStatus::FAILURE;
         }
@@ -62,6 +67,12 @@ class FlightActionNode : public BT::StatefulActionNode {
 
     virtual bool dispatch(std::string& error) = 0;
     virtual BT::NodeStatus checkFinish() = 0;
+
+    /// 保存业务根因，供执行引擎在失败时上报；日志不承担跨模块传递详情。
+    void record_failure(const std::string& detail) {
+        failure_detail_ = detail;
+        if (config().blackboard) config().blackboard->set(kFailureDetail, detail);
+    }
 
     plane::flight_control::FlightControlApi* flight_control_;
     plane::state::StateStoreApi* state_store_;
@@ -84,7 +95,8 @@ class FlightActionNode : public BT::StatefulActionNode {
             return BT::NodeStatus::RUNNING;
         }
         if (!dispatched_) {
-            SPDLOG_ERROR("节点 {} 分发失败: {}", name(), error);
+            record_failure("节点 " + name() + " 分发失败：" + (error.empty() ? "未提供原因" : error));
+            SPDLOG_ERROR("{}", failure_detail_);
             return BT::NodeStatus::FAILURE;
         }
         return report_status(checkFinish());
@@ -105,6 +117,7 @@ class FlightActionNode : public BT::StatefulActionNode {
                 SPDLOG_INFO("节点 {} 执行成功（tick_count_={}）", name(), tick_count_);
                 break;
             case BT::NodeStatus::FAILURE:
+                if (failure_detail_.empty()) record_failure("节点 " + name() + " 执行失败");
                 SPDLOG_ERROR("节点 {} 执行失败（tick_count_={}）", name(), tick_count_);
                 break;
             default:
@@ -118,6 +131,7 @@ class FlightActionNode : public BT::StatefulActionNode {
     std::int64_t last_running_log_ms_ = 0;
     int tick_count_ = 0;
     bool dispatched_ = false;
+    std::string failure_detail_;
 };
 
 }  // namespace plane::task

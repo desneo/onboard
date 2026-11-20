@@ -198,6 +198,29 @@ void height_adjust_timeout_stops_temporary_mission() {
     require(flight.hold_calls == 1, "高度调整超时后应切换 Hold 停止临时任务");
 }
 
+
+void height_adjust_reports_in_air_loss() {
+    test_now_ms = 1000;
+    plane::core::AppConfig config;
+    plane::task::CommandContext context;
+    context.type = plane::model::CommandType::Route;
+    context.waypoints.resize(1);
+    context.waypoints.front().height = 20.0F;
+    FakeFlightControl flight;
+    flight.status.in_air = true;
+    FakeStateStore states;
+    states.state.geoPos.height = 5.0F;
+    BT::NodeConfig node_config;
+    node_config.blackboard = BT::Blackboard::create();
+    plane::task::AdjustHeightNode node("AdjustHeight", node_config, &flight, &states, &config, &context);
+    require(node.executeTick() == BT::NodeStatus::RUNNING, "离地状态丢失测试未启动");
+    flight.status.in_air = false;
+    require(node.executeTick() == BT::NodeStatus::FAILURE, "离地状态丢失应结束高度调整");
+    std::string detail;
+    require(node_config.blackboard->get(plane::task::FlightActionNode::kFailureDetail, detail) &&
+                detail == "调整高度期间飞机离地状态丢失", "高度调整失败的业务根因未传给执行引擎");
+}
+
 void takeoff_checks_dispatched_relative_height() {
     plane::core::AppConfig config;
     config.bt_takeoff_tolerance_m = 1.0;
@@ -230,6 +253,7 @@ int main() {
         height_adjust_uses_relative_height();
         height_adjust_supports_descent_and_halt();
         height_adjust_timeout_stops_temporary_mission();
+        height_adjust_reports_in_air_loss();
         takeoff_checks_dispatched_relative_height();
     } catch (const std::exception& error) {
         SPDLOG_ERROR("航线起飞与高度调整测试失败: {}", error.what());

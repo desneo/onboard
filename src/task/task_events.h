@@ -13,6 +13,8 @@ struct TaskEngineResult {
     std::uint64_t execution_id = 0;
     plane::model::TaskStatus status = plane::model::TaskStatus::None;
     std::string detail;
+    std::string currentBehaviorTree{};
+    std::string currentNode{};
 };
 
 /// 引擎执行进度（M5 发布，Scheduler 消费）。

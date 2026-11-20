@@ -291,35 +291,34 @@ void TaskExecutionEngine::tick_loop() {
                 exception_thrown = true;
                 exception_text = e.what();
             }
-            if (!exception_thrown && !tree_.subtrees.empty() && tree_.subtrees.front()->blackboard) {
+            if (!tree_.subtrees.empty() && tree_.subtrees.front()->blackboard) {
                 const auto& blackboard = tree_.subtrees.front()->blackboard;
                 const bool has_node = blackboard->get("current_node", node);
                 if (has_node && !node.empty() && node != current_node_) {
                     current_node_ = node;
                     changed = true;
                 }
-                if (is_self_check && (status == BT::NodeStatus::SUCCESS || status == BT::NodeStatus::FAILURE)) {
+                if (!exception_thrown && is_self_check &&
+                    (status == BT::NodeStatus::SUCCESS || status == BT::NodeStatus::FAILURE)) {
                     if (!blackboard->get(SelfCheckNode::kResultDetail, result_detail)) {
                         status = BT::NodeStatus::FAILURE;
                         result_detail = "未获得自检结果详情，未确认恢复上锁";
                     }
-                } else if (is_task_tree_ && status == BT::NodeStatus::FAILURE) {
-                    static_cast<void>(blackboard->get(MidcourseNode::kFailureDetail, result_detail));
+                } else if (!exception_thrown && status == BT::NodeStatus::FAILURE) {
+                    static_cast<void>(blackboard->get(FlightActionNode::kFailureDetail, result_detail));
                 }
             }
         }
         if (!ticking_) {
             return;
         }
+        if (changed) publish_progress(node);
         if (exception_thrown) {
             if (is_self_check) {
                 exception_text += "，未确认恢复上锁";
             }
             finish(plane::model::TaskStatus::Failed, "行为树异常: " + exception_text);
             return;
-        }
-        if (changed && is_task_tree_) {
-            publish_progress(node);
         }
         if (status == BT::NodeStatus::SUCCESS) {
             finish(plane::model::TaskStatus::Completed, result_detail);
@@ -355,6 +354,8 @@ void TaskExecutionEngine::finish(plane::model::TaskStatus status, const std::str
     result.execution_id = execution_id_;
     result.status = status;
     result.detail = detail;
+    result.currentBehaviorTree = current_tree_name_;
+    result.currentNode = current_node_;
     event_bus_.publish(events::kEngineResult, result);
     SPDLOG_INFO("行为树结束: currentBehaviorTree={} status={} detail={}", current_tree_name_,
                 std::string(magic_enum::enum_name(status)), detail);

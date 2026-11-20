@@ -17,6 +17,7 @@ class CommunicationApi {
    public:
     virtual ~CommunicationApi() = default;
 
+    /// Alert 异步排队发送，返回值仅表示是否成功入队；其他消息返回本次发送结果。
     virtual bool sendToStation(const OutgoingMessage& message) = 0;
     virtual bool sendToPlane(const std::string& plane_id, const OutgoingMessage& message) = 0;
     virtual bool sendToAll(const OutgoingMessage& message) = 0;

@@ -125,6 +125,17 @@ ZenohTransport 管理原生 queryable 的生命周期和带超时的 get。`Comm
 
 Communication 对外提供 `sendToStation`、`sendToPlane` 和 `sendToAll` 三类发送能力。网络输入由 Communication 接收为字符串，根据 `MessageType` 使用 nlohmann-json 转换成对应数据对象，再通过 EventBus 交给业务模块；JSON 类型和解析逻辑不得进入业务模块。
 
+Flight Control 使用内部诊断事件发布公共 `Alert` 载荷，Communication 在 `init` 阶段订阅，
+因此可接收其他模块启动时产生的诊断。所有 `sendToStation(Alert)` 均进入最多 256 条的有界队列，
+返回值仅表示是否成功入队。队列满时淘汰最旧消息并记录中文日志；停止时关闭入队入口并清理队列。
+通信工作线程在队列锁外调用底层发送函数，避免递归入队和飞控回调执行网络 I/O。
+实际发送失败只记录本地错误，不再次生成 Alert。发往地面站的消息采用尽力发送，不进行可靠重试。
+
+EventBus 的发布同步执行订阅回调；诊断回调只负责轻量入队，不反查飞控、不等待任务调度锁。
+任务开始事件在调用执行引擎前生成，终态按 `execution_id` 认领一次；停止、替换和接管也必须结束旧执行。
+执行引擎通过通用节点失败详情传递派发错误、超时和明确失败原因。
+结果回调不获取用于派发和等待执行线程退出的锁，以免形成同步事件与线程 `join` 的死锁。
+
 `gcs_sim` 是 7790 雷达 UDP 与 Zenoh 之间的独立适配工具。雷达过滤、目标编码及其测试位于
 `tools/gcs_sim`。它与主程序共用 `plane_protocol` 的报文编解码、查询和 Zenoh 传输。
 机载目标缓存和中制导直接使用 `common_include/message.h` 定义的 `plane::model::GcsTarget`。
