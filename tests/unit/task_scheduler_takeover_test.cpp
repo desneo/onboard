@@ -407,7 +407,7 @@ void task_scheduler_reports_task_failure_once() {
     require(engine.starts.size() == 1, "未启动待验证的任务");
     const auto failed_execution = engine.starts.back();
     bus.publish(task::events::kExecutionProgress, task::TaskProgress{failed_execution, "AntiUav", "Midcourse"});
-    const task::TaskEngineResult failure{failed_execution, model::TaskStatus::Failed, "中制导 setConfig 失败"};
+    const task::TaskEngineResult failure{failed_execution, model::TaskStatus::Failed, "中制导配置校验失败"};
     bus.publish(task::events::kEngineResult, failure);
     bus.publish(task::events::kEngineResult, failure);
     require(communication.states.size() == 1 && communication.states.back().taskId == "task-failed" &&

@@ -197,8 +197,8 @@ cd build/plane
 配置测试还需覆盖同一预置按不同本机 IP 选择不同飞机 ID 和 RTSP、UDP 与串口飞控、
 仅包含一架飞机的预置，以及 `profile` 缺失或为空、配置读取失败、重复 ID/IP、必填项无效、零匹配和多匹配。
 配置加载失败必须保留原有效配置，切换预置时不得残留另一种飞控连接的信息。
-中制导配置测试覆盖巡航与前馈参数、内部末端确认及其阈值、`update_dt_s` 与行为树周期一致和不一致的情况，
-以及省略 `update_dt_s` 时的周期换算。
+中制导配置测试覆盖巡航与前馈参数、重规划周期与冻结时长、内部末端确认及其阈值、
+`update_dt_s` 与行为树周期一致和不一致的情况，以及省略 `update_dt_s` 时的周期换算。
 `fleetctl` 单测验证测试清单默认路径、`--config` 覆盖及完整运行包的唯一配置来源：
 板端已有配置损坏、格式陈旧或为空均不影响有效包部署；包内 `profile` 缺失、为空、引用包外文件或预置无效时，
 必须在停止板端程序前拒绝部署。验证包内 `safe_height_m = 20` 覆盖板端的 `30`，
@@ -211,8 +211,9 @@ SITL 使用包内预置端口及清单主机并检查实际监听，串口连接
 `midcourse_controller` 使用真实 `libmidcourse_alg.so`，验证任务启动前已形成的 20 帧历史、增量更新、
 INI／PX4 限值来源、两种输出模式、会话重置和错误路径；
 `attitude_conversion` 验证四元数归一化与姿态转换。
-按板端 `logs/plane.log` 的时间顺序检查规划器配置、估计器初始化、Offboard 启动和首次增量更新。
-规划器在调用 `setConfig` 前记录限值来源和传入的全部字段。接口失败时保留原始错误字符串。
+按板端 `logs/plane.log` 的时间顺序检查聚合门面初始化、Offboard 启动和首次增量更新。
+生效配置应在等待目标历史前完成校验，初始化调用日志记录限值来源和传入的全部字段。
+接口失败时保留原始错误字符串。
 
 ```bash
 ctest --test-dir build --output-on-failure
@@ -348,8 +349,8 @@ PX4 实际遥测的 `armed` 顺序为 `false → true → false`，自检全程�
 1. `ldd build/plane/plane` 包含 `libmidcourse_alg.so`，不包含 Pluma；算法库可由 `$ORIGIN/lib` 解析。
 2. `AntiUav` 根据飞行状态选择直接 Midcourse、Takeoff → Midcourse 或 Arm → Takeoff → Midcourse。
 3. 指定 ID 时锁定该目标；未指定时只允许唯一候选，不得在多个目标间自动跳换。
-4. 机载从进程启动起持续缓存目标；任务启动前已经收到 20 帧时直接完成初始化，第 21 帧产生首次增量更新；规划器每个 50 ms tick 先于本 tick 的目标增量更新调用。
-5. `[midcourse_algorithm]` 默认使用 INI 的四项限值，飞控缓存未就绪仍可配置规划器。
+4. 机载从进程启动起持续缓存目标；任务启动前已经收到 20 帧时直接完成初始化，第 21 帧产生首次增量更新；`MidcourseAlgorithm::update` 每个 50 ms tick 先于本 tick 的 `updateTarget` 调用。
+5. `[midcourse_algorithm]` 默认使用 INI 的四项限值，飞控缓存未就绪仍可校验并初始化聚合算法。
    `use_px4_limits = true` 时分别使用 `MPC_XY_VEL_MAX`、`MPC_Z_VEL_MAX_UP`、`MPC_Z_VEL_MAX_DN`、`MPC_ACC_HOR_MAX` 缓存值，
    缓存未就绪时任务失败，断连时缓存失效，重连后重新获取。
 6. 使用 `VelocityAcceleration` 时，SITL 实际进入 Offboard。检查发往 SITL 的 `SET_POSITION_TARGET_LOCAL_NED`，
@@ -357,15 +358,16 @@ PX4 实际遥测的 `armed` 顺序为 `false → true → false`，自检全程�
    校验 body→NED 四元数及推力，横向推力接近零，使用换算后的姿态和推力设定值。
 7. 雷达中断超过 3 秒后任务仍运行；Task Stop、新控制内容和异常退出均停止 Offboard 并重置会话。
 8. GCS 从 Zenoh 获取防守机状态，只过滤 50 米内实际匹配到的雷达航迹；雷达帧没有友机航迹时仍转发靶机，状态缺失或过期时暂停整帧。
-9. 使用非法捕获窗口触发 `setConfig` 失败。验证日志在调用前打印 `MidCourseConfig` 全部字段及其实际值，
+9. 使用非法捕获窗口触发提前配置校验失败，确认不等待 20 帧历史且失败原因保留原始校验错误，
    会话结束后清空 Offboard 设定值，`gcs_sim` 收到一次关联原 `taskId` 的 `TaskState`，
    其中 `status = "Failed"`、`currentBehaviorTree = "AntiUav"`、`currentNode = "Midcourse"`。
-10. 按调用顺序检查 `[info]` 的算法输入输出日志：`MidcoursePlanner::setConfig` 的全部配置及返回值，
-    `TargetEstimator::init` 的全部 20 帧 `history`、`ned_ref` 和 `update_dt_s`，
-    `TargetEstimator::update` 的 `measurement` 及完整 `output`，`MidcoursePlanner::update` 的完整
-    `vehicle`、`target` 和 `output`。检查所有地理点的 `latitude`、`longitude`、`height`、`altitude`，
+10. 按调用顺序检查 `[info]` 的算法输入输出日志：`MidcourseAlgorithm::init` 的全部 20 帧 `history`、
+    `ned_ref`、完整 `MidCourseConfig`、返回值和原始 `error`；`MidcourseAlgorithm::update` 的完整
+    `vehicle`（含实际 `yaw_rad`）和 `output`；`MidcourseAlgorithm::updateTarget` 的 `measurement`、返回值和原始 `error`。
+    检查所有地理点的 `latitude`、`longitude`、`height`、`altitude`，
     两种控制指令的全部字段、`yaw_rad=nullopt`、`eta_seconds`、`following`、`terminal_confirmed`。
-    每次调用均保留返回值和原始 `error`，失败时不将出参标为有效值，高频日志不附加会话号、调用号或更新号。
+    每次调用均保留返回值和原始 `error`，失败时不将出参标为有效值，高频日志不附加会话号、调用号或更新号；
+    机载不调用 `getTelemetry()`。
     可在板端使用已部署的真实算法库运行 `midcourse_controller_test` 核对日志；该测试使用模拟飞控，
     不向飞控发送控制指令，不能替代实际飞行任务验收。
 

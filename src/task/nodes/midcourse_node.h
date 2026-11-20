@@ -6,7 +6,7 @@
 
 namespace plane::task {
 
-/// 中制导：持续执行目标估计、规划和 Offboard，直到失败或被外部中止。
+/// 中制导：持续执行聚合算法闭环和 Offboard，直到失败或被外部中止。
 class MidcourseNode final : public FlightActionNode {
    public:
     MidcourseNode(const std::string& name, const BT::NodeConfig& config,

@@ -765,6 +765,15 @@ class FleetCtlTest(unittest.TestCase):
         self.assertEqual(args.count, 1)
         self.assertEqual(args.target_track_id, "")
 
+    def test_midcourse_verification_uses_aggregate_algorithm_logs(self):
+        source = (ROOT / "tools" / "fleetctl.py").read_text(encoding="utf-8")
+        self.assertIn("中制导算法 MidcourseAlgorithm::init 输入", source)
+        self.assertIn("中制导算法 MidcourseAlgorithm::update 输入", source)
+        self.assertIn("中制导算法首次增量量测更新", source)
+        self.assertIn("init → update → updateTarget", source)
+        self.assertNotIn("中制导目标估计器首次增量更新", source)
+        self.assertNotIn("setConfig → init → planner.update → estimator.update", source)
+
     def test_radar_history_uses_reported_size_for_initial_and_summary_logs(self):
         for prefix in ("GCS 目标更新", "GCS 目标更新汇总"):
             for history_size in (1, 2, 19, 20, 21):

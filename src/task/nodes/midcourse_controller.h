@@ -11,7 +11,7 @@
 
 namespace plane::task {
 
-/// 中制导会话：管理目标估计器、规划器及雷达更新与行为树 tick 的并发。
+/// 中制导会话：管理聚合算法门面及雷达更新与行为树 tick 的并发。
 class MidcourseController {
    public:
     enum class TickResult { Running, Failure };

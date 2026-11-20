@@ -252,7 +252,8 @@ bool load_midcourse_algorithm_option(const std::string& key, const std::string& 
         {"w_time", &MidCourseConfig::w_time},
         {"w_speed", &MidCourseConfig::w_speed},
         {"w_accel", &MidCourseConfig::w_accel},
-        {"replan_stitch_s", &MidCourseConfig::replan_stitch_s},
+        {"replan_period_s", &MidCourseConfig::replan_period_s},
+        {"replan_freeze_s", &MidCourseConfig::replan_freeze_s},
         {"track_gain_k", &MidCourseConfig::track_gain_k},
         {"track_gain_d", &MidCourseConfig::track_gain_d},
         {"track_max_corr", &MidCourseConfig::track_max_corr},
@@ -272,6 +273,9 @@ bool load_midcourse_algorithm_option(const std::string& key, const std::string& 
             std::size_t parsed = 0;
             const double number = std::stod(value, &parsed);
             if (parsed == value.size() && std::isfinite(number)) {
+                if ((key == "replan_period_s" || key == "replan_freeze_s") && number <= 0.0) {
+                    throw std::invalid_argument("重规划周期和冻结时长必须为正数");
+                }
                 out.midcourse_algorithm.*(field->second) = number;
                 return true;
             }

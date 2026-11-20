@@ -73,7 +73,7 @@ OpenCV、RGA、Pluma 或 RKNN。
 | Task Scheduler | Task 与独立 Command 的唯一仲裁者 |
 | Task Execution Engine | 创建并运行任务树和指令树 |
 | Target Management | 雷达／地面站目标的最新值与最近 20 条严格递增历史 |
-| Midcourse Controller | 会话内直接持有目标估计器和规划器，使用算法公共类型配置、输入量测并读取控制指令 |
+| Midcourse Controller | 会话内持有聚合门面 `MidcourseAlgorithm`，使用算法公共类型完成初始化、输入量测并读取控制指令 |
 | Camera Control | 相机链路、状态和控制能力 |
 | Geographic Tool | 地理距离和方位计算 |
 

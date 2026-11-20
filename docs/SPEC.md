@@ -147,21 +147,23 @@
 
 - 已在空中时直接进入 Midcourse；未在空中则按解锁状态执行 Arm／Takeoff 后进入 Midcourse；
 - 指定 `targetTrackId` 时锁定该航迹；未指定时只允许自动锁定唯一候选，多个候选必须失败；
-- 目标管理从进程启动起持续缓存每个航迹最近 20 帧；进入中制导后直接使用已有严格递增历史，不足时最长等待 30 秒，初始化参考点使用本机起始位置，估计周期使用时间戳间隔中位数；
+- 目标管理从进程启动起持续缓存每个航迹最近 20 帧；进入中制导后直接使用已有严格递增历史，不足时最长等待 30 秒，初始化参考点使用本机起始位置；聚合算法使用 `update_dt_s` 作为固定制导周期，历史与增量量测保留原始时间戳；
 - `[midcourse_algorithm]` 支持配置 `MidCourseConfig` 的全部字段。默认使用 INI 的水平速度、爬升速度、
   下降速度和指令加速度限值。
   设置 `use_px4_limits = true` 时使用 Flight Control 在连接后读取的 `MPC_XY_VEL_MAX`、`MPC_Z_VEL_MAX_UP`、
   `MPC_Z_VEL_MAX_DN`、`MPC_ACC_HOR_MAX` 缓存值。断连时缓存失效，重连后重新读取；
 - `update_dt_s` 须与 `[behavior_tree].tick_interval_ms` 的秒值一致。省略时按行为树周期换算；
-- 中制导在调用规划器 `setConfig` 前记录实际传入的 `MidCourseConfig` 全部字段，再初始化目标估计器。
-  `setConfig`、`TargetEstimator::init/update` 和 `MidcoursePlanner::update` 的每次调用均以 `[info]`
-  按调用顺序记录完整输入、返回值、有效输出和原始 `error`；初始化历史逐帧保留，控制输出包含实际指令类型及全部字段，
-  `yaw_rad` 为空时明确记录 `nullopt`，失败时标记无有效输出，不重复附加会话号、调用号或更新号。
-  每个 BT tick 先更新规划器并下发控制，
-  再按时间顺序用全部新雷达测量更新目标估计器，使新估计在下一 tick 生效；
+- 中制导应用 INI 或 PX4 限值后提前校验实际使用的 `MidCourseConfig`；20 帧历史就绪后调用聚合门面初始化，
+  并在调用日志中记录完整生效配置。
+  `MidcourseAlgorithm::init/update/updateTarget` 的每次调用均以 `[info]` 按调用顺序记录完整输入、
+  返回值和原始 `error`；初始化历史逐帧保留，`update` 的有效控制输出包含实际指令类型及全部字段，
+  `yaw_rad` 为空时明确记录 `nullopt`，`update` 失败时标记无有效输出，不重复附加会话号、调用号或更新号。
+  每个 BT tick 将飞控实际航向由度转换为弧度传给算法，先调用 `update` 并下发控制，
+  再按时间顺序用全部新雷达测量调用 `updateTarget`，使新估计在下一 tick 生效；
+  机载不调用可选的只读诊断接口 `getTelemetry()`；
 - 默认的 `VelocityAcceleration` 档下发 NED 速度、加速度前馈及航向，算法未提供期望航向时保持当前航向。
   `Attitude` 档下发由四元数和推力换算得到的姿态及推力设定值；
-- 使用 PX4 限值时缓存未就绪，或发生算法调用（包括 `setConfig` 和 `init`）、输出校验或飞控下发错误时，
+- 使用 PX4 限值时缓存未就绪，或配置校验、算法调用、输出校验或飞控下发错误时，
   整个 `AntiUav` 任务失败，停止 Offboard 并重置中制导会话。机载日志记录失败原因并向地面站上报任务失败状态；
 - 第 21 帧前允许算法输出悬停；雷达中断超过 3 秒后仍保持任务运行并执行算法返回的保持指令；
 - 算法内部末端确认默认关闭。开启后，离轴角和弹轴角速率持续满足配置阈值时，算法进入确认状态并输出悬停设定值。

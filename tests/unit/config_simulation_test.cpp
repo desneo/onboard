@@ -35,7 +35,9 @@ int main() {
     };
     const plane::core::AppConfig defaults;
     if (!defaults.plane_id.empty() || !defaults.board_ip.empty() || !defaults.fc_link_type.empty() ||
-        !defaults.fc_udp_url.empty() || !defaults.fc_serial_device.empty() || defaults.fc_serial_baud != 0) {
+        !defaults.fc_udp_url.empty() || !defaults.fc_serial_device.empty() || defaults.fc_serial_baud != 0 ||
+        defaults.midcourse_algorithm.replan_period_s != 1.0 ||
+        defaults.midcourse_algorithm.replan_freeze_s != 2.5) {
         return 28;
     }
 
@@ -74,6 +76,7 @@ int main() {
                     "[midcourse_algorithm]\nuse_px4_limits = true\nmax_horizontal_speed_m_s = 30.0\n"
                     "max_climb_speed_m_s = 8.0\nmax_descent_speed_m_s = 4.0\ncmd_accel_max_m_s2 = 7.0\n"
                     "approach_brake_k = 0.75\nhover_brake_accel_m_s2 = 4.0\ntrack_gain_d = 0.25\n"
+                    "replan_period_s = 0.75\nreplan_freeze_s = 3.25\n"
                     "control_output_mode = Attitude\nyaw_mode = 0\n")) {
         return 4;
     }
@@ -85,6 +88,7 @@ int main() {
         algorithm.max_descent_speed_m_s != 4.0 || algorithm.cmd_accel_max_m_s2 != 7.0 ||
         algorithm.approach_brake_k != 0.75 || algorithm.hover_brake_accel_m_s2 != 4.0 ||
         algorithm.track_gain_d != 0.25 || algorithm.target_invalid_grace_s != 2.0 || algorithm.r_min_m != 75.0 ||
+        algorithm.replan_period_s != 0.75 || algorithm.replan_freeze_s != 3.25 ||
         algorithm.control_output_mode != plane::algorithm::MidcourseControlMode::Attitude ||
         algorithm.yaw_mode != 0) {
         return 6;
@@ -189,6 +193,20 @@ int main() {
         }
     }
     if (!write_profile(uav1)) return 27;
+    const auto valid_midcourse_config = config.midcourse_algorithm;
+    for (const auto* invalid : {
+             "replan_period_s = 0\n",
+             "replan_period_s = -1\n",
+             "replan_freeze_s = 0\n",
+             "replan_freeze_s = -1\n",
+         }) {
+        if (!write_main(std::string("[midcourse_algorithm]\n") + invalid)) return 29;
+        if (plane::core::load_config(path, config, &first) ||
+            config.midcourse_algorithm.replan_period_s != valid_midcourse_config.replan_period_s ||
+            config.midcourse_algorithm.replan_freeze_s != valid_midcourse_config.replan_freeze_s) {
+            return 30;
+        }
+    }
     for (const auto* invalid : {"0", "-1", "5.5", "8Hz", "", "9999999999999999999"}) {
         if (!write_main(std::string("[camera]\npod_state_report_hz = ") + invalid + '\n')) return 17;
         config.pod_state_report_hz = 8;

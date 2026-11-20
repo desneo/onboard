@@ -47,7 +47,7 @@
 - 基于 Zenoh 接收地面站任务、指令、系统参数和目标信息。
 - 周期广播本机状态，接收并缓存其他无人机的最新状态；位置更新不逐条打印，通过 Zenoh liveliness 仅记录上下线。
 - 调度器按控制优先级仲裁单个 Task 或 Command，执行引擎通过 BehaviorTree 执行。
-- 中制导控制器使用 common 公共类型直接调用 `libmidcourse_alg.so` 中的目标估计器和规划器。
+- 中制导控制器使用 common 公共类型直接调用 `libmidcourse_alg.so` 中的聚合门面 `MidcourseAlgorithm`。
 - 中制导规划限值默认来自 `[midcourse_algorithm]`；设置 `use_px4_limits = true` 后，会话使用飞控在连接阶段读取的四项 PX4 缓存值。
 - 配套 `gcs_sim` 监听 UDP 7790，将雷达 confirmed 航迹与 Zenoh 友机状态匹配，过滤友机后发布靶机。
 - 中制导默认下发 NED 速度、加速度前馈和航向，也支持 Attitude Offboard 的姿态与推力设定值。
@@ -183,12 +183,15 @@ tail -f logs/plane.log
 `[error]` 等原始英文标识，线程 ID 直接显示为数字方括号（如 `[701742]`）。API、协议、类型、枚举、
 配置键、函数参数名、结构体及其字段名和第三方库
 原始错误等代码标识保留原文。PX4 参数使用 `MPC_XY_VEL_MAX`、`MPC_Z_VEL_MAX_UP`、
-`MPC_Z_VEL_MAX_DN`、`MPC_ACC_HOR_MAX` 原名。中制导在调用 `setConfig` 前记录限值来源和 `MidCourseConfig` 全部字段的实际值，
-并记录初始化历史帧数和周期、首次目标增量更新以及 Offboard 启动。
-中制导算法的 `MidcoursePlanner::setConfig`、`TargetEstimator::init/update` 和 `MidcoursePlanner::update`
-每次调用均以 `[info]` 输出完整入参、返回值、有效出参和原始 `error`，包括初始化全部历史量测、
-本机与目标位置速度、速度加速度指令或姿态四元数与推力，以及 `eta_seconds`、`following` 和 `terminal_confirmed`。
-`yaw_rad` 为空时显示 `nullopt`；调用失败时显示无有效输出。位置和算法字段保持公共接口原名。
+`MPC_Z_VEL_MAX_DN`、`MPC_ACC_HOR_MAX` 原名。中制导在等待目标历史前完成生效配置校验，
+调用聚合门面初始化时记录限值来源和 `MidCourseConfig` 全部字段的实际值，同时记录初始化历史帧数、
+首次目标增量更新以及 Offboard 启动。
+中制导算法的 `MidcourseAlgorithm::init/update/updateTarget` 每次调用均以 `[info]` 输出完整入参、
+返回值和原始 `error`，包括初始化全部历史量测、包含实际航向的本机状态和原始目标量测。
+`update` 还记录有效的速度加速度指令或姿态四元数与推力，以及 `eta_seconds`、`following` 和
+`terminal_confirmed`；`yaw_rad` 为空时显示 `nullopt`，调用失败时显示无有效输出。
+位置和算法字段保持公共接口原名。
+机载控制闭环不调用可选的只读诊断接口 `getTelemetry()`。
 GCS 目标按 `trackId` 首次接收立即打印，后续每 20 秒由新有效更新触发汇总，包含最新
 `timestamp_ms`、`history_size` 和更新数量；没有新数据时不输出汇总。
 `AntiUav` 从任务创建成功起监测所需目标，覆盖 Arm／Takeoff 和 Midcourse：任务开始满 2 秒后，
@@ -325,17 +328,19 @@ SITL 测试统一使用 `tests/fleet.ini` 的 `simulator.host`（当前为 `192.
 | `midcourse_algorithm.v_cruise_m_s` | 逼近段巡航速度，默认 55 m/s |
 | `midcourse_algorithm.approach_brake_k` | 逼近段到点减速增益，默认 0.5 s⁻¹ |
 | `midcourse_algorithm.tau_ff_s` / `r_min_m` | 视线角速率前馈增益和距离保护，默认 1 秒和 50 米 |
-| `midcourse_algorithm.update_dt_s` | 规划器调用周期，默认 0.05 秒，须与 `behavior_tree.tick_interval_ms` 对应 |
+| `midcourse_algorithm.update_dt_s` | 中制导算法更新周期，默认 0.05 秒，须与 `behavior_tree.tick_interval_ms` 对应 |
 | `midcourse_algorithm.target_invalid_grace_s` | 目标预测宽限期，默认 3 秒 |
 | `midcourse_algorithm.control_output_mode` | 默认 `VelocityAcceleration`，可选 `Attitude` |
 | `midcourse_algorithm.hover_brake_accel_m_s2` | 速度档触发悬停时的减速度，默认 5 m/s² |
 | `midcourse_algorithm.yaw_mode` / `yaw_rate_max_deg_s` | 默认 `1` 按速度方向调整期望航向，变化率上限 45 deg/s；`0` 保持当前航向 |
+| `midcourse_algorithm.replan_period_s` | 重规划尝试的最小间隔，默认 1.0 秒 |
+| `midcourse_algorithm.replan_freeze_s` | 重规划近端冻结时长，默认 2.5 秒 |
 | `midcourse_algorithm.track_gain_d` | 轨迹跟踪速度误差反馈增益，默认 `0.0`，仅使用位置反馈 |
 | `midcourse_algorithm.enable_internal_terminal_confirmation` | 允许算法内部确认，默认 `false`。开启后达到确认条件时算法输出悬停设定值，任务继续运行 |
 | `midcourse_algorithm.confirm_boresight_deg` / `confirm_rate_deg_s` / `confirm_hold_s` | 内部确认的离轴角上限、弹轴角速率上限和持续时长，默认 5 度、5 度/秒和 2 秒 |
 
-省略 `update_dt_s` 时，规划器调用周期取自 `behavior_tree.tick_interval_ms`。
-目标估计器周期取自雷达历史时间戳间隔的中位数。
+省略 `update_dt_s` 时，中制导算法更新周期取自 `behavior_tree.tick_interval_ms`。
+聚合算法使用同一 `update_dt_s` 作为固定制导周期；原始目标量测时间戳随历史和增量帧传入算法。
 
 UDP 飞控端口位于场景 02 的 PX4 远端端口 `14030`～`14039`、本地端口
 `14280`～`14289`，或旧 SITL 的 `14580`～`14589`（`1458*`）时，程序将本机视为仿真飞机，

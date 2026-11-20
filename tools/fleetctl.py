@@ -1650,7 +1650,7 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
         wait_until(
             f"外部雷达 20+1 帧到达并启动 {mode} Offboard",
             lambda: "中制导初始化完成" in plane_log("midcourse-wait")
-            and "中制导目标估计器首次增量更新" in plane_log("midcourse-wait")
+            and "中制导算法首次增量量测更新" in plane_log("midcourse-wait")
             and offboard_started in plane_log("midcourse-wait")
             and "value=Offboard" in plane_log("midcourse-wait"),
             args.radar_timeout,
@@ -1666,14 +1666,13 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
             raise FleetError("AntiUav 在外部停止前自行结束")
         cache_index = running_text.find("飞控系统参数已缓存")
         session_index = running_text.find("中制导会话启动")
-        set_config_index = running_text.find("中制导规划器配置完成")
-        estimator_init_index = running_text.find("中制导初始化完成")
-        planner_update_index = running_text.find(offboard_started)
-        estimator_update_index = running_text.find("中制导目标估计器首次增量更新")
+        algorithm_init_index = running_text.find("中制导算法 MidcourseAlgorithm::init 输入")
+        algorithm_update_index = running_text.find("中制导算法 MidcourseAlgorithm::update 输入")
+        target_update_index = running_text.find("中制导算法首次增量量测更新")
         if use_px4_limits and not (0 <= cache_index < session_index):
             raise FleetError("飞控系统参数未在中制导会话启动前完成缓存")
-        if not (0 <= set_config_index < estimator_init_index < planner_update_index < estimator_update_index):
-            raise FleetError("中制导接口调用顺序不符合 setConfig → init → planner.update → estimator.update")
+        if not (0 <= algorithm_init_index < algorithm_update_index < target_update_index):
+            raise FleetError("中制导接口调用顺序不符合 init → update → updateTarget")
         passed(f"启动前 20 帧缓存、接口调用顺序、第 21 帧更新、{mode} Offboard 与持续运行验证通过")
 
         stop_command = shlex.join(

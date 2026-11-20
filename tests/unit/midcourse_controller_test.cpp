@@ -4,6 +4,8 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -31,6 +33,7 @@ class FakeFlightControl final : public plane::flight_control::FlightControlApi {
     int velocity_calls = 0;
     int clear_calls = 0;
     plane::flight_control::AttitudeSetpoint last_attitude;
+    std::optional<plane::algorithm::VelocityAccelerationCommand> last_velocity;
 
     bool arm(std::string&) override { return true; }
     bool disarm(std::string&) override { return true; }
@@ -49,6 +52,7 @@ class FakeFlightControl final : public plane::flight_control::FlightControlApi {
         require(std::isfinite(value.an_m_s2) && std::isfinite(value.ae_m_s2) && std::isfinite(value.ad_m_s2),
                 "中制导下发的加速度必须是有限数");
         require(current_yaw_deg == 42.0, "未传入当前航向用于缺省航向");
+        last_velocity = value;
         ++velocity_calls;
         return true;
     }
@@ -117,6 +121,7 @@ int main() {
         state.value.geoPos.longitude = 120.0;
         state.value.geoPos.altitude = 100.0F;
         state.value.startPos = state.value.geoPos;
+        state.value.startPos.altitude = 0.0F;
         state.value.yaw_deg = 42.0F;
         plane::target::TargetStore store(events, config);
         require(store.start(), "目标存储启动失败");
@@ -124,6 +129,14 @@ int main() {
         controller.start();
 
         std::string error;
+        config.midcourse_algorithm.r_capture_max_m = config.midcourse_algorithm.r_capture_min_m;
+        require(controller.begin("", error), "自动选目标非法配置场景未启动");
+        require(controller.tick(error) == plane::task::MidcourseController::TickResult::Failure &&
+                    error == "中制导配置校验失败: r_capture 窗口非法",
+                "自动模式无目标时应先校验配置而不是等待目标: " + error);
+        controller.stop();
+        config.midcourse_algorithm.r_capture_max_m = 500.0;
+
         for (int index = 0; index < 20; ++index) {
             events.publish(plane::communication::events::kGcsTargetReceived, target("target", index));
         }
@@ -132,6 +145,15 @@ int main() {
                 "使用会话启动前持续缓存的 20 帧初始化失败: " + error);
         require(flight.cached_flight_params_gets == 0 && flight.velocity_calls == 1,
                 "INI 限值模式不应读取 PX4 缓存，且应下发首个速度及加速度指令");
+        constexpr double kPi = 3.14159265358979323846;
+        const double actual_yaw_rad = 42.0 * kPi / 180.0;
+        const double max_first_step_rad = config.midcourse_algorithm.yaw_rate_max_deg_s * kPi / 180.0 *
+                                          config.midcourse_algorithm.update_dt_s;
+        require(flight.last_velocity && flight.last_velocity->yaw_rad &&
+                    std::isfinite(*flight.last_velocity->yaw_rad) &&
+                    std::abs(std::remainder(*flight.last_velocity->yaw_rad - actual_yaw_rad, 2.0 * kPi)) <=
+                        max_first_step_rad + 1e-9,
+                "中制导航向首拍未从实际 yaw_rad 按配置速率限幅");
 
         events.publish(plane::communication::events::kGcsTargetReceived, target("target", 20));
         require(controller.tick(error) == plane::task::MidcourseController::TickResult::Running,
@@ -170,9 +192,52 @@ int main() {
         require(controller.begin("无历史航迹", error), "非法捕获窗口场景未启动");
         error.clear();
         require(controller.tick(error) == plane::task::MidcourseController::TickResult::Failure &&
-                    error == "中制导 setConfig 失败: r_capture 窗口非法",
+                    error == "中制导配置校验失败: r_capture 窗口非法",
                 "非法捕获窗口应在等待雷达历史前终止中制导: " + error);
-        require(flight.velocity_calls == 67 && flight.attitude_calls == 1, "规划器配置失败后仍下发了 Offboard 指令");
+        require(flight.velocity_calls == 67 && flight.attitude_calls == 1,
+                "中制导配置校验失败后仍下发了 Offboard 指令");
+        controller.stop();
+
+        config.midcourse_algorithm.r_capture_max_m = 500.0;
+        for (int index = 0; index < 20; ++index) {
+            auto init_measurement = target("bad-init-target", index);
+            if (index == 19) init_measurement.geoPos.latitude = std::numeric_limits<double>::quiet_NaN();
+            events.publish(plane::communication::events::kGcsTargetReceived, init_measurement);
+        }
+        require(controller.begin("bad-init-target", error), "非法初始化量测场景未启动");
+        require(controller.tick(error) == plane::task::MidcourseController::TickResult::Failure &&
+                    error.rfind("中制导 init 失败: ", 0) == 0,
+                "MidcourseAlgorithm::init 拒绝非法历史时应终止中制导: " + error);
+        require(flight.velocity_calls == 67 && flight.attitude_calls == 1,
+                "算法初始化失败后仍下发了 Offboard 指令");
+        controller.stop();
+
+        state.value.yaw_deg = std::numeric_limits<float>::quiet_NaN();
+        require(controller.begin("target", error), "非法航向场景未启动");
+        require(controller.tick(error) == plane::task::MidcourseController::TickResult::Failure &&
+                    error == "中制导本机实际航向 yaw_deg 必须为有限数",
+                "非有限实际航向应终止中制导: " + error);
+        require(flight.velocity_calls == 67 && flight.attitude_calls == 1,
+                "航向校验失败后仍下发了 Offboard 指令");
+        controller.stop();
+        state.value.yaw_deg = 42.0F;
+        config.midcourse_algorithm.control_output_mode = plane::algorithm::MidcourseControlMode::VelocityAcceleration;
+
+        for (int index = 0; index < 20; ++index) {
+            events.publish(plane::communication::events::kGcsTargetReceived, target("bad-target", index));
+        }
+        require(controller.begin("bad-target", error), "非法增量量测场景未启动");
+        require(controller.tick(error) == plane::task::MidcourseController::TickResult::Running,
+                "非法增量量测场景初始化失败: " + error);
+        auto bad_measurement = target("bad-target", 20);
+        bad_measurement.geoPos.latitude = std::numeric_limits<double>::quiet_NaN();
+        events.publish(plane::communication::events::kGcsTargetReceived, bad_measurement);
+        const int velocity_calls_before_bad_measurement = flight.velocity_calls;
+        require(controller.tick(error) == plane::task::MidcourseController::TickResult::Failure &&
+                    error.rfind("中制导 updateTarget 失败: ", 0) == 0,
+                "updateTarget 拒绝非法量测时应终止中制导: " + error);
+        require(flight.velocity_calls == velocity_calls_before_bad_measurement + 1,
+                "新量测应在本 tick 控制下发后处理并从下一 tick 生效");
         controller.stop();
     } catch (const std::exception& exception) {
         SPDLOG_ERROR("中制导控制器测试失败: {}", exception.what());
