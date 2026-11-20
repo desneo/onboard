@@ -216,6 +216,13 @@ EventBus 的发布同步执行订阅回调；诊断回调只负责轻量入队�
 - Flight Control 在飞控连接建立后读取并缓存通用 PX4 飞控系统参数；断连使缓存失效，重连后后台重读。
   中制导默认从 `[midcourse_algorithm]` 取规划限值，`use_px4_limits = true` 时从缓存取值。
 - Target Management 独立于任务生命周期持续保留每个航迹最近 20 帧；中制导启动和停止不得清除此历史。
+- Target Management 在接受有效目标时原子更新最新值、历史、本机单调接收时间和墙钟接收时间，
+  按航迹首帧即时记录、后续 20 秒汇总。独立的可唤醒监测线程只在存在目标需求时工作，
+  连续 2 秒无所需目标更新后每 2 秒输出提示，不等待 BehaviorTree、MAVSDK 或算法锁。
+- Task Execution Engine 在成功创建 `AntiUav` 任务树后、启动执行线程前声明目标需求，
+  在停止、替换、接管、失败、完成及退出时取消需求；取消必须先于等待执行线程退出。
+  `TargetStoreApi::set_required_gcs_target` 以 `nullopt` 取消、空字符串表示自动模式、非空字符串指定航迹。
+  Midcourse 自动锁定后调用 `lock_required_gcs_target` 收敛已启用的自动需求，不重新启用已取消的需求。
 - 每个模块负责自身资源创建、线程停止和资源释放，Runtime 只协调顺序。
 - 系统使用少量长期线程处理网络、飞控遥测和行为树，不采用“一个模块固定一个线程”的原则。
 - EventBus 处理函数不得执行不可控的长时间阻塞、AI 推理或视频编码。

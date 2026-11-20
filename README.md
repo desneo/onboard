@@ -189,6 +189,12 @@ tail -f logs/plane.log
 每次调用均以 `[info]` 输出完整入参、返回值、有效出参和原始 `error`，包括初始化全部历史量测、
 本机与目标位置速度、速度加速度指令或姿态四元数与推力，以及 `eta_seconds`、`following` 和 `terminal_confirmed`。
 `yaw_rad` 为空时显示 `nullopt`；调用失败时显示无有效输出。位置和算法字段保持公共接口原名。
+GCS 目标按 `trackId` 首次接收立即打印，后续每 20 秒由新有效更新触发汇总，包含最新
+`timestamp_ms`、`history_size` 和更新数量；没有新数据时不输出汇总。
+`AntiUav` 从任务创建成功起监测所需目标，覆盖 Arm／Takeoff 和 Midcourse：任务开始满 2 秒后，
+连续 2 秒无有效更新则每 2 秒提示一次，包含本机上次接收时间及其时区偏移、原始 `timestamp_ms`
+和未更新时长。从未收到时显示“从未收到”和 `timestamp_ms=<无>`。收到有效更新后重新计时，
+任务结束后停止提示；无任务或独立 Command 不提示。两个日志间隔均固定，无需配置。
 多机部署同样使用此目录，不再为每次启动创建日期目录。
 飞控 `STATUSTEXT` 按 `[info]` 输出，格式为 `飞控 STATUSTEXT：type=<类型> text=<飞控原文>`，保留 MAVSDK 的 `type` 和 `text`。
 `plane.stdout.log` 单独记录标准输出和错误输出，包含重复的程序日志以及第三方库、插件和启动脚本输出；

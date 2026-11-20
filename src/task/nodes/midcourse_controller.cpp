@@ -147,6 +147,7 @@ struct MidcourseController::Impl {
             return false;
         }
         locked_track_id = targets.front().trackId;
+        target_store.lock_required_gcs_target(locked_track_id);
         SPDLOG_INFO("中制导自动锁定唯一靶机目标: trackId={}", locked_track_id);
         return true;
     }

@@ -157,6 +157,25 @@ if(BUILD_TESTING)
   target_link_libraries(camera_target_test PRIVATE plane_camera plane::eventpp spdlog::spdlog)
   add_test(NAME camera_target COMMAND camera_target_test)
 
+  add_executable(target_store_log_test tests/unit/target_store_log_test.cpp src/target/target_store.cpp)
+  target_include_directories(target_store_log_test PRIVATE src)
+  target_compile_options(target_store_log_test PRIVATE -Wall -Wextra)
+  target_link_libraries(target_store_log_test PRIVATE plane::common_include plane::eventpp spdlog::spdlog)
+  add_test(NAME target_store_log COMMAND target_store_log_test)
+  set_tests_properties(target_store_log PROPERTIES TIMEOUT 10)
+
+  # 复用主程序登记的任务实现，确保测试覆盖实际的任务树和指令树接线。
+  get_target_property(task_monitor_sources plane SOURCES)
+  list(FILTER task_monitor_sources INCLUDE REGEX "^src/task/")
+  add_executable(task_target_monitor_test tests/unit/task_target_monitor_test.cpp
+    src/core/time_utils.cpp src/target/target_store.cpp ${task_monitor_sources})
+  target_include_directories(task_target_monitor_test PRIVATE src)
+  target_compile_options(task_target_monitor_test PRIVATE -Wall -Wextra)
+  target_link_libraries(task_target_monitor_test PRIVATE
+    plane::common_include plane::eventpp plane::magic_enum plane::behaviortree plane::midcourse_alg spdlog::spdlog)
+  add_test(NAME task_target_monitor COMMAND task_target_monitor_test)
+  set_tests_properties(task_target_monitor PROPERTIES TIMEOUT 45)
+
   add_executable(pod_driver_test tests/unit/pod_driver_test.cpp)
   target_compile_options(pod_driver_test PRIVATE -Wall -Wextra)
   target_link_libraries(pod_driver_test PRIVATE plane_camera)

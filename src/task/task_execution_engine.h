@@ -58,6 +58,7 @@ class TaskExecutionEngine final : public plane::core::IModule, public TaskExecut
     bool stop_control(bool acknowledge_takeover, bool restore_self_check);
     void halt_tree(bool restore_self_check = false);
     void cleanup_control();
+    void cancel_target_requirement();
 
     plane::core::EventBus& event_bus_;
     const plane::core::AppConfig& config_;
@@ -78,6 +79,7 @@ class TaskExecutionEngine final : public plane::core::IModule, public TaskExecut
     SuicideTaskContext task_context_;
     std::thread tick_thread_;
     std::atomic<bool> ticking_{false};
+    std::atomic<bool> target_requirement_active_{false};
 };
 
 }  // namespace plane::task

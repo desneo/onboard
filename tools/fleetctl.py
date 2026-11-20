@@ -31,6 +31,9 @@ PLANE_CONFIG = "config/plane.ini"
 PROFILE_DIR = "config/profiles"
 SITL_REMOTE_PORT_RANGES = ((14030, 14039), (14280, 14289), (14580, 14589))
 PEER_LINK_RE = re.compile(r"他机(上线|下线):\s*([^\s]+)")
+GCS_TARGET_HISTORY_RE = re.compile(
+    r"GCS 目标更新(?:汇总)?: trackId=([^\s]+) timestamp_ms=\d+ history_size=(\d+)(?=\s|$)"
+)
 LOG_TIME_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\]")
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 URI_RE = re.compile(r"(?:udp(?:out|in)?|tcp)://[^\s\"'<>\[\]{}(),;]+", re.IGNORECASE)
@@ -1455,6 +1458,14 @@ def command_test_agent_info(args: argparse.Namespace, config: FleetConfig, remot
         raise FleetError(f"AgentInfo 验证失败: {exc}，证据目录: {run_dir}") from exc
 
 
+def radar_history_ready(text: str, target_id: str = "") -> bool:
+    """依据当前运行日志中的缓存帧数判断就绪，不将降频日志条数当作雷达帧数。"""
+    return any(
+        (not target_id or observed_track_id == target_id) and int(history_size) >= 20
+        for observed_track_id, history_size in GCS_TARGET_HISTORY_RE.findall(text)
+    )
+
+
 def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote: RemoteExecutor) -> int:
     """部署一号板，连接用户手动启动的 SITL，并等待外部雷达数据完成验收。"""
     planes = selected_planes(config, args.count)
@@ -1610,17 +1621,11 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
             flush=True,
         )
 
-        def radar_history_ready() -> bool:
-            text = plane_log("radar-cache-wait")
-            if target_id:
-                pattern = rf"GCS 目标更新: trackId={re.escape(target_id)} timestamp_ms="
-                return len(re.findall(pattern, text)) >= 20
-            counts: dict[str, int] = {}
-            for observed_track_id in re.findall(r"GCS 目标更新: trackId=([^ ]+) timestamp_ms=", text):
-                counts[observed_track_id] = counts.get(observed_track_id, 0) + 1
-            return any(count >= 20 for count in counts.values())
-
-        wait_until("任务启动前持续缓存 20 帧雷达历史", radar_history_ready, args.radar_timeout)
+        wait_until(
+            "任务启动前持续缓存 20 帧雷达历史",
+            lambda: radar_history_ready(plane_log("radar-cache-wait"), target_id),
+            args.radar_timeout,
+        )
         passed("任务启动前已持续缓存至少 20 帧雷达历史")
 
         task_args = [

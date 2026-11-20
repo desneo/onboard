@@ -5,6 +5,7 @@
 #include <chrono>
 #include <exception>
 #include <magic_enum/magic_enum.hpp>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -105,6 +106,8 @@ bool TaskExecutionEngine::start(std::uint64_t execution_id, const plane::model::
         return false;
     }
     is_task_tree_ = true;
+    target_store_.set_required_gcs_target(task.targetTrackId);
+    target_requirement_active_ = true;
     launch_tree(execution_id, std::move(tree), "AntiUav", sequence_structure(node_names));
     SPDLOG_INFO("AntiUav 中制导任务已创建: taskId={} targetTrackId={}", task.taskId,
                 task.targetTrackId.empty() ? "<自动>" : task.targetTrackId);
@@ -113,6 +116,7 @@ bool TaskExecutionEngine::start(std::uint64_t execution_id, const plane::model::
 
 bool TaskExecutionEngine::start_command(std::uint64_t execution_id, const plane::model::Command& command,
                                         std::string& error) {
+    cancel_target_requirement();
     std::lock_guard<std::mutex> lock(mutex_);
     command_context_.commandId = command.commandId;
     command_context_.type = command.type;
@@ -239,6 +243,8 @@ bool TaskExecutionEngine::is_self_check_tree() const {
 
 void TaskExecutionEngine::halt_tree(bool restore_self_check) {
     const bool was_ticking = ticking_.exchange(false);
+    // 飞控回执可能仍在等待，先取消目标需求，避免等待线程退出期间继续提示。
+    cancel_target_requirement();
     if (tick_thread_.joinable()) {
         tick_thread_.join();
     }
@@ -344,6 +350,7 @@ void TaskExecutionEngine::publish_progress(const std::string& node) {
 
 void TaskExecutionEngine::finish(plane::model::TaskStatus status, const std::string& detail) {
     ticking_ = false;
+    cancel_target_requirement();
     if (!is_self_check_tree()) {
         cleanup_control();
     }
@@ -364,6 +371,13 @@ void TaskExecutionEngine::finish(plane::model::TaskStatus status, const std::str
 void TaskExecutionEngine::cleanup_control() {
     midcourse_controller_.stop();
     flight_control_.clear_offboard();
+}
+
+void TaskExecutionEngine::cancel_target_requirement() {
+    // Runtime 已停止模块后可先析构目标管理；已取消的需求不再访问该依赖。
+    if (target_requirement_active_.exchange(false)) {
+        target_store_.set_required_gcs_target(std::nullopt);
+    }
 }
 
 }  // namespace plane::task
