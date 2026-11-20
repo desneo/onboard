@@ -22,72 +22,75 @@ int main() {
         }
     } cleanup{path, std::string(path) + ".ini"};
 
+    const std::vector<std::string> first{"10.0.0.2", "192.168.1.100", "192.168.1.100"};
+    const auto write_profile = [&](const std::string& content) {
+        std::ofstream file(cleanup.profile_path);
+        file << content;
+        return static_cast<bool>(file);
+    };
+    const auto write_main = [&](const std::string& content) {
+        std::ofstream file(path);
+        file << "[deployment]\nprofile = " << cleanup.profile_path << '\n' << content;
+        return static_cast<bool>(file);
+    };
+    const plane::core::AppConfig defaults;
+    if (!defaults.plane_id.empty() || !defaults.board_ip.empty() || !defaults.fc_link_type.empty() ||
+        !defaults.fc_udp_url.empty() || !defaults.fc_serial_device.empty() || defaults.fc_serial_baud != 0) {
+        return 28;
+    }
+
     struct Case {
-        const char* link_type;
         const char* url;
         bool expected;
     };
     const Case cases[] = {
-        {"udp", "udpin://127.0.0.1:14030", true},
-        {"udp", "udpin://:14039", true},
-        {"udp", "udpin://127.0.0.1:14029", false},
-        {"udp", "udpin://127.0.0.1:14040", false},
-        {"udp", "udpout://127.0.0.1:14280", true},
-        {"udp", "udpin://:14289", true},
-        {"udp", "udpout://127.0.0.1:14279", false},
-        {"udp", "udpout://127.0.0.1:14290", false},
-        {"udp", "udpout://127.0.0.1:14580", true},
-        {"udp", "udpout://127.0.0.1:14583", true},
-        {"udp", "udpin://:14589", true},
-        {"udp", "udpout://127.0.0.1:14579", false},
-        {"udp", "udpout://127.0.0.1:14590", false},
-        {"serial", "udpin://127.0.0.1:14030", false},
-        {"serial", "udpout://127.0.0.1:14580", false},
-        {"udp", "udpout://127.0.0.1:invalid", false},
+        {"udpin://127.0.0.1:14030", true},
+        {"udpin://:14039", true},
+        {"udpin://127.0.0.1:14029", false},
+        {"udpin://127.0.0.1:14040", false},
+        {"udpout://127.0.0.1:14280", true},
+        {"udpin://:14289", true},
+        {"udpout://127.0.0.1:14279", false},
+        {"udpout://127.0.0.1:14290", false},
+        {"udpout://127.0.0.1:14580", true},
+        {"udpout://127.0.0.1:14583", true},
+        {"udpin://:14589", true},
+        {"udpout://127.0.0.1:14579", false},
+        {"udpout://127.0.0.1:14590", false},
+        {"serial:///dev/ttyS0:57600", false},
+        {"serial:///dev/ttyUSB0:115200", false},
     };
     for (const auto& test : cases) {
-        {
-            std::ofstream file(path);
-            file << "[flight_control]\nlink_type = " << test.link_type << "\nudp_url = " << test.url << '\n';
-            if (!file) return 2;
+        if (!write_main("") ||
+            !write_profile(std::string("[uav1]\nboard_ip = 192.168.1.100\nfc_url = ") + test.url + '\n')) {
+            return 2;
         }
         plane::core::AppConfig config;
         config.is_sim = !test.expected;
-        if (!plane::core::load_config(path, config) || config.is_sim != test.expected) return 3;
+        if (!plane::core::load_config(path, config, &first) || config.is_sim != test.expected) return 3;
     }
 
-    {
-        std::ofstream file(path);
-        file << "[midcourse]\ninit_timeout_ms = 12345\ntarget_invalid_grace_s = 2.0\nr_min_m = 75.0\n"
-                "[midcourse_algorithm]\nuse_px4_limits = true\nmax_horizontal_speed_m_s = 30.0\n"
-                "max_climb_speed_m_s = 8.0\nmax_descent_speed_m_s = 4.0\ncmd_accel_max_m_s2 = 7.0\n"
-                "approach_brake_k = 0.75\nhover_brake_accel_m_s2 = 4.0\ntrack_gain_d = 0.25\n"
-                "control_output_mode = Attitude\nyaw_mode = 0\n";
-        if (!file) return 4;
+    if (!write_main("[midcourse]\ninit_timeout_ms = 12345\ntarget_invalid_grace_s = 2.0\nr_min_m = 75.0\n"
+                    "[midcourse_algorithm]\nuse_px4_limits = true\nmax_horizontal_speed_m_s = 30.0\n"
+                    "max_climb_speed_m_s = 8.0\nmax_descent_speed_m_s = 4.0\ncmd_accel_max_m_s2 = 7.0\n"
+                    "approach_brake_k = 0.75\nhover_brake_accel_m_s2 = 4.0\ntrack_gain_d = 0.25\n"
+                    "control_output_mode = Attitude\nyaw_mode = 0\n")) {
+        return 4;
     }
     plane::core::AppConfig config;
-    if (!plane::core::load_config(path, config)) return 5;
+    if (!plane::core::load_config(path, config, &first)) return 5;
     const auto& algorithm = config.midcourse_algorithm;
     if (config.midcourse_init_timeout_ms != 12345 || !config.midcourse_use_px4_limits ||
         algorithm.max_horizontal_speed_m_s != 30.0 || algorithm.max_climb_speed_m_s != 8.0 ||
         algorithm.max_descent_speed_m_s != 4.0 || algorithm.cmd_accel_max_m_s2 != 7.0 ||
         algorithm.approach_brake_k != 0.75 || algorithm.hover_brake_accel_m_s2 != 4.0 ||
-        algorithm.track_gain_d != 0.25 ||
-        algorithm.target_invalid_grace_s != 2.0 || algorithm.r_min_m != 75.0 ||
+        algorithm.track_gain_d != 0.25 || algorithm.target_invalid_grace_s != 2.0 || algorithm.r_min_m != 75.0 ||
         algorithm.control_output_mode != plane::algorithm::MidcourseControlMode::Attitude ||
         algorithm.yaw_mode != 0) {
         return 6;
     }
 
-    {
-        std::ofstream file(path);
-        file << "[deployment]\nprofile = " << cleanup.profile_path
-             << "\n[system]\nboard_ip = 192.168.1.10\n[communication]\nplane_id = direct\n"
-                "zenoh_connect = tcp/192.168.1.11:9555\nzenoh_listen = tcp/192.168.1.10:9555\n"
-                "[camera]\npod_model = direct\npod_video_url = rtsp://direct/live\n"
-                "pod_control_url = udp://direct:8000\npod_state_report_hz = 8\n";
-        if (!file) return 7;
-    }
+    if (!write_main("[camera]\npod_state_report_hz = 8\n")) return 7;
     const std::string uav1 =
         "[uav1]\nboard_ip = 192.168.1.100\nfc_url = udpout://192.168.1.56:14280\n"
         "pod_model = jielian_a2416a\npod_video_url = rtsp://192.168.1.56:8554/jielian_a2416a\n"
@@ -96,16 +99,11 @@ int main() {
         "[uav2]\nboard_ip = 192.168.1.9\nfc_url = udpin://:14281\n"
         "pod_video_url = rtsp://192.168.1.56:8555/jielian_a2416a\n";
     const std::string uav3 = "[uav3]\nboard_ip = 192.168.1.102\nfc_url = serial:///dev/ttyS0:57600\n";
-    const auto write_profile = [&](const std::string& content) {
-        std::ofstream file(cleanup.profile_path);
-        file << content;
-        return static_cast<bool>(file);
-    };
     if (!write_profile("[groundstation]\nip = 192.168.1.41\n" + uav1 + uav3 + uav2)) return 8;
-    const std::vector<std::string> first{"10.0.0.2", "192.168.1.100", "192.168.1.100"};
     if (!plane::core::load_config(path, config, &first) || config.plane_id != "uav1" ||
         config.board_ip != "192.168.1.100" || config.fc_link_type != "udp" ||
         config.fc_udp_url != "udpout://192.168.1.56:14280" || !config.is_sim ||
+        !config.fc_serial_device.empty() || config.fc_serial_baud != 0 ||
         config.pod_model != "jielian_a2416a" || config.pod_video_url != "rtsp://192.168.1.56:8554/jielian_a2416a" ||
         config.pod_control_url != "udp://192.168.1.56:8001" || config.pod_state_report_hz != 8 ||
         config.zenoh_listen != "tcp/192.168.1.100:7447" ||
@@ -126,7 +124,8 @@ int main() {
     if (!write_profile(uav1 + "[groundstation]\nip = 192.168.1.200\n" + uav2 + uav3) ||
         !plane::core::load_config(path, config, &third) || config.plane_id != "uav3" ||
         config.fc_link_type != "serial" || config.fc_serial_device != "/dev/ttyS0" ||
-        config.fc_serial_baud != 57600 || config.is_sim || !config.pod_video_url.empty() ||
+        config.fc_serial_baud != 57600 || !config.fc_udp_url.empty() || config.is_sim ||
+        !config.pod_video_url.empty() ||
         config.zenoh_listen != "tcp/192.168.1.102:7447" ||
         config.zenoh_connect != "tcp/192.168.1.200:7447,tcp/192.168.1.9:7447,tcp/192.168.1.100:7447") {
         return 11;
@@ -142,6 +141,7 @@ int main() {
         uav1 + "[other]\nboard_ip = invalid\nfc_url = udp://:14540\n",
         uav1 + "[other]\nboard_ip = 192.168.1.104\n",
         uav1 + "[other]\nboard_ip = 192.168.1.104\nfc_url = udpout://192.168.1.56:14280junk\n",
+        uav1 + "[other]\nboard_ip = 192.168.1.104\nfc_url = udpout://192.168.1.56:invalid\n",
         uav1 + "[other]\nboard_ip = 192.168.1.104\nfc_url = serial:///dev/ttyS0:0\n",
         uav1 + "[groundstation]\nip = station.local\n",
         uav1 + "[groundstation]\nip = 224.0.0.224\n",
@@ -163,38 +163,44 @@ int main() {
         config.zenoh_listen != "tcp/192.168.1.100:7447" || !config.zenoh_connect.empty()) {
         return 26;
     }
+    const auto retained = config;
     std::filesystem::remove(cleanup.profile_path);
-    if (plane::core::load_config(path, config, &first)) return 14;
-    {
-        std::ofstream file(path);
-        file << "[deployment]\nprofile =\n[communication]\nplane_id = direct\n"
-                "zenoh_connect = tcp/192.168.1.11:9555\nzenoh_listen = tcp/192.168.1.10:9555\n"
-                "[flight_control]\nlink_type = udp\nudp_url = udp://:14540\n";
-        if (!file) return 15;
+    if (plane::core::load_config(path, config, &first) || config.plane_id != retained.plane_id ||
+        config.fc_udp_url != retained.fc_udp_url) {
+        return 14;
     }
-    if (!plane::core::load_config(path, config, &first) || config.plane_id != "direct" ||
-        config.fc_udp_url != "udp://:14540" || config.is_sim || config.pod_state_report_hz != 5 ||
-        config.zenoh_connect != "tcp/192.168.1.11:9555" || config.zenoh_listen != "tcp/192.168.1.10:9555") {
-        return 16;
-    }
-    for (const auto* invalid : {"0", "-1", "5.5", "8Hz", "", "9999999999999999999"}) {
+    for (const auto& content : {
+             std::string("[system]\nlog_dir = changed\n"),
+             std::string("[deployment]\n[system]\nlog_dir = changed\n"),
+             std::string("[deployment]\nprofile =\n[system]\nlog_dir = changed\n"),
+             std::string("[deployment]\nprofile = \t\n[system]\nlog_dir = changed\n"),
+             std::string("[deployment]\nprofile = ") + cleanup.profile_path +
+                 "\nprofile = " + cleanup.profile_path + '\n',
+         }) {
         {
             std::ofstream file(path);
-            file << "[camera]\npod_state_report_hz = " << invalid << '\n';
-            if (!file) return 17;
+            file << content;
+            if (!file) return 15;
         }
+        if (plane::core::load_config(path, config, &first) || config.plane_id != retained.plane_id ||
+            config.log_dir != retained.log_dir || config.fc_udp_url != retained.fc_udp_url ||
+            config.midcourse_algorithm.update_dt_s != retained.midcourse_algorithm.update_dt_s) {
+            return 16;
+        }
+    }
+    if (!write_profile(uav1)) return 27;
+    for (const auto* invalid : {"0", "-1", "5.5", "8Hz", "", "9999999999999999999"}) {
+        if (!write_main(std::string("[camera]\npod_state_report_hz = ") + invalid + '\n')) return 17;
         config.pod_state_report_hz = 8;
-        if (!plane::core::load_config(path, config) || config.pod_state_report_hz != 5) return 18;
+        if (!plane::core::load_config(path, config, &first) || config.pod_state_report_hz != 5) return 18;
     }
-    {
-        std::ofstream file(path);
-        file << "[midcourse_algorithm]\nv_cruise_m_s = 45.0\ntau_ff_s = 1.5\nr_min_m = 60.0\n"
-                "update_dt_s = 0.08\nenable_internal_terminal_confirmation = true\n"
-                "confirm_boresight_deg = 6.0\nconfirm_rate_deg_s = 7.0\nconfirm_hold_s = 2.5\n"
-                "[behavior_tree]\ntick_interval_ms = 80\n";
-        if (!file) return 19;
+    if (!write_main("[midcourse_algorithm]\nv_cruise_m_s = 45.0\ntau_ff_s = 1.5\nr_min_m = 60.0\n"
+                    "update_dt_s = 0.08\nenable_internal_terminal_confirmation = true\n"
+                    "confirm_boresight_deg = 6.0\nconfirm_rate_deg_s = 7.0\nconfirm_hold_s = 2.5\n"
+                    "[behavior_tree]\ntick_interval_ms = 80\n")) {
+        return 19;
     }
-    if (!plane::core::load_config(path, config) || config.bt_tick_interval_ms != 80 ||
+    if (!plane::core::load_config(path, config, &first) || config.bt_tick_interval_ms != 80 ||
         algorithm.v_cruise_m_s != 45.0 || algorithm.tau_ff_s != 1.5 || algorithm.r_min_m != 60.0 ||
         algorithm.update_dt_s != 0.08 || !algorithm.enable_internal_terminal_confirmation ||
         algorithm.confirm_boresight_deg != 6.0 || algorithm.confirm_rate_deg_s != 7.0 ||
@@ -202,18 +208,13 @@ int main() {
         return 20;
     }
     for (const auto* invalid : {"0.05", "0", "nan"}) {
-        {
-            std::ofstream file(path);
-            file << "[behavior_tree]\ntick_interval_ms = 80\n[midcourse_algorithm]\nupdate_dt_s = " << invalid << '\n';
-            if (!file) return 21;
+        if (!write_main(std::string("[behavior_tree]\ntick_interval_ms = 80\n[midcourse_algorithm]\nupdate_dt_s = ") +
+                        invalid + '\n')) {
+            return 21;
         }
-        if (plane::core::load_config(path, config) || algorithm.update_dt_s != 0.08) return 22;
+        if (plane::core::load_config(path, config, &first) || algorithm.update_dt_s != 0.08) return 22;
     }
-    {
-        std::ofstream file(path);
-        file << "[behavior_tree]\ntick_interval_ms = 25\n";
-        if (!file) return 23;
-    }
-    if (!plane::core::load_config(path, config) || algorithm.update_dt_s != 0.025) return 24;
+    if (!write_main("[behavior_tree]\ntick_interval_ms = 25\n")) return 23;
+    if (!plane::core::load_config(path, config, &first) || algorithm.update_dt_s != 0.025) return 24;
     return 0;
 }

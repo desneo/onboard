@@ -125,8 +125,12 @@ test -x plane && test -f config/plane.ini && test -d lib
 ./plane --deps-check
 ```
 
-部署前在 `config/plane.ini` 选择现场预置并确认 Zenoh 端点。将同一份运行目录复制到机群的每块板卡。
-升级已有单机部署时，先备份 `config/plane.conf`，再将现场参数迁入 `config/plane.ini` 并清空 `[deployment]` 的 `profile`。
+每次部署均以本次完整运行包为唯一来源。部署前在包内 `config/plane.ini` 选择预置，
+`[deployment].profile` 必须是非空的包内相对路径，并引用实际随包的预置文件。
+`fleetctl` 在停止板端程序前检查运行包，从包内配置生成部署目录，再将程序、动态库、脚本、
+主配置、Zenoh 原生配置和全部预置全量同步到板端。已存在的预置覆盖更新，包外遗留部署文件删除，
+只保护运行目录的 `logs/`，其中历史日志和 `logs/core/` 保留。
+部署不读取、合并或继承板端已有配置。整目录回退备份独立保存，不参与本次配置生成。
 
 ### 安装开机自启服务
 
@@ -236,7 +240,8 @@ cd build/plane
 
 ### 机群部署预置
 
-在 `config/plane.ini` 中设置 `[deployment]` 的 `profile`，相对路径以运行目录为基准。默认使用捷联 A2416A 仿真预置。
+`config/plane.ini` 的 `[deployment].profile` 必填且不能为空；部署时必须以包内相对路径引用随包预置。
+默认使用捷联 A2416A 仿真预置；只运行一架飞机时，也使用仅包含该飞机的预置。
 
 ```ini
 [deployment]
@@ -262,12 +267,14 @@ pod_control_url = udp://192.168.1.56:8001
 `pod_model`、`pod_video_url` 和 `pod_control_url` 均可留空。
 
 程序在本机 `board_ip` 的 TCP `7447` 端口监听，主动连接 `groundstation.ip` 和按 IPv4 数值升序排列的所有其他飞机。
-这些端点覆盖主配置中的 `zenoh_listen` 和 `zenoh_connect`。`groundstation.ip` 可省略或留空，填写时须为单播 IPv4，且与所有板卡 IP 不同。
+连接和监听端点由预置统一生成。`groundstation.ip` 可省略或留空，填写时须为单播 IPv4，且与所有板卡 IP 不同。
 同一机群的 `board_ip` 应是节点之间可达的地址。地面站使用现有的 `tcp/0.0.0.0:7447` 监听。
 
 随包预置文件按 `sitl_<pod_model>.ini` 命名，可选 `jielian_a2416a`、`two_axis`、`aisheng_asd2` 和 `zhongke_d80`。
 仿真预置的地面站为 `192.168.1.41`，`real_test.ini` 的地面站为 `192.168.1.200`。
-部署客户机群时，将对应 INI 放入运行目录的 `config/profiles/` 并修改 `profile`。单机直配时清空 `profile`，在主配置中填写板卡 IP、飞机 ID、飞控连接和吊舱配置。
+部署客户机群时，将对应 INI 放入本次运行包的 `config/profiles/` 并修改包内主配置的 `profile`。
+飞机身份、飞控连接和吊舱配置仅从命中的预置节读取；主配置保留安全高度、频率、超时和算法等通用参数。
+`profile` 缺失、留空或预置无法读取时，程序在启动飞控和 Zenoh 前退出。
 
 ### 系统与通信
 
@@ -275,14 +282,9 @@ pod_control_url = udp://192.168.1.56:8001
 | --- | --- |
 | `system.safe_height_m` | 未指定起飞高度时使用的安全高度 |
 | `system.log_dir` | 日志目录 |
-| `system.board_ip` | `AgentInfo.boardIp`，fleet 部署在未配置时填入板卡 IP |
-| `camera.pod_model` / `pod_control_url` | 单机直配的吊舱型号和控制地址 |
-| `camera.pod_state_report_hz` | `PodState` 上报频率，默认 5 Hz，单机直配和机群预置共用 |
-| `camera.pod_video_url` | `AgentInfo.videoUrl`，未配置时为空 |
+| `camera.pod_state_report_hz` | `PodState` 上报频率，默认 5 Hz |
 | `system.state_report_period_ms` | 状态上报周期 |
-| `communication.plane_id` | 本机标识 |
 | `communication.zenoh_config_file` | Zenoh 原生配置文件，默认 `config/zenoh.json5` |
-| `communication.zenoh_connect` / `zenoh_listen` | 单机直配的 Zenoh 连接或监听端点，留空沿用 Zenoh 原生配置 |
 | `communication.ack_timeout_ms` / `ack_max_retries` | 可靠消息确认超时和重试次数 |
 | `communication.rx_queue_max` | 通信接收队列容量，满时丢弃最旧消息 |
 | `communication.gcs_link_timeout_ms` | 地面站链路超时阈值 |
@@ -293,15 +295,13 @@ Zenoh 使用 peer 模式。机群预置通过 TCP 单播建链，组播发现和
 连接失败后仍按默认策略重试。该值不修改已建立连接的在线判定或业务消息确认超时。
 从运行目录根部启动时加载此文件；清空 `zenoh_config_file` 则使用 Zenoh 库的默认配置。
 SITL 测试统一使用 `tests/fleet.ini` 的 `simulator.host`（当前为 `192.168.1.56`）。
-测试部署会校正板端旧的 SITL IP，保留现有 `14580`～`14589` 的 UDP 端口，并验证实际飞控连接和遥测。
+测试部署使用包内预置的 SITL UDP 端口，主机统一为清单中的仿真主机；启动前核对对应端口实际监听，
+启动后验证实际飞控连接和遥测。串口连接按包内预置执行。
 
 ### 飞控与任务
 
 | 配置 | 说明 |
 | --- | --- |
-| `flight_control.link_type` | `udp` 或 `serial` |
-| `flight_control.udp_url` | MAVSDK UDP 地址 |
-| `flight_control.serial_device` / `serial_baud` | 串口设备和波特率 |
 | `flight_control.heartbeat_timeout_ms` | MAVSDK 心跳超时 |
 | `flight_control.route_speed_m_s` | 航点、航线以及航线开始前临时高度航点的速度 |
 | `behavior_tree.tick_interval_ms` | 行为树 tick 周期 |
@@ -378,7 +378,7 @@ UDP JSON 报文，每个扫描周期对应一个完整数据报；`tracks` 可�
 运行时每 5 秒至多输出一次雷达接收统计，分别记录 UDP 数据报、有效 `radar_tracks` 扫描、
 无靶机输出扫描和已发布靶机数量，用于区分网络未到达、空/保持扫描和 confirmed 靶机发布。
 
-手动启动 `192.168.1.56:14580` 的 PX4 SITL 后，可执行：
+按包内预置启动 `192.168.1.56` 的 PX4 SITL（默认一号机为 `14280` 端口）后，可执行：
 
 ```bash
 python3 tools/fleetctl.py test-midcourse --count 1 --target-track-id <track_id>

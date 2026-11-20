@@ -197,7 +197,10 @@ Communication 对外提供 `sendToStation`、`sendToPlane` 和 `sendToAll` 三�
 
 ## 6. 生命周期与并发
 
-- Core Runtime 从 `config/plane.ini` 加载主配置。选中预置时，先解析本机对应的飞机 ID、板卡 IP、飞控和吊舱配置，再以有效飞控地址计算仿真判定，并将同一份 `AppConfig` 交给各模块。
+- Core Runtime 从 `config/plane.ini` 加载通用运行参数，要求 `[deployment].profile` 存在且非空。
+  按本机 IPv4 在预置中唯一匹配飞机 ID、板卡 IP、飞控和吊舱配置，生成 Zenoh TCP 端点，
+  再以有效飞控地址计算仿真判定，并将同一份 `AppConfig` 交给各模块。
+  `AppConfig` 保留模块需要的有效配置字段，身份和连接信息仅由预置填充；配置加载失败时不替换原配置。
 - Runtime 按注册顺序执行 `init/start`，按逆序执行 `stop/release`。
 - Flight Control 在飞控连接建立后读取并缓存通用 PX4 飞控系统参数；断连使缓存失效，重连后后台重读。
   中制导默认从 `[midcourse_algorithm]` 取规划限值，`use_px4_limits = true` 时从缓存取值。
@@ -238,6 +241,15 @@ Communication 对外提供 `sendToStation`、`sendToPlane` 和 `sendToAll` 三�
 
 ## 8. 验证与交付
 
+- 部署统一采用全量运行包，程序、动态库、启停脚本、主配置、Zenoh 原生配置和全部部署预置
+  均以本次包为唯一来源。部署配置只能从包内生成，不读取、合并或继承板端旧配置，
+  不为旧版本、旧格式或旧板端配置增加迁移及兼容路径。
+- 部署前必须校验完整运行包及其配置引用；`deployment.profile` 必须非空，
+  以包内相对路径引用实际随包的预置文件。包校验失败时不得停止现有板端程序。
+- 全量同步覆盖全部预置并删除包外遗留部署文件，只保护运行目录的 `logs/`，
+  保留其中的日志和 `logs/core/`。整目录回退备份独立保存，不作为配置来源。
+- SITL 部署使用包内预置声明的 UDP 端口和 `tests/fleet.ini` 的 `simulator.host`，
+  必须验证对应端口实际监听以及启动后的飞控连接和遥测；串口连接按包内预置执行。
 - 修改后至少执行与风险相称的构建或静态检查。
 - 优先运行与改动直接相关的现有测试，测试选择和命令见 `TESTING.md`。
 - 修改公共接口、插件加载、配置解析或媒体链路时，必须运行相应契约或集成测试。

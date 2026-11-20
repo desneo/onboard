@@ -22,7 +22,7 @@ struct AppConfig {
     std::string pod_control_url;
     int pod_state_report_hz = kDefaultPodStateReportHz;
 
-    std::string plane_id = "uav1";
+    std::string plane_id;
     std::string zenoh_config_file;
     std::string zenoh_connect;
     std::string zenoh_listen;
@@ -32,10 +32,10 @@ struct AppConfig {
     int comm_rx_queue_max = 1024;
     int gcs_link_timeout_ms = 2000;
 
-    std::string fc_link_type = "udp";
-    std::string fc_udp_url = "udp://:14540";
-    std::string fc_serial_device = "/dev/ttyUSB0";
-    int fc_serial_baud = 57600;
+    std::string fc_link_type;
+    std::string fc_udp_url;
+    std::string fc_serial_device;
+    int fc_serial_baud = 0;
     int fc_heartbeat_timeout_ms = 5000;
     double fc_route_speed_m_s = 5.0;
 
@@ -68,8 +68,8 @@ struct AppConfig {
     }(bt_tick_interval_ms);
 };
 
-/// 加载主配置和可选部署预置。加载失败时保留原配置并返回 false。
-/// 未提供地址列表时，启用预置的配置从本机网卡获取地址。
+/// 加载主配置和必填的部署预置。加载失败时保留原配置并返回 false。
+/// 未提供地址列表时，从本机网卡获取地址以匹配预置中的唯一飞机。
 bool load_config(const std::string& path, AppConfig& out,
                  const std::vector<std::string>* local_ipv4_addresses = nullptr);
 

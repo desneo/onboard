@@ -28,9 +28,8 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "tests" / "fleet.ini"
 PLANE_CONFIG = "config/plane.ini"
-LEGACY_PLANE_CONFIG = "config/plane.conf"
 PROFILE_DIR = "config/profiles"
-SITL_REMOTE_PORT_RANGES = ((14280, 14289), (14580, 14589))
+SITL_REMOTE_PORT_RANGES = ((14030, 14039), (14280, 14289), (14580, 14589))
 PEER_LINK_RE = re.compile(r"他机(上线|下线):\s*([^\s]+)")
 LOG_TIME_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\]")
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -58,7 +57,6 @@ class Simulator(RemoteHost):
     scenario_dir: str
     start_command: str
     stop_command: str
-    flight_port_base: int | None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -84,6 +82,28 @@ class FleetConfig:
 class EndpointSet:
     flight_urls: tuple[str, ...]
     all_uris: tuple[str, ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class PlaneConfiguration:
+    main: str
+    profile_path: str
+    profile_text: str
+    settings: tuple[tuple[str, str, str], ...]
+
+    def get(self, section: str, key: str, fallback: str = "") -> str:
+        for setting_section, setting_key, value in self.settings:
+            if (section, key) == (setting_section, setting_key):
+                return value
+        parser = configparser.ConfigParser(interpolation=None)
+        parser.read_string(self.main)
+        return parser.get(section, key, fallback=fallback)
+
+
+@dataclasses.dataclass(frozen=True)
+class PlaneDeployment:
+    directory: Path
+    configuration: PlaneConfiguration
 
 
 @dataclasses.dataclass
@@ -120,7 +140,6 @@ def load_config(path: Path) -> FleetConfig:
             scenario_dir=sim["scenario_dir"].strip(),
             start_command=sim.get("start_command", "./start").strip(),
             stop_command=sim.get("stop_command", "./stop.sh").strip(),
-            flight_port_base=sim.getint("flight_port_base", fallback=None),
         )
     except (KeyError, ValueError) as exc:
         raise FleetError(f"环境清单缺少 simulator/fleet 字段: {exc}") from exc
@@ -355,19 +374,34 @@ def require_local_commands(commands: Iterable[str]) -> None:
 
 def bundle_problems(bundle: Path) -> list[str]:
     required_files = [
-        "plane", "runplane.sh", "stopplane.sh", "install-plane-service.sh", PLANE_CONFIG,
+        "plane", "runplane.sh", "stopplane.sh", "install-plane-service.sh", PLANE_CONFIG, "config/zenoh.json5",
     ]
     required_files.extend(f"{PROFILE_DIR}/{path.name}" for path in sorted((ROOT / PROFILE_DIR).glob("*.ini")))
     required_dirs = ["lib"]
     problems = [name for name in required_files if not (bundle / name).is_file()]
     problems.extend(name + "/" for name in required_dirs if not (bundle / name).is_dir())
+    if (bundle / "lib").is_dir() and not any(path.is_file() for path in (bundle / "lib").rglob("*")):
+        problems.append("lib/（为空）")
     return problems
+
+
+def check_bundle_dependencies(bundle: Path) -> None:
+    try:
+        result = subprocess.run(
+            [str((bundle / "plane").resolve()), "--deps-check"], cwd=bundle,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise FleetError(f"运行包依赖自检无法执行: {exc}") from exc
+    if result.returncode != 0:
+        raise FleetError(f"运行包依赖自检失败: {sanitize_output(result.stdout).strip()}")
 
 
 def ensure_bundle() -> Path:
     bundle = ROOT / "build" / "plane"
     problems = bundle_problems(bundle)
     if not problems:
+        check_bundle_dependencies(bundle)
         print(f"[build] 使用现有完整运行包: {bundle}")
         return bundle
 
@@ -383,6 +417,7 @@ def ensure_bundle() -> Path:
     problems = bundle_problems(bundle)
     if problems:
         raise FleetError("编译完成后运行包仍不完整: " + ", ".join(problems))
+    check_bundle_dependencies(bundle)
     return bundle
 
 
@@ -566,81 +601,53 @@ def sitl_remote_port(uri: str) -> int | None:
     return None
 
 
-def validate_flight_listeners(base_port: int, count: int, socket_text: str) -> tuple[int, ...]:
-    if base_port <= 0 or base_port + count - 1 > 65535:
-        raise FleetError(f"非法飞控端口范围: {base_port}～{base_port + count - 1}")
-    expected = tuple(range(base_port, base_port + count))
+def validate_flight_ports(flight_ports: Sequence[int]) -> tuple[int, ...]:
+    ports = tuple(flight_ports)
+    if not ports or len(ports) != len(set(ports)) or any(port <= 0 or port > 65535 for port in ports):
+        raise FleetError("运行包飞控端口为空、重复或超出有效范围")
+    return ports
+
+
+def validate_flight_listeners(flight_ports: Sequence[int], socket_text: str) -> tuple[int, ...]:
+    expected = validate_flight_ports(flight_ports)
     listening = {int(port) for port in re.findall(r":(\d+)\s", socket_text)}
     missing = [port for port in expected if port not in listening]
     if missing:
-        raise FleetError(
-            f"SITL 未监听声明的飞控端口: {', '.join(map(str, missing))}。"
-            "不会修改板端配置。"
-        )
+        raise FleetError(f"SITL 未监听运行包预置的飞控端口: {', '.join(map(str, missing))}")
     return expected
 
 
-def parse_endpoints(
-    text: str,
-    simulator_host: str,
-    count: int,
-    flight_ports: Sequence[int] | None = None,
-) -> EndpointSet:
+def parse_endpoints(text: str, simulator_host: str, flight_ports: Sequence[int]) -> EndpointSet:
     clean = sanitize_output(text)
     all_uris = tuple(dict.fromkeys(uri.rstrip(".，。") for uri in URI_RE.findall(clean)))
-    if flight_ports is None:
-        parsed_flight_ports = sorted(
-            {
-                port
-                for uri in all_uris
-                if uri.lower().startswith(("udp://", "udpin://", "udpout://"))
-                for port in [endpoint_port(uri)]
-                if port is not None and 14200 <= port <= 14299
-            }
-        )
-        if len(parsed_flight_ports) != count:
-            raise FleetError(
-                f"无法唯一解析 {count} 个飞控端点：发现端口 {parsed_flight_ports or '无'}。"
-                "已保存 SITL 原始输出，不会修改板端配置。"
-            )
-    else:
-        parsed_flight_ports = list(flight_ports)
-        if len(parsed_flight_ports) != count or len(set(parsed_flight_ports)) != count:
-            raise FleetError(f"飞控端口数量或唯一性不满足 {count} 架飞机要求")
-    flight_urls = tuple(f"udpout://{simulator_host}:{port}" for port in parsed_flight_ports)
-
+    ports = validate_flight_ports(flight_ports)
+    flight_urls = tuple(f"udpout://{simulator_host}:{port}" for port in ports)
     return EndpointSet(flight_urls=flight_urls, all_uris=all_uris)
 
 
 def start_simulator(
     config: FleetConfig,
-    count: int,
+    flight_ports: Sequence[int],
     remote: RemoteExecutor,
     run_dir: Path,
+    *,
+    start_count: int | None = None,
 ) -> EndpointSet:
     sim = config.simulator
+    ports = validate_flight_ports(flight_ports)
+    count = len(ports) if start_count is None else start_count
+    if count < len(ports):
+        raise FleetError("SITL 启动实例数不得少于运行包中的飞控端口数")
     command = f"cd {shlex.quote(sim.scenario_dir)} && {sim.start_command} -n {count}"
     print(f"[sitl] 启动 {count} 架仿真飞机")
     rc, output = remote.stream(sim, command, label="sitl", timeout=config.startup_timeout_s)
     (run_dir / "sitl-start.log").write_text(output, encoding="utf-8")
     if rc != 0:
         raise FleetError(f"SITL start 失败: rc={rc}，输出见 {run_dir / 'sitl-start.log'}")
-    flight_ports = None
-    if sim.flight_port_base is not None:
-        listeners = remote.run(sim, "ss -H -lun", timeout=15).stdout
-        (run_dir / "sitl-udp-listeners.log").write_text(listeners, encoding="utf-8")
-        flight_ports = validate_flight_listeners(sim.flight_port_base, count, listeners)
-    try:
-        endpoints = parse_endpoints(output, sim.host, count, flight_ports)
-    except FleetError:
-        probe = remote.run(
-            sim,
-            "ps -eo args | grep -E 'udp(out|in)?://|rtsp://|142[0-9][0-9]' | grep -v grep || true",
-            timeout=15,
-            check=False,
-        ).stdout
-        (run_dir / "sitl-processes.log").write_text(probe, encoding="utf-8")
-        endpoints = parse_endpoints(output + "\n" + probe, sim.host, count, flight_ports)
+    listeners = remote.run(sim, "ss -H -lun", timeout=15).stdout
+    (run_dir / "sitl-udp-listeners.log").write_text(listeners, encoding="utf-8")
+    validate_flight_listeners(ports, listeners)
+    endpoints = parse_endpoints(output, sim.host, ports)
     (run_dir / "endpoints.json").write_text(
         json.dumps(dataclasses.asdict(endpoints), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
@@ -678,35 +685,51 @@ def set_ini_value(text: str, section: str, key: str, value: str) -> str:
     return "".join(lines)
 
 
-def configure_plane(base: str, plane: Plane, flight_url: str) -> str:
-    # 从板端配置生成运行配置时，移除当前版本已停用的 section 和配置键。
-    lines = []
-    section_name = ""
-    retired = False
-    for line in base.splitlines(keepends=True):
-        section = re.match(r"^\s*\[([^]]+)\]", line)
-        if section:
-            section_name = section.group(1).strip()
-            retired = section_name in {
-                "plugins", "image_input", "detection", "video_output", "debug", "suicide_mission"
-            }
-        if section_name == "communication" and re.match(r"^\s*station_id\s*=", line, re.IGNORECASE):
-            continue
-        if not retired:
-            lines.append(line)
-    result = "".join(lines)
-    updates = [
-        ("deployment", "profile", ""),
-        ("system", "log_dir", "logs"),
-        ("system", "board_ip", plane.host),
-        ("communication", "plane_id", plane.plane_id),
-        ("communication", "zenoh_config_file", "config/zenoh.json5"),
-        ("flight_control", "link_type", "udp"),
-        ("flight_control", "udp_url", flight_url),
+def validate_deployment_identity(plane: Plane, configuration: PlaneConfiguration) -> None:
+    plane_id = configuration.get("communication", "plane_id")
+    if plane_id != plane.plane_id:
+        raise FleetError(
+            f"{plane.plane_id} 的预置飞机 ID 为 {plane_id}，与测试清单不一致；"
+            "请先修正清单或预置，本次不停止或覆盖板端现场"
+        )
+
+
+def configure_plane(base: PlaneConfiguration, plane: Plane, simulator_host: str | None = None) -> PlaneConfiguration:
+    validate_deployment_identity(plane, base)
+    profile_text = base.profile_text
+    if simulator_host and base.get("flight_control", "link_type") == "udp":
+        url = base.get("flight_control", "udp_url")
+        port = sitl_remote_port(url)
+        if port is not None:
+            profile_text = set_ini_value(profile_text, plane.plane_id, "fc_url", f"udpout://{simulator_host}:{port}")
+    addresses = {base.get("system", "board_ip")}
+    settings = tuple(deployment_settings(base.profile_path, profile_text, addresses))
+    return dataclasses.replace(base, profile_text=profile_text, settings=settings)
+
+
+def configured_sitl_ports(configurations: Sequence[PlaneConfiguration]) -> list[int]:
+    ports = [
+        port
+        for configuration in configurations
+        if configuration.get("flight_control", "link_type") == "udp"
+        and (port := sitl_remote_port(configuration.get("flight_control", "udp_url"))) is not None
     ]
-    for section, key, value in updates:
-        result = set_ini_value(result, section, key, value)
-    return result
+    if len(ports) != len(set(ports)):
+        raise FleetError("所选飞机预置的 SITL 飞控 UDP 端口重复")
+    return ports
+
+
+def check_sitl_profile_listeners(
+    config: FleetConfig, configurations: Sequence[PlaneConfiguration], remote: RemoteExecutor
+) -> None:
+    ports = configured_sitl_ports(configurations)
+    if not ports:
+        return
+    sockets = remote.run(config.simulator, "ss -uln").stdout
+    listening = {int(port) for port in re.findall(r":(\d+)\s", sockets)}
+    missing = sorted(set(ports) - listening)
+    if missing:
+        raise FleetError(f"SITL 主机 {config.simulator.host} 未监听预置飞控 UDP 端口: {missing}")
 
 
 def remote_ipv4_addresses(plane: Plane, remote: RemoteExecutor) -> set[str]:
@@ -724,9 +747,7 @@ def remote_ipv4_addresses(plane: Plane, remote: RemoteExecutor) -> set[str]:
         raise FleetError(f"{plane.plane_id} 无法解析本机 IPv4 地址") from exc
 
 
-def deployment_settings(
-    path: str, text: str, local_addresses: set[str], *, allow_unmatched: bool
-) -> list[tuple[str, str, str]]:
+def deployment_settings(path: str, text: str, local_addresses: set[str]) -> list[tuple[str, str, str]]:
     parser = configparser.ConfigParser(interpolation=None, delimiters=("=",), default_section="")
     parser.optionxform = str
     parser.SECTCRE = re.compile(r"\[(?P<header>[^\[\]]+)\]$")
@@ -801,9 +822,7 @@ def deployment_settings(
         connect_endpoints.append(f"tcp/{station_ip}:7447")
 
     if selected_ip is None:
-        if not allow_unmatched:
-            raise FleetError(f"部署预置 {path} 未匹配本机 IPv4")
-        return []
+        raise FleetError(f"部署预置 {path} 未匹配本机 IPv4")
     connect_endpoints.extend(f"tcp/{peer_ip}:7447" for peer_ip in sorted(board_ips - {selected_ip}))
     selected.extend([
         ("communication", "zenoh_listen", f"tcp/{selected_ip}:7447"),
@@ -812,88 +831,82 @@ def deployment_settings(
     return selected
 
 
-def read_plane_config(
-    plane: Plane, remote: RemoteExecutor, bundle: Path
-) -> tuple[str | None, str]:
-    """读取现场原始配置，将有效预置展开为测试使用的逐机直配。"""
-    paths = " ".join(shlex.quote(f"{plane.runtime_dir}/{name}") for name in (PLANE_CONFIG, LEGACY_PLANE_CONFIG))
-    result = remote.run(
-        plane,
-        f'for path in {paths}; do if [ -e "$path" ] || [ -L "$path" ]; then cat -- "$path"; exit $?; fi; done; exit 44',
-        check=False,
-    )
-    if result.returncode not in (0, 44):
-        raise FleetError(f"{plane.plane_id} 无法读取板端配置: {sanitize_output(result.stdout).strip()}")
-    original = result.stdout if result.returncode == 0 else None
+def bundle_config_file(bundle: Path, reference: str, key: str) -> Path:
+    normalized = Path(os.path.normpath(reference))
+    if Path(reference).is_absolute():
+        raise FleetError(f"运行包 {key} 必须使用包内相对路径")
+    target = (bundle / reference).resolve()
+    if normalized.parts[:1] == ("..",) or not target.is_relative_to(bundle.resolve()):
+        raise FleetError(f"运行包 {key} 解析后超出运行包目录")
+    if normalized.parts[:1] == ("logs",) or target.relative_to(bundle.resolve()).parts[:1] == ("logs",):
+        raise FleetError(f"运行包 {key} 不得引用保留的 logs 目录")
+    if not target.is_file():
+        raise FleetError(f"运行包 {key} 所引用的包内文件不存在: {reference}")
+    return target
+
+
+def read_bundle_config(plane: Plane, remote: RemoteExecutor, bundle: Path) -> PlaneConfiguration:
+    """仅从完整运行包读取配置，用板端实际网卡匹配预置。"""
     parser = configparser.ConfigParser(interpolation=None)
     try:
-        base = original if original is not None else (bundle / PLANE_CONFIG).read_text(encoding="utf-8")
-        parser.read_string(base, source=PLANE_CONFIG)
-        profile = parser.get("deployment", "profile", fallback="")
+        main = (bundle / PLANE_CONFIG).read_text(encoding="utf-8")
+        parser.read_string(main, source=str(bundle / PLANE_CONFIG))
+        profile = parser.get("deployment", "profile", fallback="").strip()
         if not profile:
-            return original, base
-        if original is None:
-            profile_path = bundle / profile
-            profile_text = profile_path.read_text(encoding="utf-8")
-            addresses = {plane.host}
-        else:
-            profile_path = Path(plane.runtime_dir) / profile
-            profile_text = remote.run(plane, f"cat -- {shlex.quote(str(profile_path))}").stdout
-            addresses = remote_ipv4_addresses(plane, remote)
-        settings = deployment_settings(str(profile_path), profile_text, addresses, allow_unmatched=original is None)
+            raise FleetError(f"运行包 {PLANE_CONFIG} 的 deployment.profile 缺失或为空")
+        profile_file = bundle_config_file(bundle, profile, "deployment.profile")
+        native_config = parser.get("communication", "zenoh_config_file", fallback="").strip()
+        if native_config:
+            bundle_config_file(bundle, native_config, "communication.zenoh_config_file")
+        profile_text = profile_file.read_text(encoding="utf-8")
+        addresses = remote_ipv4_addresses(plane, remote)
+        settings = tuple(deployment_settings(str(profile_file), profile_text, addresses))
     except (configparser.Error, OSError, UnicodeError) as exc:
-        raise FleetError(f"{plane.plane_id} 读取运行配置失败: {exc}") from exc
-    for section, key, value in settings:
-        base = set_ini_value(base, section, key, value)
-    return original, set_ini_value(base, "deployment", "profile", "")
+        raise FleetError(f"{plane.plane_id} 读取运行包配置失败: {exc}") from exc
+    configuration = PlaneConfiguration(main, profile, profile_text, settings)
+    validate_deployment_identity(plane, configuration)
+    return configuration
 
 
-def upload_plane_bundle(plane: Plane, bundle: Path, remote: RemoteExecutor) -> None:
-    runtime = plane.runtime_dir.rstrip("/") + "/"
-    remote.rsync_to(
-        plane,
-        str(bundle) + "/",
-        runtime,
-        extra=(
-            "--delete",
-            "--exclude=/logs/",
-            f"--exclude=/{PLANE_CONFIG}",
-            f"--exclude=/{LEGACY_PLANE_CONFIG}",
-            f"--exclude=/{PLANE_CONFIG}.fleet-backup-*",
-            f"--exclude=/{LEGACY_PLANE_CONFIG}.fleet-backup-*",
-            f"--exclude=/{PROFILE_DIR}/",
-        ),
-    )
-    remote.rsync_to(plane, str(bundle / PROFILE_DIR) + "/", runtime + PROFILE_DIR + "/", extra=("--ignore-existing",))
+def prepare_plane_deployment(
+    plane: Plane, bundle: Path, remote: RemoteExecutor, run_dir: Path, simulator_host: str
+) -> PlaneDeployment:
+    problems = bundle_problems(bundle)
+    if problems:
+        raise FleetError("运行包不完整: " + ", ".join(problems))
+    configuration = configure_plane(read_bundle_config(plane, remote, bundle), plane, simulator_host)
+    directory = run_dir / (plane.plane_id + ".deployment")
+    shutil.copytree(bundle, directory)
+    profile_file = bundle_config_file(directory, configuration.profile_path, "deployment.profile")
+    native_config = configuration.get("communication", "zenoh_config_file").strip()
+    if native_config:
+        bundle_config_file(directory, native_config, "communication.zenoh_config_file")
+    profile_file.write_text(configuration.profile_text, encoding="utf-8")
+    return PlaneDeployment(directory, configuration)
 
 
-def sync_plane(
-    plane: Plane,
-    bundle: Path,
-    flight_url: str,
-    run_id: str,
-    remote: RemoteExecutor,
-    run_dir: Path,
-    base: str,
-) -> None:
+def backup_plane_runtime(plane: Plane, remote: RemoteExecutor, run_id: str) -> str:
+    backup = plane.runtime_dir + ".backup-" + run_id
     runtime = shlex.quote(plane.runtime_dir)
-    config_path = f"{plane.runtime_dir}/{PLANE_CONFIG}"
-    legacy_path = shlex.quote(f"{plane.runtime_dir}/{LEGACY_PLANE_CONFIG}")
-    config_backup = shlex.quote(config_path + ".fleet-backup-" + run_id)
-    rendered = configure_plane(base, plane, flight_url)
-    local_config = run_dir / f"{plane.plane_id}.plane.ini"
-    local_config.write_text(rendered, encoding="utf-8")
-
-    prepare = (
-        f"mkdir -p {runtime}/config {runtime}/logs && "
-        f"if [ -f {shlex.quote(config_path)} ]; then "
-        f"cp -a {shlex.quote(config_path)} {config_backup}; "
-        f"elif [ -f {legacy_path} ]; then cp -a {legacy_path} {config_backup}; fi"
+    remote.run(
+        plane,
+        f"mkdir -p {shlex.quote(backup)} && "
+        f"if [ -d {runtime} ]; then rsync -a --exclude=/logs/ "
+        f"{shlex.quote(plane.runtime_dir + '/')} {shlex.quote(backup + '/')}; fi",
+        timeout=60,
     )
-    remote.run(plane, prepare)
+    return backup
+
+
+def deploy_plane_bundle(plane: Plane, deployment: PlaneDeployment, remote: RemoteExecutor) -> None:
+    """全量替换完整运行目录，仅保留既有日志及 core 文件。"""
+    validate_deployment_identity(plane, deployment.configuration)
+    remote.run(plane, f"mkdir -p {shlex.quote(plane.runtime_dir)}")
     print(f"[sync] {plane.plane_id} -> {plane.host}:{plane.runtime_dir}")
-    upload_plane_bundle(plane, bundle, remote)
-    remote.rsync_to(plane, local_config, config_path)
+    remote.rsync_to(
+        plane, str(deployment.directory) + "/", plane.runtime_dir.rstrip("/") + "/",
+        extra=("--delete", "--exclude=/logs/"),
+    )
 
 
 def check_remote_dependencies(plane: Plane, remote: RemoteExecutor) -> None:
@@ -1086,33 +1099,6 @@ def command_preflight(args: argparse.Namespace, config: FleetConfig, remote: Rem
     return 0
 
 
-def render_presence_config(base: str, template_text: str, plane: Plane, simulator_host: str | None = None) -> str:
-    """保留现场参数，SITL 地址使用清单中的仿真主机，只分发当前版本支持的配置项。"""
-    current = configparser.ConfigParser(interpolation=None)
-    current.read_string(base)
-    template = configparser.ConfigParser(interpolation=None)
-    template.read_string(template_text)
-    result = template_text
-    for section in template.sections():
-        for key in template[section]:
-            if current.has_option(section, key):
-                result = set_ini_value(result, section, key, current[section][key])
-    result = set_ini_value(result, "system", "log_dir", "logs")
-    if not current.get("system", "board_ip", fallback="").strip():
-        result = set_ini_value(result, "system", "board_ip", plane.host)
-    link_type = current.get(
-        "flight_control", "link_type", fallback=template.get("flight_control", "link_type", fallback="udp")
-    )
-    udp_url = current.get(
-        "flight_control", "udp_url", fallback=template.get("flight_control", "udp_url", fallback="")
-    )
-    port = sitl_remote_port(udp_url)
-    if simulator_host and link_type == "udp" and port is not None:
-        result = set_ini_value(result, "flight_control", "udp_url", f"udpout://{simulator_host}:{port}")
-    result = set_ini_value(result, "communication", "plane_id", plane.plane_id)
-    return set_ini_value(result, "deployment", "profile", "")
-
-
 def presence_event_counts(text: str, peer_id: str) -> tuple[int, int]:
     events = [status for status, peer in PEER_LINK_RE.findall(text) if peer == peer_id]
     return events.count("上线"), events.count("下线")
@@ -1217,30 +1203,18 @@ def command_test_presence(args: argparse.Namespace, config: FleetConfig, remote:
     try:
         preflight(config, planes, remote, include_simulator=False)
         bundle = ensure_bundle()
-        template = (bundle / PLANE_CONFIG).read_text(encoding="utf-8")
-        rendered = {}
+        deployments = {
+            plane.plane_id: prepare_plane_deployment(plane, bundle, remote, run_dir, config.simulator.host)
+            for plane in planes
+        }
+        check_sitl_profile_listeners(config, tuple(item.configuration for item in deployments.values()), remote)
         for plane in planes:
-            original, effective = read_plane_config(plane, remote, bundle)
-            if original is not None:
-                (run_dir / f"{plane.plane_id}.previous.ini").write_text(original, encoding="utf-8")
-            local_config = run_dir / f"{plane.plane_id}.plane.ini"
-            text = render_presence_config(effective, template, plane, config.simulator.host)
-            if args.auto_discovery:
-                text = set_ini_value(text, "communication", "zenoh_config_file", "config/zenoh.json5")
-                text = set_ini_value(text, "communication", "zenoh_connect", "")
-            local_config.write_text(text, encoding="utf-8")
-            rendered[plane.plane_id] = local_config
-        for plane in planes:
-            backup = plane.runtime_dir + ".backup-presence-" + run_id
-            remote.run(plane, f"mkdir -p {shlex.quote(backup)} && rsync -a --exclude=/logs/ "
-                       f"{shlex.quote(plane.runtime_dir + '/')} {shlex.quote(backup + '/')}", timeout=60)
-            report["backups"][plane.plane_id] = backup
+            report["backups"][plane.plane_id] = backup_plane_runtime(plane, remote, run_id)
         save_report()
         stop_planes(planes, remote)
         expected_sha = hashlib.sha256((bundle / "plane").read_bytes()).hexdigest()
         for plane in planes:
-            upload_plane_bundle(plane, bundle, remote)
-            remote.rsync_to(plane, rendered[plane.plane_id], f"{plane.runtime_dir}/{PLANE_CONFIG}")
+            deploy_plane_bundle(plane, deployments[plane.plane_id], remote)
             check_remote_dependencies(plane, remote)
             deps = remote.run(plane, f"cd {shlex.quote(plane.runtime_dir)} && sha256sum plane && ./plane --deps-check")
             (run_dir / f"{plane.plane_id}.deps.log").write_text(deps.stdout, encoding="utf-8")
@@ -1274,6 +1248,33 @@ def agent_info_log_payloads(text: str, marker: str) -> list[dict[str, object]]:
     return [json.loads(item) for item in re.findall(re.escape(marker) + r": (\{[^\n]*\})", text)]
 
 
+def select_gcs_loopback_endpoint(plane: Plane, remote: RemoteExecutor) -> str:
+    script = (
+        "import socket; "
+        "s=socket.socket(socket.AF_INET,socket.SOCK_STREAM); "
+        "s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()"
+    )
+    result = remote.run(plane, "python3 -c " + shlex.quote(script))
+    try:
+        port = int(result.stdout.strip())
+    except ValueError as exc:
+        raise FleetError("无法为 AgentInfo 测试选择本地 TCP 监听端口") from exc
+    if not 0 < port <= 65535:
+        raise FleetError("AgentInfo 测试的本地 TCP 监听端口无效")
+    return f"tcp/127.0.0.1:{port}"
+
+
+def agent_info_transport_options(
+    stage: str, plane_endpoint: str, station_endpoint: str, *, second_station: bool = False
+) -> list[str]:
+    if stage == "startup":
+        # startup 先于机载启动，保留其自动发现流程，避免拨号尚未启动的机载。
+        return ["--listen", station_endpoint]
+    if second_station:
+        return ["--connect", f"{station_endpoint},{plane_endpoint}"]
+    return ["--listen", station_endpoint, "--connect", plane_endpoint]
+
+
 def command_test_agent_info(args: argparse.Namespace, config: FleetConfig, remote: RemoteExecutor) -> int:
     planes = selected_planes(config, args.count)
     if len(planes) != 1:
@@ -1292,6 +1293,7 @@ def command_test_agent_info(args: argparse.Namespace, config: FleetConfig, remot
     report_path = run_dir / "agent-info-report.json"
     station_a = f"fleet-gcs-a-{run_id}"
     station_b = f"fleet-gcs-b-{run_id}"
+    station_endpoint = ""
     report = {"run_id": run_id, "status": "running", "checks": [], "plane": plane.plane_id,
               "host": plane.host, "flight_or_task_commands_sent": False}
 
@@ -1332,6 +1334,9 @@ def command_test_agent_info(args: argparse.Namespace, config: FleetConfig, remot
         options = ["--plane-id", plane.plane_id, "--sender-id", sender_id, "--board-ip", plane.host,
                    "--listen-seconds", str(seconds), "--query-timeout-ms", "1500",
                    "--no-radar-udp"]
+        options += agent_info_transport_options(
+            stage, f"tcp/{plane.host}:7447", station_endpoint, second_station=sender_id == station_b
+        )
         if query:
             options += ["--query", query]
         if agent_id is not None:
@@ -1364,23 +1369,19 @@ def command_test_agent_info(args: argparse.Namespace, config: FleetConfig, remot
         return text
 
     try:
-        original, effective = read_plane_config(plane, remote, bundle)
-        if original is not None:
-            (run_dir / "previous.ini").write_text(original, encoding="utf-8")
-        template = (bundle / PLANE_CONFIG).read_text(encoding="utf-8")
-        rendered = render_presence_config(effective, template, plane, config.simulator.host)
-        local_config = run_dir / "plane.ini"
-        local_config.write_text(rendered, encoding="utf-8")
-        parser = configparser.ConfigParser(interpolation=None)
-        parser.read_string(rendered)
-        port = endpoint_port(parser.get("flight_control", "udp_url", fallback=""))
+        deployment = prepare_plane_deployment(plane, bundle, remote, run_dir, config.simulator.host)
+        rendered = deployment.configuration
+        check_sitl_profile_listeners(config, (rendered,), remote)
+        station_endpoint = select_gcs_loopback_endpoint(plane, remote)
+        report["地面站本地端点"] = station_endpoint
+        port = endpoint_port(rendered.get("flight_control", "udp_url"))
         is_sim = (
-            parser.get("flight_control", "link_type", fallback="udp") == "udp"
+            rendered.get("flight_control", "link_type") == "udp"
             and port is not None
             and any(first <= port <= last for first, last in ((14030, 14039), (14280, 14289), (14580, 14589)))
         )
-        expected = {"agentId": plane.plane_id, "agentType": "Vehicle", "boardIp": parser["system"]["board_ip"],
-                    "videoUrl": parser["camera"]["pod_video_url"], "isSim": is_sim}
+        expected = {"agentId": plane.plane_id, "agentType": "Vehicle", "boardIp": rendered.get("system", "board_ip"),
+                    "videoUrl": rendered.get("camera", "pod_video_url"), "isSim": is_sim}
         stations = {
             agent_id: {"agentId": agent_id, "agentType": "GroundStation", "boardIp": plane.host,
                        "videoUrl": "", "isSim": True}
@@ -1388,14 +1389,10 @@ def command_test_agent_info(args: argparse.Namespace, config: FleetConfig, remot
         }
         report["expected"] = expected
         report["stations"] = list(stations.values())
-        backup = plane.runtime_dir + ".backup-agent-info-" + run_id
-        remote.run(plane, f"mkdir -p {shlex.quote(backup)} && rsync -a --exclude=/logs/ "
-                   f"{shlex.quote(plane.runtime_dir + '/')} {shlex.quote(backup + '/')}", timeout=60)
-        report["backup"] = backup
+        report["backup"] = backup_plane_runtime(plane, remote, run_id)
         save()
         stop_planes(planes, remote)
-        upload_plane_bundle(plane, bundle, remote)
-        remote.rsync_to(plane, local_config, f"{plane.runtime_dir}/{PLANE_CONFIG}")
+        deploy_plane_bundle(plane, deployment, remote)
         remote.run(plane, f"mkdir -p {shlex.quote(test_dir)}")
         remote.rsync_to(plane, gcs_binary, test_dir + "/gcs_sim")
         check_remote_dependencies(plane, remote)
@@ -1528,32 +1525,26 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
         if not gcs_binary.is_file():
             raise FleetError("缺少 build/gcs_sim，请先完成构建")
 
-        simulator_port = config.simulator.flight_port_base
-        if simulator_port is None:
-            raise FleetError("测试清单未配置 simulator.flight_port_base，无法确定手动 SITL 的飞控端口")
-        original, config_text = read_plane_config(plane, remote, bundle)
-        deployed_config = configparser.ConfigParser(interpolation=None)
-        deployed_config.read_string(config_text)
-        configured_port = sitl_remote_port(deployed_config.get("flight_control", "udp_url", fallback=""))
-        if (
-            original is not None
-            and deployed_config.get("flight_control", "link_type", fallback="udp") == "udp"
-            and configured_port is not None
-        ):
-            simulator_port = configured_port
-        flight_endpoint = f"udpout://{config.simulator.host}:{simulator_port}"
-        mode = deployed_config.get("midcourse_algorithm", "control_output_mode", fallback="VelocityAcceleration")
+        deployment = prepare_plane_deployment(plane, bundle, remote, run_dir, config.simulator.host)
+        configuration = deployment.configuration
+        check_sitl_profile_listeners(config, (configuration,), remote)
+        flight_endpoint = configuration.get("flight_control", "udp_url")
+        if configuration.get("flight_control", "link_type") == "serial":
+            flight_endpoint = f"serial://{configuration.get('flight_control', 'serial_device')}:{configuration.get('flight_control', 'serial_baud')}"
+        mode = configuration.get("midcourse_algorithm", "control_output_mode", "VelocityAcceleration")
         offboard_started = {
             "VelocityAcceleration": "Offboard 速度及加速度启动",
             "Attitude": "Offboard 姿态启动",
         }.get(mode)
         if offboard_started is None:
             raise FleetError(f"control_output_mode 无效: {mode}")
-        use_px4_limits = deployed_config.getboolean("midcourse_algorithm", "use_px4_limits", fallback=False)
+        use_px4_limits = configuration.get("midcourse_algorithm", "use_px4_limits", "false").lower() in {"1", "true", "on"}
         report["flight_endpoint"] = flight_endpoint
         report["control_output_mode"] = mode
+        report["backup"] = backup_plane_runtime(plane, remote, run_id)
+        save()
         stop_planes(planes, remote)
-        sync_plane(plane, bundle, flight_endpoint, run_id, remote, run_dir, config_text)
+        deploy_plane_bundle(plane, deployment, remote)
         check_remote_dependencies(plane, remote)
         remote.run(plane, f"mkdir -p {shlex.quote(test_dir)}")
         remote.rsync_to(plane, gcs_binary, test_dir + "/gcs_sim")
@@ -1734,14 +1725,19 @@ def command_test(args: argparse.Namespace, config: FleetConfig, remote: RemoteEx
     print(f"[run] run_id={run_id}, 证据目录={run_dir}")
     preflight(config, planes, remote)
     bundle = ensure_bundle()
-    configurations = [read_plane_config(plane, remote, bundle)[1] for plane in planes]
+    deployments = [prepare_plane_deployment(plane, bundle, remote, run_dir, config.simulator.host) for plane in planes]
+    flight_ports = configured_sitl_ports(tuple(item.configuration for item in deployments))
+    for plane in planes:
+        backup_plane_runtime(plane, remote, run_id)
     stop_planes(planes, remote)
     for plane in planes:
         install_system_dependencies(config, plane, remote)
-    stop_simulator(config, remote)
-    endpoints = start_simulator(config, len(planes), remote, run_dir)
-    for plane, flight_url, base in zip(planes, endpoints.flight_urls, configurations):
-        sync_plane(plane, bundle, flight_url, run_id, remote, run_dir, base)
+    endpoints = EndpointSet((), ())
+    if flight_ports:
+        stop_simulator(config, remote)
+        endpoints = start_simulator(config, flight_ports, remote, run_dir, start_count=len(planes))
+    for plane, deployment in zip(planes, deployments):
+        deploy_plane_bundle(plane, deployment, remote)
         check_remote_dependencies(plane, remote)
     for plane in planes:
         start_plane(plane, remote)
@@ -1820,9 +1816,6 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "test-midcourse":
             command.add_argument("--radar-timeout", type=int, default=300, help="等待外部雷达数据的秒数")
             command.add_argument("--target-track-id", default="", help="锁定的雷达 track_id；留空时要求唯一靶机")
-        if name == "test-presence":
-            command.add_argument("--auto-discovery", action="store_true",
-                                 help="清空固定连接地址，使用随包 Zenoh 配置和自动发现")
         if name == "verify":
             command.add_argument("--run-id", required=True, help="待复核的 fleet 运行编号")
     return parser

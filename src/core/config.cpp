@@ -179,8 +179,11 @@ void apply_profile(const std::string& path, const std::vector<std::string>& loca
         if (endpoint.serial_device.empty()) {
             config.fc_link_type = "udp";
             config.fc_udp_url = fc_url;
+            config.fc_serial_device.clear();
+            config.fc_serial_baud = 0;
         } else {
             config.fc_link_type = "serial";
+            config.fc_udp_url.clear();
             config.fc_serial_device = endpoint.serial_device;
             config.fc_serial_baud = endpoint.serial_baud;
         }
@@ -308,25 +311,14 @@ std::string canonical_key(const std::string& section, const std::string& key) {
     static const std::unordered_map<std::string, std::string> keys = {
         {"system.safe_height_m", "safe_height_m"},
         {"system.log_dir", "log_dir"},
-        {"system.board_ip", "board_ip"},
-        {"camera.pod_model", "pod_model"},
-        {"camera.pod_video_url", "pod_video_url"},
-        {"camera.pod_control_url", "pod_control_url"},
         {"camera.pod_state_report_hz", "pod_state_report_hz"},
         {"system.state_report_period_ms", "state_report_period_ms"},
-        {"communication.plane_id", "plane_id"},
         {"communication.zenoh_config_file", "zenoh_config_file"},
-        {"communication.zenoh_connect", "zenoh_connect"},
-        {"communication.zenoh_listen", "zenoh_listen"},
         {"communication.debug_log", "debug_zenoh_log"},
         {"communication.ack_timeout_ms", "comm_ack_timeout_ms"},
         {"communication.ack_max_retries", "comm_ack_max_retries"},
         {"communication.rx_queue_max", "comm_rx_queue_max"},
         {"communication.gcs_link_timeout_ms", "gcs_link_timeout_ms"},
-        {"flight_control.link_type", "fc_link_type"},
-        {"flight_control.udp_url", "fc_udp_url"},
-        {"flight_control.serial_device", "fc_serial_device"},
-        {"flight_control.serial_baud", "fc_serial_baud"},
         {"flight_control.heartbeat_timeout_ms", "fc_heartbeat_timeout_ms"},
         {"flight_control.route_speed_m_s", "fc_route_speed_m_s"},
         {"behavior_tree.tick_interval_ms", "bt_tick_interval_ms"},
@@ -410,14 +402,6 @@ std::string read_main_config(const std::string& path, AppConfig& out) {
             out.log_dir = value;
         } else if (key == "state_report_period_ms") {
             out.state_report_period_ms = std::stoi(value);
-        } else if (key == "board_ip") {
-            out.board_ip = value;
-        } else if (key == "pod_model") {
-            out.pod_model = value;
-        } else if (key == "pod_video_url") {
-            out.pod_video_url = value;
-        } else if (key == "pod_control_url") {
-            out.pod_control_url = value;
         } else if (key == "pod_state_report_hz") {
             out.pod_state_report_hz = parse_positive_int(value);
             if (out.pod_state_report_hz <= 0) {
@@ -425,14 +409,8 @@ std::string read_main_config(const std::string& path, AppConfig& out) {
                 SPDLOG_WARN("吊舱状态频率配置无效，使用默认值: pod_state_report_hz={}（输入：{}）",
                             out.pod_state_report_hz, value);
             }
-        } else if (key == "plane_id") {
-            out.plane_id = value;
         } else if (key == "zenoh_config_file") {
             out.zenoh_config_file = value;
-        } else if (key == "zenoh_connect") {
-            out.zenoh_connect = value;
-        } else if (key == "zenoh_listen") {
-            out.zenoh_listen = value;
         } else if (key == "debug_zenoh_log") {
             out.debug_zenoh_log = parse_bool(value);
         } else if (key == "comm_ack_timeout_ms") {
@@ -443,14 +421,6 @@ std::string read_main_config(const std::string& path, AppConfig& out) {
             out.comm_rx_queue_max = std::stoi(value);
         } else if (key == "gcs_link_timeout_ms") {
             out.gcs_link_timeout_ms = std::stoi(value);
-        } else if (key == "fc_link_type") {
-            out.fc_link_type = value;
-        } else if (key == "fc_udp_url") {
-            out.fc_udp_url = value;
-        } else if (key == "fc_serial_device") {
-            out.fc_serial_device = value;
-        } else if (key == "fc_serial_baud") {
-            out.fc_serial_baud = std::stoi(value);
         } else if (key == "fc_heartbeat_timeout_ms") {
             out.fc_heartbeat_timeout_ms = std::stoi(value);
         } else if (key == "fc_route_speed_m_s") {
@@ -480,6 +450,9 @@ std::string read_main_config(const std::string& path, AppConfig& out) {
     if (file.bad()) {
         throw std::runtime_error("读取文件失败");
     }
+    if (!profile_configured || profile.empty()) {
+        throw std::runtime_error("deployment.profile 必须配置且不能为空");
+    }
     const double tick_interval_s = out.bt_tick_interval_ms / 1000.0;
     if (midcourse_update_dt_configured) {
         if (out.midcourse_algorithm.update_dt_s <= 0.0 ||
@@ -501,12 +474,10 @@ bool load_config(const std::string& path, AppConfig& out, const std::vector<std:
     std::string profile;
     try {
         profile = read_main_config(path, loaded);
-        if (!profile.empty()) {
-            if (local_ipv4_addresses == nullptr) {
-                apply_profile(profile, get_local_ipv4_addresses(), loaded);
-            } else {
-                apply_profile(profile, *local_ipv4_addresses, loaded);
-            }
+        if (local_ipv4_addresses == nullptr) {
+            apply_profile(profile, get_local_ipv4_addresses(), loaded);
+        } else {
+            apply_profile(profile, *local_ipv4_addresses, loaded);
         }
     } catch (const std::exception& error) {
         SPDLOG_ERROR("加载配置失败: path={} {}", profile.empty() ? path : profile, error.what());
