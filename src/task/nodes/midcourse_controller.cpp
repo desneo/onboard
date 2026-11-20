@@ -22,6 +22,7 @@ namespace {
 
 constexpr std::size_t kRequiredHistorySize = 20;
 constexpr std::int64_t kProgressLogIntervalMs = 5000;
+constexpr std::int64_t kUpdateLogIntervalMs = 500;
 constexpr double kPi = 3.14159265358979323846;
 
 std::string geo_text(const plane::model::GeoPoint& value) {
@@ -68,6 +69,7 @@ std::string output_text(const plane::algorithm::MidCourseOutput& output) {
 struct MidcourseController::Impl {
     struct AlgorithmSession {
         plane::algorithm::MidcourseAlgorithm algorithm;
+        std::optional<std::int64_t> last_update_log_ms;
     };
 
     Impl(plane::core::EventBus& event_bus_value, const plane::core::AppConfig& config_value,
@@ -137,10 +139,23 @@ struct MidcourseController::Impl {
         return true;
     }
 
-    bool initialize_locked(std::string& error) {
-        if (initialized) {
+    bool check_target_timeout_locked(std::string& error) const {
+        std::optional<std::int64_t> received_ms;
+        if (!locked_track_id.empty()) {
+            received_ms = target_store.gcs_target_last_received_ms(locked_track_id);
+        }
+        const auto age_ms = plane::core::now_ms() - received_ms.value_or(start_ms);
+        if (age_ms <= config.midcourse_target_timeout_ms) {
             return true;
         }
+        const char* reason = !received_ms ? "从未收到" : *received_ms < start_ms ? "缓存已过期" : "目标更新中断";
+        error = fmt::format("中制导目标雷达信息超时: trackId={} 未更新时长={}毫秒 target_timeout_ms={}（{}）",
+                            locked_track_id.empty() ? "<自动>" : locked_track_id, age_ms,
+                            config.midcourse_target_timeout_ms, reason);
+        return false;
+    }
+
+    bool initialize_locked(std::string& error) {
         if (!effective_config) {
             auto algorithm_config = config.midcourse_algorithm;
             if (config.midcourse_use_px4_limits) {
@@ -160,8 +175,12 @@ struct MidcourseController::Impl {
             }
             effective_config = algorithm_config;
         }
-        if (!resolve_track_locked(error)) {
+        const bool resolved = resolve_track_locked(error);
+        if (!error.empty() || !check_target_timeout_locked(error) || !resolved) {
             return false;
+        }
+        if (initialized) {
+            return true;
         }
         const std::vector<plane::model::GcsTarget> history = target_store.gcs_target_history(locked_track_id);
         if (history.size() < kRequiredHistorySize) {
@@ -182,6 +201,9 @@ struct MidcourseController::Impl {
         }
         const plane::model::VehicleState own = state_store.own_state();
         const auto& algorithm_config = *effective_config;
+        if (!check_target_timeout_locked(error)) {
+            return false;
+        }
         SPDLOG_INFO(
             "中制导算法 MidcourseAlgorithm::init 输入: history={} ned_ref={} trackId={} use_px4_limits={} "
             "max_horizontal_speed_m_s={} max_climb_speed_m_s={} max_descent_speed_m_s={} "
@@ -267,6 +289,10 @@ void MidcourseController::start() {
 
 bool MidcourseController::begin(const std::string& requested_track_id, std::string& error) {
     std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (impl_->config.midcourse_target_timeout_ms <= 0) {
+        error = "中制导配置非法: target_timeout_ms 必须为正整数";
+        return false;
+    }
     if (impl_->config.midcourse_init_timeout_ms <= 0 || impl_->config.bt_tick_interval_ms <= 0) {
         error = "中制导配置非法";
         return false;
@@ -281,7 +307,8 @@ bool MidcourseController::begin(const std::string& requested_track_id, std::stri
     impl_->last_measurement_timestamp_ms = 0;
     impl_->effective_config.reset();
     impl_->session.emplace();
-    SPDLOG_INFO("中制导会话启动: requested_track_id={}", requested_track_id.empty() ? "<自动>" : requested_track_id);
+    SPDLOG_INFO("中制导会话启动: requested_track_id={} target_timeout_ms={}",
+                requested_track_id.empty() ? "<自动>" : requested_track_id, impl_->config.midcourse_target_timeout_ms);
     return true;
 }
 
@@ -291,7 +318,7 @@ MidcourseController::TickResult MidcourseController::tick(std::string& error) {
         error = "中制导会话未启动";
         return TickResult::Failure;
     }
-    if (!impl_->initialized) {
+    {
         std::string init_error;
         if (!impl_->initialize_locked(init_error)) {
             if (!init_error.empty()) {
@@ -327,18 +354,29 @@ MidcourseController::TickResult MidcourseController::tick(std::string& error) {
     const plane::algorithm::MidcourseVehicleState vehicle{
         own.geoPos, own.startPos, own.vn_m_s, own.ve_m_s, own.vd_m_s,
         static_cast<double>(own.yaw_deg) * kPi / 180.0};
+    if (!impl_->check_target_timeout_locked(error)) {
+        return TickResult::Failure;
+    }
     plane::algorithm::MidCourseOutput output;
-    SPDLOG_INFO(
-        "中制导算法 MidcourseAlgorithm::update 输入: "
-        "vehicle={{geoPos={} startPos={} vn_m_s={} ve_m_s={} vd_m_s={} yaw_rad={}}}",
-        geo_text(vehicle.geoPos), geo_text(vehicle.startPos), vehicle.vn_m_s, vehicle.ve_m_s, vehicle.vd_m_s,
-        *vehicle.yaw_rad);
     error.clear();
     const bool updated = impl_->session->algorithm.update(vehicle, output, error);
-    SPDLOG_INFO("中制导算法 MidcourseAlgorithm::update 输出: 返回值={} output={} error={}", updated,
-                updated ? output_text(output) : "<无有效输出>", error);
+    const std::int64_t now = plane::core::now_ms();
+    auto& last_update_log_ms = impl_->session->last_update_log_ms;
+    if (!updated || !last_update_log_ms || now - *last_update_log_ms >= kUpdateLogIntervalMs) {
+        SPDLOG_INFO(
+            "中制导算法 MidcourseAlgorithm::update 输入: "
+            "vehicle={{geoPos={} startPos={} vn_m_s={} ve_m_s={} vd_m_s={} yaw_rad={}}}",
+            geo_text(vehicle.geoPos), geo_text(vehicle.startPos), vehicle.vn_m_s, vehicle.ve_m_s, vehicle.vd_m_s,
+            *vehicle.yaw_rad);
+        SPDLOG_INFO("中制导算法 MidcourseAlgorithm::update 输出: 返回值={} output={} error={}", updated,
+                    updated ? output_text(output) : "<无有效输出>", error);
+        last_update_log_ms = now;
+    }
     if (!updated) {
         error = "中制导 update 失败: " + error;
+        return TickResult::Failure;
+    }
+    if (!impl_->check_target_timeout_locked(error)) {
         return TickResult::Failure;
     }
     const auto* velocity = std::get_if<plane::algorithm::VelocityAccelerationCommand>(&output.cmd.value);

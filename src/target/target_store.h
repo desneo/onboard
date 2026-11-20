@@ -34,6 +34,7 @@ class TargetStore final : public plane::core::IModule, public TargetStoreApi {
     std::vector<plane::model::GcsTarget> gcs_targets() const override;
     bool gcs_target(const std::string& track_id, plane::model::GcsTarget& out) const override;
     std::vector<plane::model::GcsTarget> gcs_target_history(const std::string& track_id) const override;
+    std::optional<std::int64_t> gcs_target_last_received_ms(const std::string& track_id) const override;
     void set_required_gcs_target(std::optional<std::string> track_id) override;
     void lock_required_gcs_target(const std::string& track_id) override;
 

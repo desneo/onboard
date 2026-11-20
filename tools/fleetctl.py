@@ -1466,6 +1466,85 @@ def radar_history_ready(text: str, target_id: str = "") -> bool:
     )
 
 
+def flight_system_connected(text: str) -> bool:
+    """接入时已连接无需再次产生连接建立事件，后续连接变化仍覆盖当前状态。"""
+    attached = False
+    connected = False
+    for line in text.splitlines():
+        status = re.search(r"飞控系统已接入: system_id=\d+ connected=(true|false)(?=\s|$)", line)
+        if status is not None:
+            attached = True
+            connected = status.group(1) == "true"
+        elif attached and "飞控连接建立" in line:
+            connected = True
+        elif attached and "飞控连接异常" in line:
+            connected = False
+    return attached and connected
+
+
+def midcourse_log_evidence(text: str) -> dict[str, object] | None:
+    """从至少五秒的稳定窗口核对 2 Hz 成对日志和持续目标更新。"""
+    pairs: list[dt.datetime] = []
+    measurements: list[dt.datetime] = []
+    pending: dt.datetime | None = None
+    for line in text.splitlines():
+        timestamp = LOG_TIME_RE.match(line)
+        if timestamp is None:
+            continue
+        when = dt.datetime.strptime(timestamp.group(1), "%Y-%m-%d %H:%M:%S.%f")
+        if "中制导算法 MidcourseAlgorithm::updateTarget 输入:" in line:
+            measurements.append(when)
+        elif "中制导算法 MidcourseAlgorithm::update 输入:" in line:
+            if pending is not None:
+                raise FleetError("中制导 update 日志出现未配对输入")
+            pending = when
+        elif "中制导算法 MidcourseAlgorithm::update 输出:" in line:
+            if pending is None:
+                raise FleetError("中制导 update 日志出现未配对输出")
+            if "返回值=true" not in line:
+                raise FleetError("中制导 update 在日志频率验收期间失败")
+            pairs.append(pending)
+            pending = None
+    if len(pairs) < 11:
+        return None
+    window = pairs[-11:]
+    intervals = [(second - first).total_seconds() * 1000 for first, second in zip(window, window[1:])]
+    if any(interval < 500 or interval > 750 for interval in intervals):
+        return None
+    received = [when for when in measurements if window[0] <= when <= window[-1]]
+    if len(received) < 2 or (received[-1] - received[0]).total_seconds() < 3:
+        return None
+    return {
+        "update_pairs": len(window),
+        "window_ms": (window[-1] - window[0]).total_seconds() * 1000,
+        "intervals_ms": intervals,
+        "target_updates": len(received),
+    }
+
+
+def midcourse_timeout_evidence(text: str, track_id: str, timeout_ms: int) -> dict[str, object] | None:
+    """核对超时根因中的实际航迹、配置阈值和严格超过阈值的未更新时长。"""
+    prefix = "中制导目标雷达信息超时:"
+    if prefix not in text:
+        return None
+    evidence = None
+    for detail in text.split(prefix)[1:]:
+        match = re.match(
+            r" trackId=([^\s]+) 未更新时长=(\d+)毫秒 target_timeout_ms=(\d+)(?=（|\s|$)", detail)
+        if match is None:
+            raise FleetError("目标雷达超时日志缺少完整的航迹、未更新时长或配置阈值")
+        observed_track, age, observed_timeout = match.groups()
+        age_ms, observed_timeout_ms = int(age), int(observed_timeout)
+        if observed_track != track_id:
+            raise FleetError(f"超时日志航迹与当前任务不一致: trackId={observed_track}")
+        if observed_timeout_ms != timeout_ms:
+            raise FleetError(f"超时日志阈值与部署配置不一致: target_timeout_ms={observed_timeout_ms}")
+        if age_ms <= timeout_ms:
+            raise FleetError(f"目标未更新时长尚未严格超过超时阈值: {age_ms}毫秒 <= {timeout_ms}毫秒")
+        evidence = {"track_id": observed_track, "age_ms": age_ms, "target_timeout_ms": observed_timeout_ms}
+    return evidence
+
+
 def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote: RemoteExecutor) -> int:
     """部署一号板，连接用户手动启动的 SITL，并等待外部雷达数据完成验收。"""
     planes = selected_planes(config, args.count)
@@ -1473,7 +1552,8 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
         raise FleetError("test-midcourse 当前要求 --count 1")
     plane = planes[0]
     run_id = new_run_id()
-    task_id = "midcourse-" + run_id
+    manual_task = getattr(args, "manual_task", False)
+    task_id = "" if manual_task else "midcourse-" + run_id
     target_id = args.target_track_id.strip()
     run_dir = ROOT / "logs" / "fleet" / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -1487,6 +1567,7 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
         "target_track_id": target_id,
         "checks": [],
         "flight_or_task_commands_sent": False,
+        "manual_task": manual_task,
     }
 
     def save() -> None:
@@ -1511,7 +1592,7 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
         (run_dir / f"{stage}-gcs.log").write_text(text, encoding="utf-8")
         return text
 
-    def wait_until(description: str, predicate, timeout_s: int) -> None:
+    def wait_until(description: str, predicate, timeout_s: float) -> None:
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             if predicate():
@@ -1568,28 +1649,33 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
         passed("部署包依赖自检通过，直连 libmidcourse_alg.so 且不含 Pluma")
 
         start_plane(plane, remote)
+
+        def flight_ready() -> bool:
+            text = plane_log("flight-wait")
+            return (flight_system_connected(text)
+                    and (not use_px4_limits or "飞控系统参数已缓存" in text)
+                    and remote.run(plane, "pgrep -x plane >/dev/null", check=False).returncode == 0)
+
         wait_until(
             f"机载接入用户手动启动的仿真飞控 {config.simulator.host}",
-            lambda: "飞控系统已接入" in plane_log("flight-wait")
-            and "飞控连接建立" in plane_log("flight-wait")
-            and (not use_px4_limits or "飞控系统参数已缓存" in plane_log("flight-wait"))
-            and remote.run(plane, "pgrep -x plane >/dev/null", check=False).returncode == 0,
+            flight_ready,
             config.verify_timeout_s,
         )
         passed(f"确认机载进程已接入手动 SITL {flight_endpoint}")
 
-        # 先只启动 GCS 雷达桥并等待本机状态，确认过滤输入已就绪后再下发任务。
-        gcs_command = shlex.join(
-            [
-                test_dir + "/gcs_sim",
-                "--plane-id",
-                plane.plane_id,
-                "--sender-id",
-                "GCS",
-                "--listen-seconds",
-                "0",
-            ]
-        )
+        # 人工发令时只观测现有地面站链路；自动验收才启用雷达桥。
+        gcs_args = [
+            test_dir + "/gcs_sim",
+            "--plane-id",
+            plane.plane_id,
+            "--sender-id",
+            "GCS",
+            "--listen-seconds",
+            "0",
+        ]
+        if manual_task:
+            gcs_args.extend(["--no-radar-udp", "--no-presence", "--connect", f"tcp/{plane.host}:7447"])
+        gcs_command = shlex.join(gcs_args)
         inner = (
             f"echo $$ >{shlex.quote(test_dir + '/gcs.pid')}; "
             f"exec env LD_LIBRARY_PATH={shlex.quote(plane.runtime_dir + '/lib')} {gcs_command} "
@@ -1597,8 +1683,8 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
         )
         remote.run(plane, f"setsid -f bash -c {shlex.quote(inner)}")
         wait_until(
-            "GCS 雷达桥收到本机状态",
-            lambda: f"planeId={plane.plane_id}" in gcs_log("state-wait"),
+            "GCS 收到本机实际遥测",
+            lambda: f"planeId={plane.plane_id} fcLinkState=connected" in gcs_log("state-wait"),
             20,
         )
         state_text = gcs_log("state-ready")
@@ -1607,7 +1693,111 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
             rf"geoPos.longitude=([-+0-9.eE]+) geoPos.height=[-+0-9.eE]+ "
             rf"geoPos.altitude=([-+0-9.eE]+)", state_text)
         if not state_matches or abs(float(state_matches[-1][0])) < 1.0 or abs(float(state_matches[-1][1])) < 1.0:
-            raise FleetError("仿真飞控尚未给出有效经纬度，禁止发送控制验收数据")
+            raise FleetError("飞控尚未给出有效经纬度，环境未就绪")
+        if manual_task:
+            if "Zenoh 已上线" not in plane_log("ready"):
+                raise FleetError("机载 Zenoh 尚未上线，环境未就绪")
+            passed("机载、飞控连接、实际遥测及仅观测 GCS 已就绪")
+            report["status"] = "awaiting_task"
+            report["target_timeout_ms"] = int(configuration.get("midcourse", "target_timeout_ms", "5000"))
+            save()
+            print("\n[midcourse] 环境已就绪，可以开始下发反无任务。", flush=True)
+            print("[midcourse] 请保持当前目标雷达信息持续更新；任务由你下发，本工具持续观测。", flush=True)
+
+            task_pattern = re.compile(r"AntiUav 中制导任务已创建: taskId=([^\s]+) targetTrackId=([^\s]+)")
+            selected = None
+
+            def user_task_received() -> bool:
+                nonlocal selected
+                matches = list(task_pattern.finditer(plane_log("manual-task-wait")))
+                if not matches:
+                    return False
+                selected = matches[-1]
+                return True
+
+            wait_until("用户下发反无任务", user_task_received, args.radar_timeout)
+            task_id = selected.group(1)
+            requested_target = selected.group(2)
+            if target_id and requested_target not in (target_id, "<自动>"):
+                raise FleetError(f"用户任务目标与指定 track_id 不一致: targetTrackId={requested_target}")
+            report["task_id"] = task_id
+            report["status"] = "observing"
+            save()
+            print(f"[midcourse] 已收到用户任务 taskId={task_id}，正在核对初始化、Offboard 和 2 Hz 日志。", flush=True)
+
+            def task_log(stage: str) -> str:
+                text = plane_log(stage)
+                matches = list(task_pattern.finditer(text))
+                if (not matches or matches[-1].group(1) != task_id
+                        or matches[-1].start() != selected.start()):
+                    raise FleetError("验收任务已被替换或当前运行日志不完整")
+                task_match = matches[-1]
+                start = text.rfind("行为树结构: currentBehaviorTree=AntiUav", 0, task_match.start())
+                return text[max(start, 0):]
+
+            def sustained_midcourse() -> bool:
+                text = task_log("manual-running")
+                if "行为树结束: currentBehaviorTree=AntiUav" in text:
+                    raise FleetError("反无任务在正常运行验收完成前结束，请检查目标更新和失败日志")
+                locked = re.search(r"中制导初始化完成: trackId=([^\s]+)", text)
+                if locked is None:
+                    return False
+                actual_target = locked.group(1)
+                if target_id and actual_target != target_id:
+                    raise FleetError(f"实际锁定航迹与指定 track_id 不一致: trackId={actual_target}")
+                report["target_track_id"] = actual_target
+                if offboard_started not in text or "中制导算法首次增量量测更新" not in text:
+                    return False
+                states = re.findall(
+                    rf"收到飞机状态: planeId={re.escape(plane.plane_id)} fcLinkState=([^\s]+) "
+                    r"inair=[^\s]+ flightMode=([^\s]+)", gcs_log("manual-running"))
+                if not states or states[-1] != ("connected", "Offboard"):
+                    return False
+                evidence = midcourse_log_evidence(text)
+                if evidence is None:
+                    return False
+                report["log_evidence"] = evidence
+                return True
+
+            wait_until("用户任务持续运行及至少五秒 2 Hz 日志", sustained_midcourse, args.radar_timeout)
+            passed("用户任务初始化、Offboard、持续目标更新及至少五秒的 2 Hz 成对日志验证通过")
+            report["status"] = "awaiting_radar_pause"
+            save()
+            print(
+                f"[midcourse] 正常运行验证完成，请暂停 trackId={report['target_track_id']} 的雷达更新，保持原任务。\n"
+                f"[midcourse] 正在验证超过 target_timeout_ms={report['target_timeout_ms']} 后的自动失败和 Offboard 退出。",
+                flush=True,
+            )
+
+            def timeout_finished() -> bool:
+                text = task_log("manual-timeout")
+                evidence = midcourse_timeout_evidence(
+                    text, report["target_track_id"], report["target_timeout_ms"])
+                if evidence is None:
+                    if "行为树结束: currentBehaviorTree=AntiUav" in text:
+                        raise FleetError("验收任务因非目标雷达超时原因结束")
+                    return False
+                report["timeout_evidence"] = evidence
+                if "行为树结束: currentBehaviorTree=AntiUav status=Failed" not in text:
+                    return False
+                if "Offboard 停止" not in text:
+                    return False
+                return f"收到任务状态: taskId={task_id} status=Failed currentNode=Midcourse" in gcs_log("manual-timeout")
+
+            wait_until(
+                "目标雷达超时、Failed 上报及 Offboard 停止",
+                timeout_finished,
+                args.radar_timeout + report["target_timeout_ms"] / 1000 + 20,
+            )
+            passed("目标雷达超时已显式记录，原任务 Failed 上报且 Offboard 已停止")
+            if remote.run(plane, "pgrep -x plane >/dev/null", check=False).returncode != 0:
+                raise FleetError("目标雷达超时后机载进程退出")
+            stop_background_gcs()
+            report["status"] = "passed"
+            save()
+            print(f"[result] 人工发令联合验收通过；机载与 SITL 保持运行。报告: {run_dir / 'midcourse-report.json'}")
+            return 0
+
         passed("GCS 雷达桥已监听 0.0.0.0:7790，友机过滤已有有效本机状态")
 
         report["radar_destination"] = f"{plane.host}:7790"
@@ -1820,6 +2010,7 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "test-midcourse":
             command.add_argument("--radar-timeout", type=int, default=300, help="等待外部雷达数据的秒数")
             command.add_argument("--target-track-id", default="", help="锁定的雷达 track_id；留空时要求唯一靶机")
+            command.add_argument("--manual-task", action="store_true", help="仅部署和观测，等待用户下发任务并暂停目标更新")
         if name == "verify":
             command.add_argument("--run-id", required=True, help="待复核的 fleet 运行编号")
     return parser

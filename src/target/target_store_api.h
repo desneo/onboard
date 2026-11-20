@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -16,6 +17,8 @@ class TargetStoreApi {
     virtual std::vector<plane::model::GcsTarget> gcs_targets() const = 0;
     virtual bool gcs_target(const std::string& track_id, plane::model::GcsTarget& out) const = 0;
     virtual std::vector<plane::model::GcsTarget> gcs_target_history(const std::string& track_id) const = 0;
+    /// 最近一次被接受的目标更新的本机单调接收时间；从未收到时返回 nullopt。
+    virtual std::optional<std::int64_t> gcs_target_last_received_ms(const std::string& track_id) const = 0;
 
     /// nullopt 取消目标需求；空字符串表示自动选择，非空字符串指定航迹。
     virtual void set_required_gcs_target(std::optional<std::string> track_id) = 0;

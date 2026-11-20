@@ -110,6 +110,7 @@ struct Fixture {
 
 void test_summary_and_history() {
     Fixture fixture;
+    require(!fixture.store.gcs_target_last_received_ms("A"), "从未收到的目标不应有接收时间");
     fixture.send(100000, "A", 1000);
     for (int index = 1; index < 20; ++index) fixture.send(100000 + index * 1000, "A", 1000 + index);
     fixture.send(119999, "A", 1020);
@@ -121,6 +122,8 @@ void test_summary_and_history() {
                 summaries[0].find("timestamp_ms=1021 history_size=20 更新数量=21") != std::string::npos,
             "汇总应计入触发帧，排除已打印首帧，并保留真实历史帧数");
     const auto history = fixture.store.gcs_target_history("A");
+    require(fixture.store.gcs_target_last_received_ms("A") == 120000,
+            "查询应返回最后有效帧的本机单调接收时间");
     require(history.size() == 20 && history.front().timestamp_ms == 1002 && history.back().timestamp_ms == 1021,
             "日志降频不得影响逐帧缓存和最近 20 帧历史");
 

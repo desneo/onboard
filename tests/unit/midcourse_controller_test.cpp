@@ -102,6 +102,164 @@ plane::model::GcsTarget target(const std::string& id, int index) {
     return result;
 }
 
+struct TimeoutFixture {
+    TimeoutFixture() : store(events, config), controller(events, config, flight, state, store) {
+        test_now_ms = 1'000'000;
+        state.value.geoPos = target("", 0).geoPos;
+        state.value.startPos = state.value.geoPos;
+        state.value.yaw_deg = 42.0F;
+        require(store.start(), "超时场景目标存储启动失败");
+        controller.start();
+    }
+
+    ~TimeoutFixture() {
+        controller.stop();
+        store.stop();
+    }
+
+    void seed(int count = 20) {
+        for (int index = 0; index < count; ++index) send("target", index);
+    }
+
+    void send(const std::string& id, int index) {
+        events.publish(plane::communication::events::kGcsTargetReceived, target(id, index));
+    }
+
+    void begin(const std::string& id) {
+        error.clear();
+        require(controller.begin(id, error), "超时场景会话启动失败: " + error);
+    }
+
+    void running() {
+        error.clear();
+        require(controller.tick(error) == plane::task::MidcourseController::TickResult::Running,
+                "目标尚未超时，应保持运行: " + error);
+    }
+
+    void timed_out(const std::string& reason, int threshold) {
+        error.clear();
+        const int before = flight.velocity_calls + flight.attitude_calls;
+        require(controller.tick(error) == plane::task::MidcourseController::TickResult::Failure &&
+                    error.find("中制导目标雷达信息超时:") == 0 && error.find(reason) != std::string::npos &&
+                    error.find("target_timeout_ms=" + std::to_string(threshold)) != std::string::npos,
+                "应返回含原因及生效阈值的雷达超时: " + error);
+        require(flight.velocity_calls + flight.attitude_calls == before, "超时 tick 不得下发控制");
+    }
+
+    plane::core::EventBus events;
+    plane::core::AppConfig config;
+    FakeFlightControl flight;
+    FakeStateStore state;
+    plane::target::TargetStore store;
+    plane::task::MidcourseController controller;
+    std::string error;
+};
+
+void test_target_timeout_boundaries_and_restart() {
+    for (const std::string id : {"target", ""}) {
+        TimeoutFixture fixture;
+        fixture.begin(id);
+        fixture.running();
+        test_now_ms += 4999;
+        fixture.running();
+        ++test_now_ms;
+        fixture.running();
+        ++test_now_ms;
+        fixture.timed_out("从未收到", 5000);
+        require(fixture.error.find("未更新时长=5001毫秒") != std::string::npos &&
+                    fixture.error.find("trackId=" + (id.empty() ? std::string("<自动>") : id)) != std::string::npos,
+                "从未收到场景应保留目标和真实等待时长");
+        fixture.controller.stop();
+        fixture.begin(id);
+        fixture.running();
+        require(fixture.flight.velocity_calls == 0 && fixture.flight.attitude_calls == 0,
+                "没有初始化历史不得启动 Offboard");
+    }
+}
+
+void test_stale_initial_history() {
+    for (const std::string id : {"target", ""}) {
+        TimeoutFixture fixture;
+        fixture.seed();
+        test_now_ms += 5001;
+        fixture.begin(id);
+        fixture.timed_out("缓存已过期", 5000);
+        require(fixture.error.find("trackId=target") != std::string::npos,
+                "自动和指定模式均应检查实际锁定航迹的历史龄期");
+        fixture.controller.stop();
+        fixture.send("target", 20);
+        fixture.begin(id);
+        fixture.running();
+        require(fixture.flight.velocity_calls == 1, "新会话应从恢复更新的历史正常初始化");
+    }
+}
+
+void test_history_wait_uses_last_reception() {
+    TimeoutFixture fixture;
+    fixture.seed(3);
+    fixture.begin("target");
+    fixture.running();
+    test_now_ms += 4000;
+    fixture.send("target", 3);
+    test_now_ms += 5000;
+    fixture.running();
+    ++test_now_ms;
+    fixture.timed_out("目标更新中断", 5000);
+    require(fixture.flight.velocity_calls == 0, "不足 20 帧时不得下发控制");
+}
+
+void test_only_accepted_current_target_refreshes_timeout() {
+    TimeoutFixture fixture;
+    fixture.config.midcourse_target_timeout_ms = 700;
+    fixture.seed();
+    fixture.begin("target");
+    fixture.running();
+    test_now_ms += 599;
+    fixture.send("target", 20);
+    fixture.running();
+    const auto last_received = test_now_ms;
+    test_now_ms += 600;
+    fixture.running();
+    fixture.send("other", 0);
+    fixture.send("target", 20);
+    fixture.send("target", 19);
+    fixture.send("", 21);
+    auto invalid = target("target", 21);
+    invalid.timestamp_ms = 0;
+    fixture.events.publish(plane::communication::events::kGcsTargetReceived, invalid);
+    require(fixture.store.gcs_target_last_received_ms("target") == last_received,
+            "其他航迹、重复、乱序和非法帧不得刷新目标接收时间");
+    test_now_ms += 100;
+    fixture.running();
+    ++test_now_ms;
+    fixture.timed_out("目标更新中断", 700);
+}
+
+void test_independent_initialization_timeout_and_invalid_config() {
+    TimeoutFixture fixture;
+    fixture.config.midcourse_init_timeout_ms = 200;
+    fixture.config.midcourse_target_timeout_ms = 100;
+    fixture.seed(1);
+    fixture.begin("target");
+    fixture.running();
+    for (int index = 1; index <= 3; ++index) {
+        test_now_ms += 60;
+        fixture.send("target", index);
+        fixture.running();
+    }
+    test_now_ms += 21;
+    require(fixture.controller.tick(fixture.error) == plane::task::MidcourseController::TickResult::Failure &&
+                fixture.error.find("等待中制导 20 帧雷达历史超时") == 0,
+            "持续有更新但历史不足仍须遵守独立初始化超时: " + fixture.error);
+    fixture.controller.stop();
+    for (const int invalid : {0, -1}) {
+        fixture.config.midcourse_target_timeout_ms = invalid;
+        require(!fixture.controller.begin("target", fixture.error) &&
+                    fixture.error.find("target_timeout_ms 必须为正整数") != std::string::npos,
+                "直接构造非法 AppConfig 时不得启动会话");
+    }
+}
+
 }  // namespace
 
 namespace plane::core {
@@ -110,6 +268,12 @@ std::int64_t now_ms() { return test_now_ms; }
 
 int main() {
     try {
+        test_target_timeout_boundaries_and_restart();
+        test_stale_initial_history();
+        test_history_wait_uses_last_reception();
+        test_only_accepted_current_target_refreshes_timeout();
+        test_independent_initialization_timeout_and_invalid_config();
+        test_now_ms = 1'000'000;
         plane::core::EventBus events;
         plane::core::AppConfig config;
         config.bt_tick_interval_ms = 50;
@@ -161,6 +325,7 @@ int main() {
         require(flight.velocity_calls == 2, "第 21 帧后未继续下发 NED 速度");
 
         for (int tick = 0; tick < 65; ++tick) {
+            test_now_ms += 50;
             require(controller.tick(error) == plane::task::MidcourseController::TickResult::Running,
                     "雷达中断超过 3 秒后任务不应失败: " + error);
         }

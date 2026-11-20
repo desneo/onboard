@@ -4,16 +4,19 @@
 #include <vector>
 
 #include "algorithm/midcourse_alg.h"
+#include "core/log.h"
 #include "message.h"
 
 namespace plane::core {
 
 inline constexpr int kDefaultPodStateReportHz = 5;
+inline constexpr int kDefaultMidcourseTargetTimeoutMs = 5000;
 
 /// 运行配置；第一版系统参数与 SystemParam 对齐（ARCHITECTURE §7）。
 struct AppConfig {
     plane::model::SystemParam system_param;
     std::string log_dir = "logs";
+    int log_flush_interval_ms = kDefaultLogFlushIntervalMs;
     int state_report_period_ms = 1000;
 
     std::string board_ip;
@@ -52,6 +55,7 @@ struct AppConfig {
     double alert_voltage_threshold_v = 21.0;
 
     int midcourse_init_timeout_ms = 30000;
+    int midcourse_target_timeout_ms = kDefaultMidcourseTargetTimeoutMs;
     bool midcourse_use_px4_limits = false;
     plane::algorithm::MidCourseConfig midcourse_algorithm = [](int tick_interval_ms) {
         plane::algorithm::MidCourseConfig config;

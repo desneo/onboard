@@ -3,6 +3,7 @@
 #include <chrono>
 #include <csignal>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <thread>
 #include <utility>
@@ -55,8 +56,10 @@ int main(int argc, char** argv) {
         plane::core::shutdown_logging();
         return 1;
     }
-    if (!config.log_dir.empty() && config.log_dir != log_options.log_dir) {
-        log_options.log_dir = config.log_dir;
+    const std::string log_dir = config.log_dir.empty() ? log_options.log_dir : config.log_dir;
+    if (log_dir != log_options.log_dir || config.log_flush_interval_ms != log_options.flush_interval_ms) {
+        log_options.log_dir = log_dir;
+        log_options.flush_interval_ms = config.log_flush_interval_ms;
         plane::core::shutdown_logging();
         plane::core::init_logging(log_options);
     }
@@ -64,8 +67,9 @@ int main(int argc, char** argv) {
     const plane::core::BuildInfo build_info = plane::core::current_build_info();
     SPDLOG_INFO("plane 程序启动: version={} git_hash={} build_type={}", build_info.version, build_info.git_hash,
                 build_info.build_type);
-    SPDLOG_INFO("运行配置: safeHeight_m={} state_report_period_ms={} is_sim={}", config.system_param.safeHeight_m,
-                config.state_report_period_ms, config.is_sim ? "true" : "false");
+    SPDLOG_INFO("运行配置: safeHeight_m={} state_report_period_ms={} is_sim={} flush_interval_ms={}",
+                config.system_param.safeHeight_m, config.state_report_period_ms, config.is_sim ? "true" : "false",
+                config.log_flush_interval_ms);
 
     plane::core::EventBus event_bus;
     event_bus.subscribe<plane::communication::CommunicationError>(

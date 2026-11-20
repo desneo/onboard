@@ -92,6 +92,13 @@ include(CTest)
 add_subdirectory(tools/gcs_sim)
 
 if(BUILD_TESTING)
+  add_executable(logging_flush_test tests/unit/logging_flush_test.cpp src/core/log.cpp)
+  target_include_directories(logging_flush_test PRIVATE src)
+  target_compile_options(logging_flush_test PRIVATE -Wall -Wextra)
+  target_link_libraries(logging_flush_test PRIVATE plane::nlohmann_json spdlog::spdlog)
+  add_test(NAME logging_flush COMMAND logging_flush_test)
+  set_tests_properties(logging_flush PROPERTIES TIMEOUT 15)
+
   add_executable(flight_control_diagnostics_test tests/unit/flight_control_diagnostics_test.cpp)
   target_include_directories(flight_control_diagnostics_test PRIVATE src)
   target_compile_options(flight_control_diagnostics_test PRIVATE -Wall -Wextra)
@@ -210,6 +217,19 @@ if(BUILD_TESTING)
     spdlog::spdlog
   )
   add_test(NAME midcourse_controller COMMAND midcourse_controller_test)
+
+  # 日志时序和失败路径由独立算法门面测试替身控制，真实算法集成由上面的目标验证。
+  add_executable(midcourse_controller_log_test
+    tests/unit/midcourse_controller_log_test.cpp
+    src/task/nodes/midcourse_controller.cpp
+    src/target/target_store.cpp
+  )
+  target_include_directories(midcourse_controller_log_test PRIVATE src)
+  target_compile_options(midcourse_controller_log_test PRIVATE -Wall -Wextra)
+  target_link_libraries(midcourse_controller_log_test PRIVATE
+    plane::common_include plane::eventpp plane::magic_enum spdlog::spdlog
+  )
+  add_test(NAME midcourse_controller_log COMMAND midcourse_controller_log_test)
 
   add_executable(mission_node_timeout_test
     tests/unit/mission_node_timeout_test.cpp

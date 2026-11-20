@@ -5,6 +5,8 @@
 
 namespace plane::core {
 
+inline constexpr int kDefaultLogFlushIntervalMs = 1000;
+
 /// 日志配置；默认写入 logs/plane.log，单文件 50 MB、保留 plane.1.log 至 plane.5.log。
 struct LogOptions {
     std::string app_name = "plane";
@@ -12,6 +14,7 @@ struct LogOptions {
     std::size_t max_file_size_bytes = 50 * 1024 * 1024;
     std::size_t max_files = 5;
     bool console = true;
+    int flush_interval_ms = kDefaultLogFlushIntervalMs;
 };
 
 /// 初始化全局日志；项目代码统一通过 spdlog 输出。

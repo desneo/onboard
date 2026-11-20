@@ -13,6 +13,7 @@
 #include <thread>
 #include <vector>
 
+#include "communication/communication_events.h"
 #include "core/system_param_api.h"
 #include "state/state_store_api.h"
 #include "target/target_store.h"
@@ -56,6 +57,14 @@ class CapturedLogs final : public spdlog::sinks::base_sink<std::mutex> {
         return changed_.wait_for(lock, timeout, [&] { return total_prompts_locked() >= count; });
     }
 
+    bool contains(const std::string& text) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& entry : entries_) {
+            if (entry.text.find(text) != std::string::npos) return true;
+        }
+        return false;
+    }
+
    protected:
     void sink_it_(const spdlog::details::log_msg& message) override {
         entries_.push_back({std::string(message.payload.data(), message.payload.size()), Clock::now()});
@@ -91,10 +100,11 @@ class CapturedLogs final : public spdlog::sinks::base_sink<std::mutex> {
 
 class BlockedFlightControl final : public plane::flight_control::FlightControlApi {
    public:
-    explicit BlockedFlightControl(bool armed) {
+    explicit BlockedFlightControl(bool armed, bool in_air = false) {
         status_.armed = armed;
         status_.connected = true;
-        status_.on_ground = true;
+        status_.in_air = in_air;
+        status_.on_ground = !in_air;
     }
 
     void prepare() {
@@ -123,16 +133,28 @@ class BlockedFlightControl final : public plane::flight_control::FlightControlAp
     bool stop_motor(std::string&) override { return true; }
     bool goto_waypoint(const plane::model::GeoPoint&, std::string&) override { return true; }
     bool execute_route(const std::vector<plane::model::GeoPoint>&, std::string&) override { return true; }
-    bool set_ned_velocity(const plane::model::NedVelocity&, std::string&) override { return true; }
+    bool set_ned_velocity(const plane::model::NedVelocity&, std::string&) override {
+        ++setpoint_calls;
+        return true;
+    }
     bool set_ned_velocity_acceleration(const plane::algorithm::VelocityAccelerationCommand&, double,
-                                       std::string&) override { return true; }
-    bool set_attitude(const plane::flight_control::AttitudeSetpoint&, std::string&) override { return true; }
+                                       std::string&) override {
+        ++setpoint_calls;
+        return true;
+    }
+    bool set_attitude(const plane::flight_control::AttitudeSetpoint&, std::string&) override {
+        ++setpoint_calls;
+        return true;
+    }
     bool get_cached_flight_control_params(plane::flight_control::FlightControlParams&, std::string&) const override {
         return false;
     }
-    void clear_offboard() override {}
+    void clear_offboard() override { ++clear_calls; }
     std::string link_state() const override { return "connected"; }
     plane::flight_control::FlightStatus flight_status() const override { return status_; }
+
+    std::atomic<int> setpoint_calls{0};
+    std::atomic<int> clear_calls{0};
 
    private:
     bool wait_for_release(std::string& error) {
@@ -172,12 +194,17 @@ class FakeSystemParam final : public plane::core::SystemParamApi {
 };
 
 struct Fixture {
-    explicit Fixture(bool armed)
-        : flight(armed), targets(events, config), engine(events, config, flight, states, params, targets) {
+    explicit Fixture(bool armed, bool in_air = false)
+        : flight(armed, in_air), targets(events, config), engine(events, config, flight, states, params, targets) {
         config.bt_tick_interval_ms = 10;
         events.subscribe<plane::task::TaskEngineResult>(
             plane::task::events::kEngineResult, [this](const plane::task::TaskEngineResult& result) {
+                {
+                    std::lock_guard<std::mutex> lock(results_mutex);
+                    results.push_back(result);
+                }
                 last_result.store(result.status);
+                results_changed.notify_all();
             });
         require(targets.start() && engine.start(), "目标管理或执行引擎启动失败");
     }
@@ -207,6 +234,16 @@ struct Fixture {
         return last_result.load() != plane::model::TaskStatus::None;
     }
 
+    bool wait_for_results(std::size_t count) {
+        std::unique_lock<std::mutex> lock(results_mutex);
+        return results_changed.wait_for(lock, 2s, [&] { return results.size() >= count; });
+    }
+
+    std::vector<plane::task::TaskEngineResult> result_snapshot() {
+        std::lock_guard<std::mutex> lock(results_mutex);
+        return results;
+    }
+
     plane::core::AppConfig config;
     plane::core::EventBus events;
     BlockedFlightControl flight;
@@ -215,6 +252,9 @@ struct Fixture {
     plane::target::TargetStore targets;
     plane::task::TaskExecutionEngine engine;
     std::atomic<plane::model::TaskStatus> last_result{plane::model::TaskStatus::None};
+    std::mutex results_mutex;
+    std::condition_variable results_changed;
+    std::vector<plane::task::TaskEngineResult> results;
 };
 
 class PendingAbort {
@@ -314,6 +354,71 @@ void takeoff_wait_abort_and_replacement(CapturedLogs& logs) {
     require(fixture.engine.abort(), "独立指令中止失败");
 }
 
+void midcourse_missing_target_failure_and_restart(CapturedLogs& logs) {
+    Fixture fixture(true, true);
+    fixture.config.midcourse_target_timeout_ms = 100;
+    const std::string track_id = "missing-midcourse-target";
+    plane::model::TaskInfo task;
+    task.taskId = "midcourse-timeout-task";
+    task.taskCode = plane::model::TaskCode::AntiUav;
+    task.targetTrackId = track_id;
+
+    std::string error;
+    const auto started_at = Clock::now();
+    const auto clear_calls_before = fixture.flight.clear_calls.load();
+    require(fixture.engine.start(10, task, error), "中制导超时任务创建失败: " + error);
+    require(fixture.wait_for_results(1), "中制导未收到目标时未按配置超时结束");
+    require(Clock::now() - started_at >= 100ms, "中制导目标超时早于配置阈值");
+    const auto results = fixture.result_snapshot();
+    require(results.size() == 1 && results[0].execution_id == 10 &&
+                results[0].status == plane::model::TaskStatus::Failed &&
+                results[0].currentBehaviorTree == "AntiUav" && results[0].currentNode == "Midcourse",
+            "目标超时未上报一次关联当前执行和节点的任务失败");
+    require(results[0].detail.find("中制导目标雷达信息超时") != std::string::npos &&
+                results[0].detail.find("trackId=" + track_id) != std::string::npos &&
+                results[0].detail.find("target_timeout_ms=100") != std::string::npos &&
+                results[0].detail.find("从未收到") != std::string::npos,
+            "任务失败详情遗漏目标、配置阈值或从未收到的原因");
+    require(logs.contains("中段制导失败: " + results[0].detail), "目标超时缺少显式失败日志");
+    require(fixture.flight.clear_calls.load() == clear_calls_before + 1 &&
+                fixture.flight.setpoint_calls.load() == 0,
+            "初始化前目标超时未清理 Offboard 或仍下发了控制设定值");
+
+    const auto prompt_count = logs.prompts(track_id).size();
+    require(!logs.wait_for_prompts(track_id, prompt_count + 1, 2200ms),
+            "目标超时失败后未取消目标需求，仍输出缺失提示");
+    for (int index = 0; index < 20; ++index) {
+        plane::model::GcsTarget target;
+        target.trackId = track_id;
+        target.timestamp_ms = 1000 + index;
+        target.geoPos.latitude = 30.0;
+        target.geoPos.longitude = 120.0;
+        target.geoPos.altitude = 50.0F;
+        fixture.events.publish(plane::communication::events::kGcsTargetReceived, target);
+    }
+    require(fixture.targets.gcs_target_history(track_id).size() == 20, "迟到目标未被真实目标缓存接受");
+    std::this_thread::sleep_for(150ms);
+    require(fixture.result_snapshot().size() == 1 && fixture.flight.setpoint_calls.load() == 0 &&
+                fixture.flight.clear_calls.load() == clear_calls_before + 1,
+            "迟到目标恢复了已结束的任务或重复上报失败");
+
+    // 与调度器相同，先回收结束的执行线程，再接收新任务。
+    require(fixture.engine.abort(), "目标超时后无法回收旧任务");
+    task.taskId = "midcourse-after-timeout";
+    task.targetTrackId = "new-midcourse-target";
+    const auto restarted_at = Clock::now();
+    require(fixture.engine.start(11, task, error), "目标超时后不能启动新任务: " + error);
+    require(fixture.wait_for_results(2), "新任务未开始独立的目标超时监测");
+    const auto restarted_results = fixture.result_snapshot();
+    require(Clock::now() - restarted_at >= 100ms && restarted_results.size() == 2 &&
+                restarted_results[1].execution_id == 11 &&
+                restarted_results[1].status == plane::model::TaskStatus::Failed &&
+                restarted_results[1].currentBehaviorTree == "AntiUav" &&
+                restarted_results[1].currentNode == "Midcourse" &&
+                restarted_results[1].detail.find("trackId=new-midcourse-target") != std::string::npos,
+            "新任务沿用了旧任务的超时结果、目标或计时起点");
+}
+
 }  // namespace
 
 int main() {
@@ -324,6 +429,7 @@ int main() {
     try {
         arm_wait_and_failure(*logs);
         takeoff_wait_abort_and_replacement(*logs);
+        midcourse_missing_target_failure_and_restart(*logs);
     } catch (const std::exception& error) {
         spdlog::set_default_logger(spdlog::stderr_color_mt("task-target-monitor-error"));
         SPDLOG_ERROR("任务目标监测测试失败: {}", error.what());

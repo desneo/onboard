@@ -106,6 +106,13 @@ std::vector<plane::model::GcsTarget> TargetStore::gcs_target_history(const std::
     return {it->second.begin(), it->second.end()};
 }
 
+std::optional<std::int64_t> TargetStore::gcs_target_last_received_ms(const std::string& track_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto reception = receptions_.find(track_id);
+    if (reception == receptions_.end()) return std::nullopt;
+    return reception->second.received_ms;
+}
+
 void TargetStore::set_required_gcs_target(std::optional<std::string> track_id) {
     {
         std::lock_guard<std::mutex> notice_lock(notice_mutex_);

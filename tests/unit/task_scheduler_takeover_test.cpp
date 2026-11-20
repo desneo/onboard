@@ -27,16 +27,20 @@ void require(bool condition, const char* detail) {
 
 class CapturedLogs {
    public:
-    CapturedLogs() : previous_(spdlog::default_logger()) {
+    CapturedLogs() : output_(&buffer_), previous_(spdlog::default_logger()) {
         auto sink = std::make_shared<spdlog::sinks::ostream_sink_mt>(output_);
         auto logger = std::make_shared<spdlog::logger>("takeover-test", sink);
         logger->set_pattern("%v");
+        // 关闭级别触发刷新，仅显式 flush 才将捕获内容标记为已刷新。
+        logger->flush_on(spdlog::level::off);
         spdlog::set_default_logger(logger);
     }
 
     ~CapturedLogs() { spdlog::set_default_logger(previous_); }
 
-    std::string text() const { return output_.str(); }
+    std::string text() const { return buffer_.str(); }
+    std::string flushed_text() const { return buffer_.flushed; }
+    std::size_t flush_count() const { return buffer_.flushes; }
 
     std::size_t takeover_count() const {
         const auto logs = text();
@@ -49,7 +53,21 @@ class CapturedLogs {
     }
 
    private:
-    std::ostringstream output_;
+    class CaptureBuffer final : public std::stringbuf {
+       public:
+        std::string flushed;
+        std::size_t flushes = 0;
+
+       protected:
+        int sync() override {
+            flushed = str();
+            ++flushes;
+            return 0;
+        }
+    };
+
+    CaptureBuffer buffer_;
+    std::ostream output_;
     std::shared_ptr<spdlog::logger> previous_;
 };
 
@@ -552,6 +570,56 @@ void task_scheduler_handles_synchronous_results_and_abort_races() {
     require(scheduler.current_task_state().status == TaskStatus::None, "停止与自然结果竞争后没有恢复空闲");
 }
 
+void task_scheduler_flushes_terminal_summaries() {
+    CapturedLogs logs;
+    core::AppConfig config;
+    core::EventBus bus;
+    TestEngine engine;
+    TestCommunication communication;
+    task::TaskScheduler scheduler(bus, config, &engine);
+    scheduler.set_communication(communication);
+    require(scheduler.start(), "任务调度器启动失败");
+
+    struct Outcome {
+        model::TaskStatus value;
+        const char* text;
+    };
+    const Outcome outcomes[] = {{model::TaskStatus::Completed, "Completed"},
+                                {model::TaskStatus::Failed, "Failed"},
+                                {model::TaskStatus::Aborted, "Aborted"}};
+    for (const std::string kind : {"task", "command", "self-check"}) {
+        for (const auto& outcome : outcomes) {
+            const auto id = kind + "-flush-" + outcome.text;
+            if (kind == "task") {
+                const model::TaskInfo request{id, model::TaskCode::AntiUav, "target", model::TaskAction::Start};
+                bus.publish(communication::events::kTaskInfoReceived,
+                            communication::ReceivedControl<model::TaskInfo>{request, Clock::now()});
+            } else {
+                model::Command request;
+                request.commandId = id;
+                request.type = kind == "self-check" ? model::CommandType::SelfCheck : model::CommandType::Route;
+                bus.publish(communication::events::kCommandReceived,
+                            communication::ReceivedControl<model::Command>{request, Clock::now()});
+            }
+            const auto flushes_before = logs.flush_count();
+            const task::TaskEngineResult result{engine.starts.back(), outcome.value, "结束摘要即时刷新测试",
+                                                kind == "task" ? "AntiUav" : "cmd-test", "测试节点"};
+            bus.publish(task::events::kEngineResult, result);
+            require(logs.flush_count() == flushes_before + 1,
+                    "任务、指令和自检的每种终态应主动刷新一次结束摘要");
+            const auto summary = (kind == "task" ? "任务结束：taskId=" : "指令结束：commandId=") + id;
+            const auto flushed = logs.flushed_text();
+            const auto summary_at = flushed.find(summary);
+            require(summary_at != std::string::npos &&
+                        flushed.find("status=" + std::string(outcome.text), summary_at) != std::string::npos &&
+                        flushed.find("结束摘要即时刷新测试", summary_at) != std::string::npos,
+                    "显式刷新必须发生在包含执行标识、终态和原因的结束摘要之后");
+            bus.publish(task::events::kEngineResult, result);
+            require(logs.flush_count() == flushes_before + 1, "迟到的重复终态不应重复输出或刷新结束摘要");
+        }
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -561,6 +629,7 @@ int main() {
         task_scheduler_reports_task_failure_once();
         task_scheduler_reports_complete_lifecycles();
         task_scheduler_handles_synchronous_results_and_abort_races();
+        task_scheduler_flushes_terminal_summaries();
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

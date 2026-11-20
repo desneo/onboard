@@ -764,6 +764,156 @@ class FleetCtlTest(unittest.TestCase):
         self.assertEqual(args.command, "test-midcourse")
         self.assertEqual(args.count, 1)
         self.assertEqual(args.target_track_id, "")
+        self.assertFalse(args.manual_task)
+
+    def midcourse_update_logs(self, interval_ms=500, count=12, target_updates=True):
+        start = fleetctl.dt.datetime(2026, 11, 20, 12, 0, 0)
+        lines = []
+        for index in range(count):
+            timestamp = start + fleetctl.dt.timedelta(milliseconds=index * interval_ms)
+            prefix = timestamp.strftime("[%Y-%m-%d %H:%M:%S.%f]")[:-4] + "] [info] [1] "
+            lines.append(prefix + "中制导算法 MidcourseAlgorithm::update 输入: vehicle={}\n")
+            lines.append(prefix + "中制导算法 MidcourseAlgorithm::update 输出: 返回值=true output={} error=\n")
+            if target_updates and index % 2 == 0:
+                lines.append(prefix + "中制导算法 MidcourseAlgorithm::updateTarget 输入: measurement={}\n")
+        return "".join(lines)
+
+    def test_midcourse_accepts_initially_connected_system_without_connection_event(self):
+        attached = "飞控系统已接入: system_id=1 connected=true\n"
+        self.assertTrue(fleetctl.flight_system_connected(attached))
+        self.assertTrue(fleetctl.flight_system_connected(
+            attached.replace("true", "false") + "飞控连接建立\n"))
+        for text in (
+            "",
+            "飞控连接建立\n",
+            attached.replace("true", "false"),
+            attached + "飞控连接异常\n",
+            attached.replace("true", "trueish"),
+        ):
+            with self.subTest(text=text):
+                self.assertFalse(fleetctl.flight_system_connected(text))
+
+    def test_midcourse_log_evidence_requires_five_seconds_of_pairs_and_target_updates(self):
+        evidence = fleetctl.midcourse_log_evidence(self.midcourse_update_logs())
+        self.assertEqual(evidence["window_ms"], 5000)
+        self.assertEqual(evidence["update_pairs"], 11)
+        self.assertEqual(evidence["intervals_ms"], [500] * 10)
+        for text in (
+            self.midcourse_update_logs(count=10),
+            self.midcourse_update_logs(interval_ms=50),
+            self.midcourse_update_logs(interval_ms=1000),
+            self.midcourse_update_logs(target_updates=False),
+        ):
+            with self.subTest(text=text[:70]):
+                self.assertIsNone(fleetctl.midcourse_log_evidence(text))
+
+    def test_midcourse_log_evidence_rejects_unpaired_or_failed_output(self):
+        text = self.midcourse_update_logs()
+        for invalid in (
+            text.replace("返回值=true", "返回值=false", 1),
+            text.replace("MidcourseAlgorithm::update 输入:", "其他日志:", 1),
+            text.replace("MidcourseAlgorithm::update 输出:", "其他日志:", 1),
+        ):
+            with self.subTest(text=invalid[:70]), self.assertRaises(fleetctl.FleetError):
+                fleetctl.midcourse_log_evidence(invalid)
+
+    def test_midcourse_timeout_evidence_requires_matching_track_threshold_and_strict_timeout(self):
+        text = "中制导目标雷达信息超时: trackId=target 未更新时长=5001毫秒 target_timeout_ms=5000（目标更新中断）"
+        self.assertEqual(
+            fleetctl.midcourse_timeout_evidence(text, "target", 5000),
+            {"track_id": "target", "age_ms": 5001, "target_timeout_ms": 5000},
+        )
+        self.assertIsNone(fleetctl.midcourse_timeout_evidence("任务正常运行", "target", 5000))
+        for invalid in (
+            text.replace("trackId=target", "trackId=other"),
+            text.replace("target_timeout_ms=5000", "target_timeout_ms=4000"),
+            text.replace("5001毫秒", "5000毫秒"),
+            text.replace("5001毫秒", "4999毫秒"),
+            text.replace("未更新时长=5001毫秒 ", ""),
+            text + "\n中制导目标雷达信息超时: trackId=target",
+        ):
+            with self.subTest(text=invalid), self.assertRaises(fleetctl.FleetError):
+                fleetctl.midcourse_timeout_evidence(invalid, "target", 5000)
+
+    def test_manual_midcourse_only_observes_user_task_without_control_or_radar_publication(self):
+        config = fleetctl.load_config(fleetctl.DEFAULT_CONFIG)
+        plane = config.planes[0]
+        args = fleetctl.build_parser().parse_args(["test-midcourse", "--count", "1", "--manual-task"])
+        state = {"ready": False, "pause": False}
+        base = "Zenoh 已上线\n飞控系统已接入: system_id=1 connected=true\n"
+        running = (
+            "行为树结构: currentBehaviorTree=AntiUav\n"
+            "AntiUav 中制导任务已创建: taskId=user-task targetTrackId=target\n"
+            "中制导会话启动\n中制导初始化完成: trackId=target history_size=20\n"
+            "Offboard 速度及加速度启动\n中制导算法首次增量量测更新\n"
+        ) + self.midcourse_update_logs()
+        failure = (
+            "中制导目标雷达信息超时: trackId=target 未更新时长=5001毫秒 target_timeout_ms=5000（目标更新中断）\n"
+            "Offboard 停止\n行为树结束: currentBehaviorTree=AntiUav status=Failed\n"
+        )
+        remote = Mock()
+
+        def observe(plane, script, **kwargs):
+            if "cat " in script and "plane.stdout.log" in script:
+                output = base + (running if state["ready"] else "") + (failure if state["pause"] else "")
+            elif "cat " in script and "/gcs.log" in script:
+                output = (
+                    f"收到飞机状态: planeId={plane.plane_id} fcLinkState=connected inair=true "
+                    "flightMode=Offboard voltage_v=24 geoPos.latitude=30 geoPos.longitude=120 "
+                    "geoPos.height=20 geoPos.altitude=100\n"
+                )
+                if state["pause"]:
+                    output += "收到任务状态: taskId=user-task status=Failed currentNode=Midcourse\n"
+            else:
+                output = ""
+            return subprocess.CompletedProcess([], 0, stdout=output)
+
+        def displayed(*values, **kwargs):
+            text = " ".join(str(value) for value in values)
+            if "环境已就绪，可以开始下发反无任务。" in text:
+                state["ready"] = True
+            if "正常运行验证完成，请暂停" in text:
+                state["pause"] = True
+
+        remote.run.side_effect = observe
+        with tempfile.TemporaryDirectory(prefix="fleet manual ") as directory:
+            root = Path(directory)
+            (root / "build").mkdir()
+            (root / "build/gcs_sim").touch()
+            deployment = fleetctl.PlaneDeployment(root / "prepared", self.configuration(plane))
+            with patch.object(fleetctl, "ROOT", root), \
+                 patch.object(fleetctl, "preflight") as preflight, \
+                 patch.object(fleetctl, "ensure_bundle", return_value=root / "bundle"), \
+                 patch.object(fleetctl, "prepare_plane_deployment", return_value=deployment), \
+                 patch.object(fleetctl, "check_sitl_profile_listeners"), \
+                 patch.object(fleetctl, "backup_plane_runtime", return_value="/tmp/backup"), \
+                 patch.object(fleetctl, "stop_planes"), \
+                 patch.object(fleetctl, "deploy_plane_bundle"), \
+                 patch.object(fleetctl, "check_remote_dependencies"), \
+                 patch.object(fleetctl, "start_plane"), \
+                 patch.object(fleetctl, "stop_simulator") as stop_simulator, \
+                 patch.object(fleetctl, "start_simulator") as start_simulator, \
+                 patch("builtins.print", side_effect=displayed):
+                self.assertEqual(fleetctl.command_test_midcourse(args, config, remote), 0)
+            preflight.assert_called_once_with(config, (plane,), remote, include_simulator=False)
+            stop_simulator.assert_not_called()
+            start_simulator.assert_not_called()
+            report_path, = (root / "logs/fleet").glob("*/midcourse-report.json")
+            report = json.loads(report_path.read_text())
+            self.assertEqual(report["status"], "passed")
+            self.assertEqual(report["task_id"], "user-task")
+            self.assertEqual(report["target_track_id"], "target")
+            self.assertEqual(report["target_timeout_ms"], 5000)
+            self.assertEqual(report["timeout_evidence"],
+                             {"track_id": "target", "age_ms": 5001, "target_timeout_ms": 5000})
+            self.assertFalse(report["flight_or_task_commands_sent"])
+        scripts = "\n".join(call.args[1] for call in remote.run.call_args_list)
+        for control in ("--anti-uav", "--stop-task", "--command-type", "--arm", "--takeoff", "--self-check"):
+            self.assertNotIn(control, scripts)
+        observer, = [call.args[1] for call in remote.run.call_args_list if "setsid -f" in call.args[1]]
+        self.assertIn("--no-radar-udp", observer)
+        self.assertIn("--no-presence", observer)
+        self.assertIn(f"tcp/{plane.host}:7447", observer)
 
     def test_midcourse_verification_uses_aggregate_algorithm_logs(self):
         source = (ROOT / "tools" / "fleetctl.py").read_text(encoding="utf-8")

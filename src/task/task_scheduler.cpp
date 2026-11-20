@@ -136,6 +136,8 @@ void TaskScheduler::report_finished(ControlSnapshot snapshot, plane::model::Task
     if (!snapshot.current_node.empty()) detail += " currentNode=" + snapshot.current_node;
     detail += "，" + reason;
     SPDLOG_INFO("{}", detail);
+    // 结束摘要需要立即可见，不等待普通日志的定时刷新。
+    spdlog::default_logger()->flush();
     send_alert(detail, task ? "task_finished" : "command_finished");
     if (task) {
         snapshot.task_state.status = status;

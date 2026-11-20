@@ -36,6 +36,7 @@ int main() {
     const plane::core::AppConfig defaults;
     if (!defaults.plane_id.empty() || !defaults.board_ip.empty() || !defaults.fc_link_type.empty() ||
         !defaults.fc_udp_url.empty() || !defaults.fc_serial_device.empty() || defaults.fc_serial_baud != 0 ||
+        defaults.log_flush_interval_ms != 1000 || defaults.midcourse_target_timeout_ms != 5000 ||
         defaults.midcourse_algorithm.replan_period_s != 1.0 ||
         defaults.midcourse_algorithm.replan_freeze_s != 2.5) {
         return 28;
@@ -72,7 +73,9 @@ int main() {
         if (!plane::core::load_config(path, config, &first) || config.is_sim != test.expected) return 3;
     }
 
-    if (!write_main("[midcourse]\ninit_timeout_ms = 12345\ntarget_invalid_grace_s = 2.0\nr_min_m = 75.0\n"
+    if (!write_main("[logging]\nflush_interval_ms = 250\n"
+                    "[midcourse]\ninit_timeout_ms = 12345\ntarget_timeout_ms = 6500\n"
+                    "target_invalid_grace_s = 2.0\nr_min_m = 75.0\n"
                     "[midcourse_algorithm]\nuse_px4_limits = true\nmax_horizontal_speed_m_s = 30.0\n"
                     "max_climb_speed_m_s = 8.0\nmax_descent_speed_m_s = 4.0\ncmd_accel_max_m_s2 = 7.0\n"
                     "approach_brake_k = 0.75\nhover_brake_accel_m_s2 = 4.0\ntrack_gain_d = 0.25\n"
@@ -83,7 +86,9 @@ int main() {
     plane::core::AppConfig config;
     if (!plane::core::load_config(path, config, &first)) return 5;
     const auto& algorithm = config.midcourse_algorithm;
-    if (config.midcourse_init_timeout_ms != 12345 || !config.midcourse_use_px4_limits ||
+    if (config.log_flush_interval_ms != 250 || config.midcourse_init_timeout_ms != 12345 ||
+        config.midcourse_target_timeout_ms != 6500 ||
+        !config.midcourse_use_px4_limits ||
         algorithm.max_horizontal_speed_m_s != 30.0 || algorithm.max_climb_speed_m_s != 8.0 ||
         algorithm.max_descent_speed_m_s != 4.0 || algorithm.cmd_accel_max_m_s2 != 7.0 ||
         algorithm.approach_brake_k != 0.75 || algorithm.hover_brake_accel_m_s2 != 4.0 ||
@@ -92,6 +97,24 @@ int main() {
         algorithm.control_output_mode != plane::algorithm::MidcourseControlMode::Attitude ||
         algorithm.yaw_mode != 0) {
         return 6;
+    }
+
+    for (const std::string invalid : {"0", "-1", "abc", "5.0", "5000ms", "2147483648", ""}) {
+        if (!write_main("[midcourse]\ntarget_timeout_ms = " + invalid + '\n')) return 40;
+        const auto previous_plane_id = config.plane_id;
+        if (plane::core::load_config(path, config, &first) || config.midcourse_target_timeout_ms != 6500 ||
+            config.plane_id != previous_plane_id) {
+            return 41;
+        }
+    }
+
+    for (const std::string invalid : {"0", "-1", "abc", "1.5", "1000ms", "2147483648", ""}) {
+        if (!write_main("[logging]\nflush_interval_ms = " + invalid + '\n')) return 42;
+        const auto previous_plane_id = config.plane_id;
+        if (plane::core::load_config(path, config, &first) || config.log_flush_interval_ms != 250 ||
+            config.midcourse_target_timeout_ms != 6500 || config.plane_id != previous_plane_id) {
+            return 43;
+        }
     }
 
     if (!write_main("[camera]\npod_state_report_hz = 8\n")) return 7;
@@ -110,6 +133,8 @@ int main() {
         !config.fc_serial_device.empty() || config.fc_serial_baud != 0 ||
         config.pod_model != "jielian_a2416a" || config.pod_video_url != "rtsp://192.168.1.56:8554/jielian_a2416a" ||
         config.pod_control_url != "udp://192.168.1.56:8001" || config.pod_state_report_hz != 8 ||
+        config.midcourse_target_timeout_ms != 5000 ||
+        config.log_flush_interval_ms != 1000 ||
         config.zenoh_listen != "tcp/192.168.1.100:7447" ||
         config.zenoh_connect != "tcp/192.168.1.41:7447,tcp/192.168.1.9:7447,tcp/192.168.1.102:7447") {
         return 9;

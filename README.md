@@ -18,7 +18,9 @@
 ### 任务范围
 
 本版本完全移除本地视觉处理。`AntiUav` 任务恢复中制导阶段，但不恢复视觉／末制导；任务持续运行，
-直到收到 Task Stop、新控制内容或进程退出。
+直到目标雷达信息超时、任务失败、收到 Task Stop、新控制内容、人工接管或进程退出。
+整个中制导阶段（含等待初始化历史）按 `midcourse.target_timeout_ms` 检查目标更新，默认 5000 ms。
+进入时缓存已过期会立即失败并显式记录原因，超时后停止 Offboard 并上报 `Failed`。
 
 ### 单机飞行控制
 
@@ -179,6 +181,11 @@ tail -f logs/plane.log
 
 主日志固定写入 `logs/plane.log`，重启后追加；单文件达到 50 MB 后按
 `plane.1.log`、`plane.2.log` 至 `plane.5.log` 轮转（序号越小越新，超过 5 份淘汰最旧文件）。
+普通 `[info]` 日志按 `[logging].flush_interval_ms` 批量刷新，默认 1000 ms，必须为正整数；
+即使没有后续日志，周期刷新也会使已有内容可被 `tail -f` 读取。
+`[warn]`、`[error]` 以及任务、指令和自检的成功、失败、中止结束摘要立即刷新。
+前台和 `--no-console` 模式使用相同的文件刷新策略，正常退出前刷新剩余日志。
+刷新使用 `fflush` 将内容交给系统文件缓存，不承诺断电后日志仍完整保留。
 项目人工编写的运行日志和业务描述均使用中文；日志级别保留 spdlog 的 `[info]`、`[warn]`、
 `[error]` 等原始英文标识，线程 ID 直接显示为数字方括号（如 `[701742]`）。API、协议、类型、枚举、
 配置键、函数参数名、结构体及其字段名和第三方库
@@ -186,8 +193,10 @@ tail -f logs/plane.log
 `MPC_Z_VEL_MAX_DN`、`MPC_ACC_HOR_MAX` 原名。中制导在等待目标历史前完成生效配置校验，
 调用聚合门面初始化时记录限值来源和 `MidCourseConfig` 全部字段的实际值，同时记录初始化历史帧数、
 首次目标增量更新以及 Offboard 启动。
-中制导算法的 `MidcourseAlgorithm::init/update/updateTarget` 每次调用均以 `[info]` 输出完整入参、
-返回值和原始 `error`，包括初始化全部历史量测、包含实际航向的本机状态和原始目标量测。
+中制导算法的 `MidcourseAlgorithm::init/updateTarget` 每次调用均以 `[info]` 输出完整入参、
+返回值和原始 `error`，包括初始化全部历史量测和原始目标量测。
+`MidcourseAlgorithm::update` 的完整输入输出按 2 Hz 成对记录，会话首次调用和调用失败时立即记录，
+输入包含实际航向的本机状态；算法调用及控制下发仍按每个 BT tick 执行。
 `update` 还记录有效的速度加速度指令或姿态四元数与推力，以及 `eta_seconds`、`following` 和
 `terminal_confirmed`；`yaw_rad` 为空时显示 `nullopt`，调用失败时显示无有效输出。
 位置和算法字段保持公共接口原名。
@@ -293,6 +302,7 @@ pod_control_url = udp://192.168.1.56:8001
 | --- | --- |
 | `system.safe_height_m` | 未指定起飞高度时使用的安全高度 |
 | `system.log_dir` | 日志目录 |
+| `logging.flush_interval_ms` | 普通日志批量刷新周期，默认 1000 ms，必须为正整数；警告、错误和任务／指令／自检结束摘要立即刷新 |
 | `camera.pod_state_report_hz` | `PodState` 上报频率，默认 5 Hz |
 | `system.state_report_period_ms` | 状态上报周期 |
 | `communication.zenoh_config_file` | Zenoh 原生配置文件，默认 `config/zenoh.json5` |
@@ -321,6 +331,7 @@ SITL 测试统一使用 `tests/fleet.ini` 的 `simulator.host`（当前为 `192.
 | `behavior_tree.height_adjust_timeout_ms` | 航线开始前调整相对高度的超时 |
 | `behavior_tree.height_adjust_tolerance_m` | 航线开始前调整相对高度的到达容差 |
 | `midcourse.init_timeout_ms` | 等待严格递增的 20 帧雷达历史的最长时间，默认 30000 ms |
+| `midcourse.target_timeout_ms` | 当前目标连续无有效更新的超时，默认 5000 ms，必须为正整数；整个 Midcourse 阶段适用 |
 | `midcourse_algorithm.use_px4_limits` | 默认 `false`，使用 INI 的四项规划限值；`true` 使用 PX4 缓存 |
 | `midcourse_algorithm.max_horizontal_speed_m_s` | 水平速度限值，默认 60 m/s |
 | `midcourse_algorithm.max_climb_speed_m_s` / `max_descent_speed_m_s` | 爬升、下降速度限值，默认均为 20 m/s |
@@ -400,6 +411,24 @@ python3 tools/fleetctl.py test-midcourse --count 1 --target-track-id <track_id>
 工具部署到 `uav1`，监听 `192.168.1.100:7790`。机载程序从启动起持续缓存每个航迹最近 20 帧，
 中制导会话直接使用已有历史，不从任务启动时重新计数；测试继续发送第 21 帧并验证增量更新、
 当前配置的 Offboard 输出、持续运行和 Task Stop 清理。目标 ID 留空时，机载只在当前候选唯一时自动锁定。
+
+由用户通过地面站下发任务并联合验收时，执行：
+
+```bash
+python3 tools/fleetctl.py test-midcourse --count 1 --manual-task
+```
+
+人工发令模式将完整运行包部署到 `192.168.1.100:/home/firefly/plane`，检查飞控连接、实际遥测和通信，
+启动只观测的 GCS 并采集证据。工具保持现有 SITL 和用户雷达链路，只接收用户实际下发的任务及目标更新，
+不自动发送 Task、Command 或 Task Stop。出现“环境已就绪，可以开始下发反无任务。”后，
+用户保持当前目标雷达更新并下发任务；按实际 `taskId` 和目标航迹检查 Offboard 持续控制与 2 Hz 日志，
+正常阶段通过后再按提示暂停该目标更新，验证超时失败及清理上报。报告位于
+`logs/fleet/<run_id>/midcourse-report.json`。
+
+目标更新超时使用机载接受该航迹有效更新时的本机单调接收时间，严格超过配置阈值后在下一次 BT tick 失败。
+从未收到目标时从进入 Midcourse 起计时；重复、乱序和其他目标的数据不刷新计时。超时失败后数据恢复不会恢复旧任务。
+`midcourse.init_timeout_ms` 的历史收集上限和算法 `target_invalid_grace_s` 的预测宽限期各自生效，
+目标更新超时可以提前结束初始化等待；Arm／Takeoff 阶段不受此超时限制。
 
 ## 测试
 

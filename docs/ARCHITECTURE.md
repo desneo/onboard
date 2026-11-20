@@ -213,12 +213,24 @@ EventBus 的发布同步执行订阅回调；诊断回调只负责轻量入队�
   再以有效飞控地址计算仿真判定，并将同一份 `AppConfig` 交给各模块。
   `AppConfig` 保留模块需要的有效配置字段，身份和连接信息仅由预置填充；配置加载失败时不替换原配置。
 - Runtime 按注册顺序执行 `init/start`，按逆序执行 `stop/release`。
+- 日志保留同步写入和线程安全 sink，由 spdlog 内置的一个周期线程批量刷新普通日志。
+  `[logging].flush_interval_ms` 对应 `AppConfig::log_flush_interval_ms` 和 `LogOptions::flush_interval_ms`，
+  默认 1000 ms，必须为正整数；前台与 `--no-console` 使用相同策略。
+  `[warn]`、`[error]` 自动立即刷新，`TaskScheduler::report_finished` 在统一结束摘要后主动刷新，
+  覆盖 Task、Command、自检的成功、失败和中止。刷新使用 `fflush`，不调用 `fsync`。
+  配置加载后应用实际周期；日志重新初始化前先停止并回收旧刷新线程，正常退出前刷新剩余日志。
 - Flight Control 在飞控连接建立后读取并缓存通用 PX4 飞控系统参数；断连使缓存失效，重连后后台重读。
   中制导默认从 `[midcourse_algorithm]` 取规划限值，`use_px4_limits = true` 时从缓存取值。
 - Target Management 独立于任务生命周期持续保留每个航迹最近 20 帧；中制导启动和停止不得清除此历史。
 - Target Management 在接受有效目标时原子更新最新值、历史、本机单调接收时间和墙钟接收时间，
   按航迹首帧即时记录、后续 20 秒汇总。独立的可唤醒监测线程只在存在目标需求时工作，
   连续 2 秒无所需目标更新后每 2 秒输出提示，不等待 BehaviorTree、MAVSDK 或算法锁。
+- `TargetStoreApi::gcs_target_last_received_ms` 以可选值提供指定航迹最后一次有效更新的本机单调接收时间，
+  查询与接收使用同一缓存锁；重复或乱序数据不更新该时间。Midcourse 在使用历史初始化、算法调用及控制下发前，
+  按 `[midcourse].target_timeout_ms` 检查当前目标的接收龄期，默认 5000 ms 且必须为正整数。
+  从未收到目标时从会话进入时刻计时，进入时已过期的缓存立即失败；严格超过阈值时由 BT tick 返回失败，
+  沿用执行引擎清理、取消目标需求和 `Failed` 上报链路。该检查覆盖初始化等待，不扩展到 Arm／Takeoff。
+  目标管理的 2 秒接收提示、30 秒历史初始化上限及算法预测宽限期保持各自职责。
 - Task Execution Engine 在成功创建 `AntiUav` 任务树后、启动执行线程前声明目标需求，
   在停止、替换、接管、失败、完成及退出时取消需求；取消必须先于等待执行线程退出。
   `TargetStoreApi::set_required_gcs_target` 以 `nullopt` 取消、空字符串表示自动模式、非空字符串指定航迹。

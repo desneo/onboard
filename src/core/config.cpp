@@ -315,6 +315,7 @@ std::string canonical_key(const std::string& section, const std::string& key) {
     static const std::unordered_map<std::string, std::string> keys = {
         {"system.safe_height_m", "safe_height_m"},
         {"system.log_dir", "log_dir"},
+        {"logging.flush_interval_ms", "log_flush_interval_ms"},
         {"camera.pod_state_report_hz", "pod_state_report_hz"},
         {"system.state_report_period_ms", "state_report_period_ms"},
         {"communication.zenoh_config_file", "zenoh_config_file"},
@@ -332,6 +333,7 @@ std::string canonical_key(const std::string& section, const std::string& key) {
         {"behavior_tree.height_adjust_tolerance_m", "bt_height_adjust_tolerance_m"},
         {"safety.alert_voltage_threshold_v", "alert_voltage_threshold_v"},
         {"midcourse.init_timeout_ms", "midcourse_init_timeout_ms"},
+        {"midcourse.target_timeout_ms", "midcourse_target_timeout_ms"},
         {"midcourse.target_invalid_grace_s", "midcourse_target_invalid_grace_s"},
         {"midcourse.r_min_m", "midcourse_r_min_m"},
     };
@@ -404,6 +406,12 @@ std::string read_main_config(const std::string& path, AppConfig& out) {
             out.system_param.safeHeight_m = std::stod(value);
         } else if (key == "log_dir") {
             out.log_dir = value;
+        } else if (key == "log_flush_interval_ms") {
+            const int interval_ms = parse_positive_int(value);
+            if (interval_ms == 0) {
+                throw std::invalid_argument("logging.flush_interval_ms 必须为正整数");
+            }
+            out.log_flush_interval_ms = interval_ms;
         } else if (key == "state_report_period_ms") {
             out.state_report_period_ms = std::stoi(value);
         } else if (key == "pod_state_report_hz") {
@@ -443,6 +451,12 @@ std::string read_main_config(const std::string& path, AppConfig& out) {
             out.alert_voltage_threshold_v = std::stod(value);
         } else if (key == "midcourse_init_timeout_ms") {
             out.midcourse_init_timeout_ms = std::stoi(value);
+        } else if (key == "midcourse_target_timeout_ms") {
+            const int timeout_ms = parse_positive_int(value);
+            if (timeout_ms == 0) {
+                throw std::invalid_argument("midcourse.target_timeout_ms 必须为正整数");
+            }
+            out.midcourse_target_timeout_ms = timeout_ms;
         } else if (key == "midcourse_target_invalid_grace_s") {
             load_midcourse_algorithm_option(raw_key, value, out);
         } else if (key == "midcourse_r_min_m") {
@@ -474,7 +488,9 @@ std::string read_main_config(const std::string& path, AppConfig& out) {
 
 bool load_config(const std::string& path, AppConfig& out, const std::vector<std::string>* local_ipv4_addresses) {
     AppConfig loaded = out;
+    loaded.log_flush_interval_ms = kDefaultLogFlushIntervalMs;
     loaded.pod_state_report_hz = kDefaultPodStateReportHz;
+    loaded.midcourse_target_timeout_ms = kDefaultMidcourseTargetTimeoutMs;
     std::string profile;
     try {
         profile = read_main_config(path, loaded);
