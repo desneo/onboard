@@ -1,9 +1,14 @@
 #include <chrono>
 #include <iostream>
+#include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <variant>
 #include <vector>
+
+#include <spdlog/sinks/ostream_sink.h>
+#include <spdlog/spdlog.h>
 
 #include "communication/communication_events.h"
 #include "task/task_scheduler.h"
@@ -18,6 +23,34 @@ void require(bool condition, const char* detail) {
         throw std::runtime_error(detail);
     }
 }
+
+class CapturedLogs {
+   public:
+    CapturedLogs() : previous_(spdlog::default_logger()) {
+        auto sink = std::make_shared<spdlog::sinks::ostream_sink_mt>(output_);
+        auto logger = std::make_shared<spdlog::logger>("takeover-test", sink);
+        logger->set_pattern("%v");
+        spdlog::set_default_logger(logger);
+    }
+
+    ~CapturedLogs() { spdlog::set_default_logger(previous_); }
+
+    std::string text() const { return output_.str(); }
+
+    std::size_t takeover_count() const {
+        const auto logs = text();
+        std::size_t count = 0;
+        for (auto pos = logs.find("检测到接管："); pos != std::string::npos;
+             pos = logs.find("检测到接管：", pos + 1)) {
+            ++count;
+        }
+        return count;
+    }
+
+   private:
+    std::ostringstream output_;
+    std::shared_ptr<spdlog::logger> previous_;
+};
 
 class TestEngine final : public task::TaskExecutionEngineApi {
    public:
@@ -91,6 +124,7 @@ class TestCommunication final : public communication::CommunicationApi {
 };
 
 void task_scheduler_reports_takeover_once() {
+    CapturedLogs logs;
     core::AppConfig config;
     core::EventBus bus;
     TestEngine engine;
@@ -114,8 +148,9 @@ void task_scheduler_reports_takeover_once() {
         bus.publish(communication::events::kCommandReceived, communication::ReceivedControl<model::Command>{
                                                               command, received_at});
     };
-    auto takeover = [&](std::uint64_t execution_id, const std::string& mode) {
-        bus.publish(flight_control::events::kManualTakeover, flight_control::ManualTakeoverEvent{execution_id, mode});
+    auto takeover = [&](std::uint64_t execution_id, const std::string& mode, const std::string& previous) {
+        bus.publish(flight_control::events::kManualTakeover,
+                    flight_control::ManualTakeoverEvent{execution_id, mode, previous});
     };
 
     send_task("task-1");
@@ -128,14 +163,19 @@ void task_scheduler_reports_takeover_once() {
     send_command("during-hold-check", Clock::now());
     require(engine.starts.size() == 1, "核对 Hold 期间启动了新指令");
 
-    takeover(old_execution, "Hold");
-    takeover(old_execution, "Stabilized");
-    takeover(old_execution, "Posctl");
+    takeover(old_execution, "Hold", "Offboard");
+    takeover(old_execution, "Stabilized", "Hold");
+    takeover(old_execution, "Posctl", "Stabilized");
     require(engine.takeover_aborts == 1, "快速切档造成重复中止");
     require(communication.alerts.size() == 1 && communication.alerts.front().type == "manual_takeover" &&
-                communication.alerts.front().detail.find("Hold") != std::string::npos &&
+                communication.alerts.front().detail.find("previous=Offboard value=Hold") != std::string::npos &&
+                communication.alerts.front().detail.find("停止自动控制") != std::string::npos &&
+                communication.alerts.front().detail.find("当前任务已中止") != std::string::npos &&
                 communication.alerts.front().detail.find("taskId=task-1") != std::string::npos,
-            "接管告警未保留首次模式与被中止任务");
+            "接管告警未保留首次前后模式、停止自动控制操作与被中止任务");
+    require(logs.takeover_count() == 1 &&
+                logs.text().find(communication.alerts.front().detail) != std::string::npos,
+            "接管操作日志应与告警内容一致，快速切档不得重复记录");
     require(communication.states.size() == 1 && communication.states.front().status == model::TaskStatus::Aborted &&
                 communication.states.front().taskId == "task-1" &&
                 communication.states.front().currentNode == "Midcourse" &&
@@ -148,17 +188,24 @@ void task_scheduler_reports_takeover_once() {
     require(engine.starts.size() == 2, "清理后未启动新指令");
     const auto current_execution = engine.starts.back();
     bus.publish(task::events::kEngineResult, task::TaskEngineResult{old_execution, model::TaskStatus::Failed, "迟到"});
-    takeover(old_execution, "Hold");
+    takeover(old_execution, "Hold", "Offboard");
 
     // 新指令替换与飞控接管同时发生时，飞控先取得旧执行的中止权。
     engine.takeover_during_abort = true;
     send_command("racing-command", Clock::now());
     require(engine.starts.size() == 2, "接管抢在替换完成前发生时仍启动了新指令");
-    takeover(current_execution, "Stabilized");
+    takeover(current_execution, "Stabilized", "Mission");
+    takeover(current_execution, "Posctl", "Stabilized");
     require(engine.takeover_aborts == 2 && communication.alerts.size() == 2 && communication.states.size() == 1 &&
                 communication.alerts.back().type == "manual_takeover" &&
+                communication.alerts.back().detail.find("previous=Mission value=Stabilized") != std::string::npos &&
+                communication.alerts.back().detail.find("停止自动控制") != std::string::npos &&
+                communication.alerts.back().detail.find("当前指令已中止") != std::string::npos &&
                 communication.alerts.back().detail.find("commandId=new-command") != std::string::npos,
             "独立指令的接管告警错误");
+    require(logs.takeover_count() == 2 &&
+                logs.text().find(communication.alerts.back().detail) != std::string::npos,
+            "独立指令应只记录一次与告警一致的接管操作日志，迟到事件不得重复记录");
 
     send_task("task-2");
     require(engine.starts.size() == 3 && scheduler.current_task_state().taskId == "task-2",
@@ -256,7 +303,7 @@ void task_scheduler_arbitrates_self_check() {
     send_command("check-takeover", CommandType::SelfCheck);
     old_execution = engine.starts.back();
     engine.gate_open = false;
-    const flight_control::ManualTakeoverEvent takeover{old_execution, "Stabilized"};
+    const flight_control::ManualTakeoverEvent takeover{old_execution, "Stabilized", "Hold"};
     bus.publish(flight_control::events::kManualTakeover, takeover);
     bus.publish(flight_control::events::kManualTakeover, takeover);
     finish(old_execution, TaskStatus::Completed);

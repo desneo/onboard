@@ -246,7 +246,8 @@ void TaskScheduler::on_manual_takeover(const plane::flight_control::ManualTakeov
         clear_control_locked();
     }
 
-    std::string detail = "已切入接管模式 " + event.flight_mode;
+    std::string detail = "检测到接管：previous=" + event.previous_flight_mode + " value=" + event.flight_mode +
+                         "，停止自动控制";
     if (aborted_task.status == plane::model::TaskStatus::Aborted) {
         detail += "，当前任务已中止（taskId=" + aborted_task.taskId + "）";
         report_task_state(aborted_task);

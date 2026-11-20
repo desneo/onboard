@@ -24,7 +24,8 @@ void position_baseline_and_rapid_switches() {
     detector.start();
     require(!detector.observe(Mode::Posctl, {}, kStart).takeover, "飞前 Position 应允许执行任务");
     require(!detector.observe(Mode::Offboard, {}, kStart + 50ms).takeover, "进入 Offboard 不应中止");
-    require(detector.observe(Mode::Hold, {}, kStart + 100ms).takeover == Mode::Hold,
+    auto result = detector.observe(Mode::Hold, {}, kStart + 100ms);
+    require(result.takeover == Mode::Hold && result.previous == Mode::Offboard,
             "Offboard 非预期进入 Loiter 应立即中止");
     require(!detector.observe(Mode::Stabilized, {}, kStart + 150ms).takeover, "快速切换不得重复中止");
     require(!detector.observe(Mode::Posctl, {}, kStart + 200ms).takeover, "拨回 Position 不得重复中止");
@@ -33,7 +34,8 @@ void position_baseline_and_rapid_switches() {
     detector.start();
     require(!detector.observe(Mode::Posctl, {}, kStart + 250ms).takeover, "新任务应接受接管后的 Position 基线");
     detector.observe(Mode::Mission, {}, kStart + 300ms);
-    require(detector.observe(Mode::Posctl, {}, kStart + 350ms).takeover == Mode::Posctl,
+    result = detector.observe(Mode::Posctl, {}, kStart + 350ms);
+    require(result.takeover == Mode::Posctl && result.previous == Mode::Mission,
             "新任务中再进入 Position 应再次接管");
 }
 
@@ -54,7 +56,11 @@ void hold_completed_mission_and_expiry() {
     require(detector.observe(Mode::Hold, {}, kStart + 350ms).pending, "新航线需要本次航点完成证据");
     require(detector.observe(Mode::Mission, {}, kStart + 400ms).pending,
             "快速拨回后应继续核对首次 Loiter 是否正常");
-    require(detector.update({}, kStart + 650ms).takeover == Mode::Hold, "未完成航线进入 Hold 应中止");
+    result = detector.update({}, kStart + 650ms);
+    require(result.takeover == Mode::Hold && result.previous == Mode::Mission && !result.pending,
+            "核对超时应保留首次 Mission 到 Hold 的模式，不能被快速拨回覆盖");
+    require(!detector.observe(Mode::Hold, {}, kStart + 700ms).takeover,
+            "核对超时接管后不得重复中止");
 }
 
 void pilot_mode_overrides_pending_hold() {
@@ -64,8 +70,22 @@ void pilot_mode_overrides_pending_hold() {
     detector.expect(Action::Mission);
     require(detector.observe(Mode::Hold, {}, kStart + 50ms).pending, "应先核对本次航点是否完成");
     auto result = detector.observe(Mode::Stabilized, {}, kStart + 100ms);
-    require(result.takeover == Mode::Stabilized && !result.pending, "核对期间切到 Stabilized 必须立即中止");
+    require(result.takeover == Mode::Stabilized && result.previous == Mode::Hold && !result.pending,
+            "核对期间切到 Stabilized 必须立即中止并记录 Hold 到 Stabilized");
     require(!detector.update({false, true}, kStart + 150ms).takeover, "迟到的航点状态不得影响接管");
+}
+
+void failed_action_preserves_pending_hold_transition() {
+    ManualTakeover detector;
+    detector.observe(Mode::Mission, {}, kStart);
+    detector.start();
+    detector.expect(Action::Mission);
+    require(detector.observe(Mode::Hold, {}, kStart + 50ms).pending, "应先核对本次航点是否完成");
+    detector.observe(Mode::ReturnToLaunch, {}, kStart + 100ms);
+    detector.action_failed(Action::Mission);
+    const auto result = detector.update({false, true}, kStart + 150ms);
+    require(result.takeover == Mode::Hold && result.previous == Mode::Mission && !result.pending,
+            "航点动作失败后应立即按首次 Mission 到 Hold 接管，不被后续返航模式覆盖");
 }
 
 void allow_owned_hold_and_takeoff_handoff() {
@@ -79,7 +99,8 @@ void allow_owned_hold_and_takeoff_handoff() {
     detector.expect(Action::Takeoff);
     detector.observe(Mode::Takeoff, {}, kStart + 100ms);
     require(detector.observe(Mode::Hold, {}, kStart + 200ms).pending, "起飞结束等待目标高度遥测");
-    require(!detector.update({true, false}, kStart + 300ms).pending, "已达起飞高度应解除 Hold 核对");
+    const auto result = detector.update({true, false}, kStart + 300ms);
+    require(!result.pending && !result.takeover, "已达起飞高度应解除 Hold 核对且不触发接管");
     require(!detector.observe(Mode::Offboard, {}, kStart + 350ms).takeover, "起飞后应能进入 Offboard");
 
     detector.finish();
@@ -111,8 +132,9 @@ void unrelated_and_reconnected_modes() {
     detector.reset_link();
     require(!detector.observe(Mode::Stabilized, {}, kStart + 150ms).takeover, "重连首帧只建立基线");
     detector.observe(Mode::Unknown, {}, kStart + 200ms);
-    require(detector.observe(Mode::Posctl, {}, kStart + 250ms).takeover == Mode::Posctl,
-            "Unknown 不应遮蔽两个有效模式间的切换");
+    const auto result = detector.observe(Mode::Posctl, {}, kStart + 250ms);
+    require(result.takeover == Mode::Posctl && result.previous == Mode::Stabilized,
+            "Unknown 不应遮蔽两个有效模式间的切换或覆盖前序模式");
 }
 
 void delayed_owned_hold_after_replacement() {
@@ -135,6 +157,7 @@ int main() {
         position_baseline_and_rapid_switches();
         hold_completed_mission_and_expiry();
         pilot_mode_overrides_pending_hold();
+        failed_action_preserves_pending_hold_transition();
         allow_owned_hold_and_takeoff_handoff();
         unrelated_and_reconnected_modes();
         delayed_owned_hold_after_replacement();

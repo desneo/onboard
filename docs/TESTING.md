@@ -280,7 +280,7 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 
 ### 6.1 人工接管
 
-运行 `ctest --test-dir build -R '^(manual_takeover|task_scheduler_takeover)$' --output-on-failure` 验证模式基线、快速切换、正常 `Hold`、完成遥测延迟、任务中止与一次性告警。
+运行 `ctest --test-dir build -R '^(manual_takeover|task_scheduler_takeover)$' --output-on-failure` 验证模式基线、快速切换、正常 `Hold`、完成遥测延迟、接管前后模式、任务中止，以及接管操作日志和告警的单次记录。
 
 将机载程序部署到 `uav1` 的 `/home/firefly/plane`。
 连接 `192.168.1.56` 的 PX4 SITL，使用 `mavlink status` 确认连到 `uav1` 的机载链路，再在该 PX4 实例的控制台调高机载链路 `HEARTBEAT` 频率。命令中的端口取 PX4 侧实例的本地 UDP 端口。
@@ -294,9 +294,10 @@ mavlink stream -u <机载链路的PX4本地UDP端口> -s HEARTBEAT -r 20
 | 场景 | 通过标准 |
 | --- | --- |
 | 飞前 `Position`，随后由程序接手 | 正常起飞并进入预期自动模式。启动和重连时的首个模式不触发接管。 |
-| 正常 `Hold` | 起飞完成、`Hover`、临时高度航点与正式航点正常结束均不告警。起飞尾段短暂覆盖 Offboard 后仍可正常交接。 |
-| `Mission` 或 `Offboard` 中切入 `Loiter`、`Stabilized`、`Position` | 逐个独立验证三个入口，检查 PX4 的实际模式。航线未完成时进入 `Loiter`，在核对窗口结束前暂停下发，随后中止。接管后的出站抓包没有旧飞控指令、Offboard 设定值或切换 `Hold` 的清理报文。 |
-| 快速拨动 `Loiter → Stabilized → Position` | 第一次符合接管条件即中止。同一次执行只产生一条 `manual_takeover` 告警，Task 上报 `Aborted`。旧报文重传只回 `Ack`，清理完成后新的 Task 或 Command 可以执行。 |
+| 正常 `Hold` | 起飞完成、`Hover`、临时高度航点与正式航点正常结束均不记录接管操作日志或发送接管告警。起飞尾段短暂覆盖 Offboard 后仍可正常交接。 |
+| `Mission` 或 `Offboard` 中切入 `Loiter`、`Stabilized`、`Position` | 逐个独立验证三个入口，检查 PX4 的实际模式。接管操作日志和 `manual_takeover` 告警均包含前后模式 `previous`、`value`、停止自动控制操作，以及被中止的 `taskId` 或 `commandId`，二者内容一致。航线未完成时进入 `Loiter`，在核对窗口结束前暂停下发，随后中止。接管后的出站抓包没有旧飞控指令、Offboard 设定值或切换 `Hold` 的清理报文。 |
+| `Hold` 核对期间快速切换 | `Mission → Hold → Mission` 核对超时后仍按首次 `Mission → Hold` 判定，日志与告警保留 `previous=Mission value=Hold`。另行验证 `Mission → Hold → Stabilized` 时立即接管，记录 `previous=Hold value=Stabilized`。 |
+| 快速拨动 `Loiter → Stabilized → Position` | 第一次符合接管条件即中止。同一次执行只产生一条接管操作日志和一条 `manual_takeover` 告警，Task 上报 `Aborted`。旧报文重传只回 `Ack`，清理完成后新的 Task 或 Command 可以执行。 |
 | 地面站界面 | 提示条显示飞机、实际模式和被中止的 Task 或 Command。重复收包或轮询时，界面只提示一次。 |
 
 ### 6.2 起飞前自检

@@ -253,7 +253,8 @@ void FlightControlModule::apply_takeover_result_locked(const ManualTakeover::Res
     }
     if (result.takeover && execution_id_ != 0) {
         control_gate_ = ControlGate::Takeover;
-        takeover_event_ = ManualTakeoverEvent{execution_id_, std::string(magic_enum::enum_name(*result.takeover))};
+        takeover_event_ = ManualTakeoverEvent{execution_id_, std::string(magic_enum::enum_name(*result.takeover)),
+                                             std::string(magic_enum::enum_name(result.previous))};
     } else {
         control_gate_ = result.pending ? ControlGate::CheckingHold : ControlGate::Open;
     }

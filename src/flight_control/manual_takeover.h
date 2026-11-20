@@ -23,6 +23,7 @@ class ManualTakeover {
     struct Result {
         std::optional<Mode> takeover;
         bool pending = false;
+        Mode previous = Mode::Unknown;
     };
 
     void start() {
@@ -92,15 +93,15 @@ class ManualTakeover {
             return {};
         }
         if (mode == Mode::Stabilized || mode == Mode::Posctl) {
-            return take_over(mode);
+            return take_over(mode, previous);
         }
 
         if (mode == Mode::Hold && !hold_check_ && !requested_hold) {
             const Action reason = expected_hold(previous, now);
             if (reason == Action::Other) {
-                return take_over(mode);
+                return take_over(mode, previous);
             }
-            hold_check_ = HoldCheck{reason, now + kHoldCheckTime};
+            hold_check_ = HoldCheck{reason, now + kHoldCheckTime, previous};
         } else if (mode == Mode::Offboard && previous == Mode::Takeoff && takeoff_expected_) {
             // PX4 起飞完成的模式切换可能晚于机载首次进入 Offboard。
             takeoff_handoff_until_ = now + kTakeoffHandoffTime;
@@ -117,7 +118,7 @@ class ManualTakeover {
         const Action reason = hold_check_->reason;
         const bool expected = reason == Action::Takeoff ? takeoff_expected_ : action_ == reason;
         if (!expected || now >= hold_check_->until) {
-            return take_over(Mode::Hold);
+            return take_over(Mode::Hold, hold_check_->previous);
         }
         if (!hold_confirmed(reason, evidence)) {
             return {std::nullopt, true};
@@ -140,6 +141,7 @@ class ManualTakeover {
     struct HoldCheck {
         Action reason;
         Clock::time_point until;
+        Mode previous;
     };
 
     static bool hold_confirmed(Action reason, Evidence evidence) {
@@ -164,10 +166,10 @@ class ManualTakeover {
         takeoff_handoff_until_.reset();
     }
 
-    Result take_over(Mode mode) {
+    Result take_over(Mode mode, Mode previous) {
         taken_over_ = true;
         hold_check_.reset();
-        return {mode, false};
+        return {mode, false, previous};
     }
 
     Mode mode_ = Mode::Unknown;

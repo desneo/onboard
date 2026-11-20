@@ -14,6 +14,7 @@ struct FlightControlError {
 struct ManualTakeoverEvent {
     std::uint64_t execution_id = 0;
     std::string flight_mode;
+    std::string previous_flight_mode;
 };
 
 namespace events {
