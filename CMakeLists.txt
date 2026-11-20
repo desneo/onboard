@@ -172,6 +172,7 @@ if(BUILD_TESTING)
   target_link_libraries(midcourse_controller_test PRIVATE
     plane::common_include
     plane::eventpp
+    plane::magic_enum
     plane::midcourse_alg
     spdlog::spdlog
   )

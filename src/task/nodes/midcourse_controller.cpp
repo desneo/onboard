@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -20,6 +21,51 @@ namespace {
 
 constexpr std::size_t kRequiredHistorySize = 20;
 constexpr std::int64_t kProgressLogIntervalMs = 5000;
+
+std::string geo_text(const plane::model::GeoPoint& value) {
+    return fmt::format("{{latitude={} longitude={} height={} altitude={}}}", value.latitude, value.longitude,
+                       value.height, value.altitude);
+}
+
+std::string measurement_text(const plane::algorithm::TargetMeasurement& value) {
+    return fmt::format("{{geo={} timestamp_ms={}}}", geo_text(value.geo), value.timestamp_ms);
+}
+
+std::string history_text(const std::vector<plane::algorithm::TargetMeasurement>& history) {
+    std::string text = "[";
+    for (const auto& measurement : history) {
+        if (text.size() > 1) text += ", ";
+        text += measurement_text(measurement);
+    }
+    return text + "]";
+}
+
+std::string estimate_text(const plane::algorithm::TargetEstimate& value) {
+    return fmt::format("{{geo={} vn_m_s={} ve_m_s={} vd_m_s={} valid={} timestamp_ms={} age_ms={}}}",
+                       geo_text(value.geo), value.vn_m_s, value.ve_m_s, value.vd_m_s, value.valid, value.timestamp_ms,
+                       value.age_ms);
+}
+
+std::string command_text(const plane::algorithm::MidcourseCommand& command) {
+    if (const auto* value = std::get_if<plane::algorithm::VelocityAccelerationCommand>(&command.value)) {
+        return fmt::format(
+            "VelocityAccelerationCommand{{vn_m_s={} ve_m_s={} vd_m_s={} an_m_s2={} ae_m_s2={} ad_m_s2={} yaw_rad={}}}",
+            value->vn_m_s, value->ve_m_s, value->vd_m_s, value->an_m_s2, value->ae_m_s2, value->ad_m_s2,
+            value->yaw_rad ? fmt::format("{}", *value->yaw_rad) : "nullopt");
+    }
+    if (const auto* value = std::get_if<plane::algorithm::AttitudeCommand>(&command.value)) {
+        return fmt::format("AttitudeCommand{{quat_body_to_ned=[{}, {}, {}, {}] thrust_body=[{}, {}, {}]}}",
+                           value->quat_body_to_ned[0], value->quat_body_to_ned[1], value->quat_body_to_ned[2],
+                           value->quat_body_to_ned[3], value->thrust_body[0], value->thrust_body[1], value->thrust_body[2]);
+    }
+    return "<无指令>";
+}
+
+std::string output_text(const plane::algorithm::MidCourseOutput& output) {
+    return fmt::format("{{cmd={{mode={} value={}}} eta_seconds={} following={} terminal_confirmed={}}}",
+                       magic_enum::enum_name(output.cmd.mode), command_text(output.cmd), output.eta_seconds,
+                       output.following, output.terminal_confirmed);
+}
 
 double median_interval_s(const std::vector<plane::model::GcsTarget>& history) {
     std::vector<std::int64_t> intervals;
@@ -64,7 +110,11 @@ struct MidcourseController::Impl {
         for (const auto& target : pending_targets) {
             if (target.timestamp_ms <= last_measurement_timestamp_ms) continue;
             const plane::algorithm::TargetMeasurement measurement{target.geoPos, target.timestamp_ms};
-            if (!session->estimator.update(measurement, session->estimate, error)) {
+            SPDLOG_INFO("中制导算法 TargetEstimator::update 输入: measurement={}", measurement_text(measurement));
+            const bool updated = session->estimator.update(measurement, session->estimate, error);
+            SPDLOG_INFO("中制导算法 TargetEstimator::update 输出: 返回值={} output={} error={}", updated,
+                        updated ? estimate_text(session->estimate) : "<无有效输出>", error);
+            if (!updated) {
                 error = "目标估计器 update 失败: " + error;
                 pending_targets.clear();
                 return false;
@@ -74,8 +124,6 @@ struct MidcourseController::Impl {
                 estimator_update_logged = true;
                 SPDLOG_INFO("中制导目标估计器首次增量更新: trackId={} timestamp_ms={}", target.trackId,
                             target.timestamp_ms);
-            } else {
-                SPDLOG_DEBUG("中制导目标估计更新: trackId={} timestamp_ms={}", target.trackId, target.timestamp_ms);
             }
         }
         pending_targets.clear();
@@ -123,7 +171,7 @@ struct MidcourseController::Impl {
                 algorithm_config.cmd_accel_max_m_s2 = flight_params.mpc_acc_hor_max;
             }
             SPDLOG_INFO(
-                "中制导规划器调用 setConfig 前的配置: trackId={} use_px4_limits={} "
+                "中制导算法 MidcoursePlanner::setConfig 输入: trackId={} use_px4_limits={} "
                 "max_horizontal_speed_m_s={} max_climb_speed_m_s={} max_descent_speed_m_s={} "
                 "vehicle_mass_kg={} max_thrust_n={} v_cruise_m_s={} approach_brake_k={} tau_ff_s={} r_min_m={} "
                 "cmd_accel_max_m_s2={} update_dt_s={} target_invalid_grace_s={} control_output_mode={} "
@@ -153,7 +201,9 @@ struct MidcourseController::Impl {
                 algorithm_config.recovery_exit_hold_s, algorithm_config.follow_gain_k, algorithm_config.follow_filter_a,
                 algorithm_config.follow_vel_tau_s, algorithm_config.confirm_boresight_deg,
                 algorithm_config.confirm_rate_deg_s, algorithm_config.confirm_hold_s);
-            if (!session->planner.setConfig(algorithm_config, error)) {
+            const bool configured = session->planner.setConfig(algorithm_config, error);
+            SPDLOG_INFO("中制导算法 MidcoursePlanner::setConfig 输出: 返回值={} error={}", configured, error);
+            if (!configured) {
                 error = "中制导 setConfig 失败: " + error;
                 return false;
             }
@@ -183,7 +233,11 @@ struct MidcourseController::Impl {
             measurements.push_back({target.geoPos, target.timestamp_ms});
         }
         const plane::model::VehicleState own = state_store.own_state();
-        if (!session->estimator.init(measurements, own.startPos, estimator_dt_s, error)) {
+        SPDLOG_INFO("中制导算法 TargetEstimator::init 输入: history={} ned_ref={} update_dt_s={}",
+                    history_text(measurements), geo_text(own.startPos), estimator_dt_s);
+        const bool estimated = session->estimator.init(measurements, own.startPos, estimator_dt_s, error);
+        SPDLOG_INFO("中制导算法 TargetEstimator::init 输出: 返回值={} error={}", estimated, error);
+        if (!estimated) {
             error = "目标估计器 init 失败: " + error;
             return false;
         }
@@ -290,7 +344,15 @@ MidcourseController::TickResult MidcourseController::tick(std::string& error) {
     const plane::algorithm::MidcourseVehicleState vehicle{
         own.geoPos, own.startPos, own.vn_m_s, own.ve_m_s, own.vd_m_s};
     plane::algorithm::MidCourseOutput output;
-    if (!impl_->session->planner.update(vehicle, impl_->session->estimate, output, error)) {
+    SPDLOG_INFO(
+        "中制导算法 MidcoursePlanner::update 输入: vehicle={{geoPos={} startPos={} vn_m_s={} ve_m_s={} vd_m_s={}}} "
+        "target={}",
+        geo_text(vehicle.geoPos), geo_text(vehicle.startPos), vehicle.vn_m_s, vehicle.ve_m_s, vehicle.vd_m_s,
+        estimate_text(impl_->session->estimate));
+    const bool updated = impl_->session->planner.update(vehicle, impl_->session->estimate, output, error);
+    SPDLOG_INFO("中制导算法 MidcoursePlanner::update 输出: 返回值={} output={} error={}", updated,
+                updated ? output_text(output) : "<无有效输出>", error);
+    if (!updated) {
         error = "中制导 update 失败: " + error;
         return TickResult::Failure;
     }
@@ -312,8 +374,6 @@ MidcourseController::TickResult MidcourseController::tick(std::string& error) {
     if (!impl_->flush_pending_targets_locked(error)) {
         return TickResult::Failure;
     }
-    SPDLOG_DEBUG("中制导执行周期: eta_seconds={:.3f} following={}", output.eta_seconds,
-                 output.following ? "true" : "false");
     return TickResult::Running;
 }
 

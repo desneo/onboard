@@ -341,6 +341,14 @@ PX4 实际遥测的 `armed` 顺序为 `false → true → false`，自检全程�
 9. 使用非法捕获窗口触发 `setConfig` 失败。验证日志在调用前打印 `MidCourseConfig` 全部字段及其实际值，
    会话结束后清空 Offboard 设定值，`gcs_sim` 收到一次关联原 `taskId` 的 `TaskState`，
    其中 `status = "Failed"`、`currentBehaviorTree = "AntiUav"`、`currentNode = "Midcourse"`。
+10. 按调用顺序检查 `[info]` 的算法输入输出日志：`MidcoursePlanner::setConfig` 的全部配置及返回值，
+    `TargetEstimator::init` 的全部 20 帧 `history`、`ned_ref` 和 `update_dt_s`，
+    `TargetEstimator::update` 的 `measurement` 及完整 `output`，`MidcoursePlanner::update` 的完整
+    `vehicle`、`target` 和 `output`。检查所有地理点的 `latitude`、`longitude`、`height`、`altitude`，
+    两种控制指令的全部字段、`yaw_rad=nullopt`、`eta_seconds`、`following`、`terminal_confirmed`。
+    每次调用均保留返回值和原始 `error`，失败时不将出参标为有效值，高频日志不附加会话号、调用号或更新号。
+    可在板端使用已部署的真实算法库运行 `midcourse_controller_test` 核对日志；该测试使用模拟飞控，
+    不向飞控发送控制指令，不能替代实际飞行任务验收。
 
 板端验收只有在用户确认 SITL 已启动后才允许发送控制；网络、权限或仿真环境缺失时必须报告阻塞。
 报告保存在 `logs/fleet/<run_id>/midcourse-report.json`，并保留各阶段 GCS 和机载原始日志。

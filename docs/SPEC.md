@@ -144,6 +144,9 @@
   `MPC_Z_VEL_MAX_DN`、`MPC_ACC_HOR_MAX` 缓存值。断连时缓存失效，重连后重新读取；
 - `update_dt_s` 须与 `[behavior_tree].tick_interval_ms` 的秒值一致。省略时按行为树周期换算；
 - 中制导在调用规划器 `setConfig` 前记录实际传入的 `MidCourseConfig` 全部字段，再初始化目标估计器。
+  `setConfig`、`TargetEstimator::init/update` 和 `MidcoursePlanner::update` 的每次调用均以 `[info]`
+  按调用顺序记录完整输入、返回值、有效输出和原始 `error`；初始化历史逐帧保留，控制输出包含实际指令类型及全部字段，
+  `yaw_rad` 为空时明确记录 `nullopt`，失败时标记无有效输出，不重复附加会话号、调用号或更新号。
   每个 BT tick 先更新规划器并下发控制，
   再按时间顺序用全部新雷达测量更新目标估计器，使新估计在下一 tick 生效；
 - 默认的 `VelocityAcceleration` 档下发 NED 速度、加速度前馈及航向，算法未提供期望航向时保持当前航向。

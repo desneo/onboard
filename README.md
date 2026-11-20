@@ -179,6 +179,10 @@ tail -f logs/plane.log
 原始错误等代码标识保留原文。PX4 参数使用 `MPC_XY_VEL_MAX`、`MPC_Z_VEL_MAX_UP`、
 `MPC_Z_VEL_MAX_DN`、`MPC_ACC_HOR_MAX` 原名。中制导在调用 `setConfig` 前记录限值来源和 `MidCourseConfig` 全部字段的实际值，
 并记录初始化历史帧数和周期、首次目标增量更新以及 Offboard 启动。
+中制导算法的 `MidcoursePlanner::setConfig`、`TargetEstimator::init/update` 和 `MidcoursePlanner::update`
+每次调用均以 `[info]` 输出完整入参、返回值、有效出参和原始 `error`，包括初始化全部历史量测、
+本机与目标位置速度、速度加速度指令或姿态四元数与推力，以及 `eta_seconds`、`following` 和 `terminal_confirmed`。
+`yaw_rad` 为空时显示 `nullopt`；调用失败时显示无有效输出。位置和算法字段保持公共接口原名。
 多机部署同样使用此目录，不再为每次启动创建日期目录。
 飞控 `STATUSTEXT` 按 `[info]` 输出，格式为 `飞控 STATUSTEXT：type=<类型> text=<飞控原文>`，保留 MAVSDK 的 `type` 和 `text`。
 `plane.stdout.log` 单独记录标准输出和错误输出，包含重复的程序日志以及第三方库、插件和启动脚本输出；
