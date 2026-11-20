@@ -438,10 +438,7 @@ bool to_payload(const plane::model::VehicleState& value, std::string& out, std::
                    {"fcLinkState", value.fcLinkState},
                    {"inair", value.inair},
                    {"currentBehaviorTree", value.currentBehaviorTree},
-                   {"currentNode", value.currentNode},
-                   {"cameraAngle_roll_deg", finite_or_default(value.cameraAngle_roll_deg)},
-                   {"cameraAngle_pitch_deg", finite_or_default(value.cameraAngle_pitch_deg)},
-                   {"cameraAngle_yaw_deg", finite_or_default(value.cameraAngle_yaw_deg)}}
+                   {"currentNode", value.currentNode}}
                   .dump();
         return true;
     } catch (const json::exception& e) {
@@ -471,9 +468,6 @@ bool from_payload(const std::string& payload, plane::model::VehicleState& out, s
         out.inair = in.value("inair", false);
         out.currentBehaviorTree = in.value("currentBehaviorTree", std::string{});
         out.currentNode = in.value("currentNode", std::string{});
-        out.cameraAngle_roll_deg = number_or_default<float>(in, "cameraAngle_roll_deg");
-        out.cameraAngle_pitch_deg = number_or_default<float>(in, "cameraAngle_pitch_deg");
-        out.cameraAngle_yaw_deg = number_or_default<float>(in, "cameraAngle_yaw_deg");
         return true;
     } catch (const json::exception& e) {
         error = e.what();

@@ -24,6 +24,7 @@ int main() {
     assert(plane::communication::to_payload(source, payload, error));
     assert(payload.find("null") == std::string::npos);
     assert(payload.find("\"inair\":true") != std::string::npos);
+    assert(payload.find("cameraAngle_") == std::string::npos);
 
     plane::model::VehicleState decoded;
     assert(plane::communication::from_payload(payload, decoded, error));
@@ -47,9 +48,7 @@ int main() {
         "startPos":{"latitude":null,"longitude":null,"height":null,"altitude":null},
         "roll_deg":null,"pitch_deg":null,"yaw_deg":null,
         "vn_m_s":null,"ve_m_s":null,"vd_m_s":null,
-        "airspeed_m_s":null,"voltage_v":null,
-        "cameraAngle_roll_deg":null,"cameraAngle_pitch_deg":null,
-        "cameraAngle_yaw_deg":null
+        "airspeed_m_s":null,"voltage_v":null
     })";
     decoded.inair = true;
     assert(plane::communication::from_payload(legacy_null_payload, decoded, error));
