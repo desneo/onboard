@@ -205,6 +205,10 @@
 
 视频流不由机载程序采集、处理或转发。
 
+本机和友机的 `VehicleState.inair` 为布尔值，表示飞控报告的是否离地，默认 `false`。
+本机状态直接取已有的飞控 `in_air` 遥测缓存，并随 `VehicleState` 广播。接收时缺少该字段取
+`false`，字段存在但不是布尔值时解码失败；链路是否可用仍由 `fcLinkState` 表示。
+
 机载收到合法 `TaskInfo` 或 `Command` 后交给任务调度，并向 `sendToStation` 返回 `Ack`。
 `senderId` 用于标识发送方，机载按报文类型和内容处理控制消息。
 

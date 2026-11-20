@@ -436,6 +436,7 @@ bool to_payload(const plane::model::VehicleState& value, std::string& out, std::
                    {"voltage_v", finite_or_default(value.voltage_v)},
                    {"flightMode", value.flightMode},
                    {"fcLinkState", value.fcLinkState},
+                   {"inair", value.inair},
                    {"currentBehaviorTree", value.currentBehaviorTree},
                    {"currentNode", value.currentNode},
                    {"cameraAngle_roll_deg", finite_or_default(value.cameraAngle_roll_deg)},
@@ -467,6 +468,7 @@ bool from_payload(const std::string& payload, plane::model::VehicleState& out, s
         out.voltage_v = number_or_default<float>(in, "voltage_v");
         out.flightMode = in.value("flightMode", std::string{});
         out.fcLinkState = in.value("fcLinkState", std::string{});
+        out.inair = in.value("inair", false);
         out.currentBehaviorTree = in.value("currentBehaviorTree", std::string{});
         out.currentNode = in.value("currentNode", std::string{});
         out.cameraAngle_roll_deg = number_or_default<float>(in, "cameraAngle_roll_deg");

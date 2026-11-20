@@ -666,6 +666,7 @@ void FlightControlModule::state_loop() {
             state.voltage_v = cache_.voltage_v;
             state.flightMode = std::string(magic_enum::enum_name(cache_.flight_mode));
             state.fcLinkState = connected_ ? "connected" : "disconnected";
+            state.inair = cache_.in_air;
         }
         state_store_.update_own_state(state);
     }

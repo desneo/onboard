@@ -479,10 +479,10 @@ int main(int argc, char** argv) {
                     SPDLOG_WARN("忽略非法友机状态: senderId={} error={}", envelope.sender_id, filter_error);
                 }
                 SPDLOG_INFO(
-                    "收到飞机状态: planeId={} fcLinkState={} flightMode={} voltage_v={} "
+                    "收到飞机状态: planeId={} fcLinkState={} inair={} flightMode={} voltage_v={} "
                     "geoPos.latitude={} geoPos.longitude={} geoPos.height={} geoPos.altitude={}",
-                    state.planeId, state.fcLinkState, state.flightMode, state.voltage_v, state.geoPos.latitude,
-                    state.geoPos.longitude, state.geoPos.height, state.geoPos.altitude);
+                    state.planeId, state.fcLinkState, state.inair, state.flightMode, state.voltage_v,
+                    state.geoPos.latitude, state.geoPos.longitude, state.geoPos.height, state.geoPos.altitude);
             } else {
                 SPDLOG_WARN("飞机状态解析失败: senderId={} error={}", envelope.sender_id, decode_error);
             }

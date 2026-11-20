@@ -171,6 +171,8 @@ cd build/plane
 
 `zenoh_liveliness` 在本机关闭组播和 gossip，使用两个互相拨号的机载 peer 和一个地面站 peer 验证 TCP 单播收发、`AgentInfo` 查询、退出下线和重连上线。
 `state_store_quiet` 验证连续状态更新仍发布内部事件并更新缓存，但不产生日志。
+`serialization_vehicle_state` 验证 `inair` 默认为 `false`、`true`/`false` 布尔值往返、
+缺少字段时覆盖旧值为 `false`，以及数字、字符串、`null`、数组和对象值被拒绝。
 部署工具按最新运行中的上下线事件验证在线状态，不再把日志条数当作收到的位置样本数。
 
 默认运行包须包含 `config/zenoh.json5`，由 `plane.ini` 的 `zenoh_config_file` 加载，
@@ -327,6 +329,7 @@ PX4 实际遥测的 `armed` 顺序为 `false → true → false`，自检全程�
 | 控制报文 | 不同发送方的合法 TaskInfo 和 Command 均进入任务调度 |
 | 接收确认 | 收到合法 TaskInfo 或 Command 后向 sendToStation 返回对应 messageId 的 Ack |
 | 状态广播 | 按配置周期广播本机最新 VehicleState |
+| 离地状态 | uav1 连接清单指定的 SITL，订阅 `sendToAll`，确认 `VehicleState.inair` 是布尔值，随地面、起飞、降落呈 `false → true → false`；`gcs_sim` 的飞机状态日志输出 `inair`，同时核对 `fcLinkState=connected` |
 | 友机状态 | 按 planeId 更新和查询其他无人机最新状态，位置更新不打印日志 |
 | 友机上下线 | Zenoh 存活标记出现时打印一次上线，撤销或失联时打印一次下线，恢复后重新打印上线 |
 | 任务状态 | 地面站能获得状态、行为树和当前节点；无任务时为 None |
