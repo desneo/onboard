@@ -256,7 +256,8 @@ int main() {
                         "vn_m_s=7", "ve_m_s=8", "vd_m_s=9", "yaw_rad="});
         require_fields(sink->matching("::init 输入:").front().text,
                        {"history=[", "timestamp_ms=1800000000000", "timestamp_ms=1800000019000", "ned_ref={",
-                        "max_horizontal_speed_m_s=", "update_dt_s=", "confirm_hold_s="});
+                        "max_horizontal_speed_m_s=", "update_dt_s=", "recovery_vz_deadband_m_s=0.1",
+                        "confirm_hold_s="});
 
         // 新会话不继承上一会话的日志时间，两个输出模式都保留完整字段。
         controller.stop();

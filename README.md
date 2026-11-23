@@ -347,6 +347,7 @@ SITL 测试统一使用 `tests/fleet.ini` 的 `simulator.host`（当前为 `192.
 | `midcourse_algorithm.replan_period_s` | 重规划尝试的最小间隔，默认 1.0 秒 |
 | `midcourse_algorithm.replan_freeze_s` | 重规划近端冻结时长，默认 2.5 秒 |
 | `midcourse_algorithm.track_gain_d` | 轨迹跟踪速度误差反馈增益，默认 `0.0`，仅使用位置反馈 |
+| `midcourse_algorithm.recovery_vz_deadband_m_s` | 高度恢复退出时允许的下降速度死区，默认 `0.1 m/s` |
 | `midcourse_algorithm.enable_internal_terminal_confirmation` | 允许算法内部确认，默认 `false`。开启后达到确认条件时算法输出悬停设定值，任务继续运行 |
 | `midcourse_algorithm.confirm_boresight_deg` / `confirm_rate_deg_s` / `confirm_hold_s` | 内部确认的离轴角上限、弹轴角速率上限和持续时长，默认 5 度、5 度/秒和 2 秒 |
 

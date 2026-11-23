@@ -214,7 +214,7 @@ struct MidcourseController::Impl {
             "sigma_dot_max_deg_s={} speed_ratio={} tol_pos_m={} tol_vel_m={} tol_accel_m_s2={} min_altitude_m={} "
             "use_cost_search={} w_time={} w_speed={} w_accel={} replan_period_s={} replan_freeze_s={} "
             "track_gain_k={} track_gain_d={} track_max_corr={} recovery_gain_k={} recovery_margin_m={} "
-            "recovery_exit_hold_s={} follow_gain_k={} follow_filter_a={} follow_vel_tau_s={} "
+            "recovery_exit_hold_s={} recovery_vz_deadband_m_s={} follow_gain_k={} follow_filter_a={} follow_vel_tau_s={} "
             "confirm_boresight_deg={} confirm_rate_deg_s={} confirm_hold_s={}",
             history_text(measurements), geo_text(own.startPos), locked_track_id, config.midcourse_use_px4_limits,
             algorithm_config.max_horizontal_speed_m_s, algorithm_config.max_climb_speed_m_s,
@@ -232,7 +232,8 @@ struct MidcourseController::Impl {
             algorithm_config.w_accel, algorithm_config.replan_period_s, algorithm_config.replan_freeze_s,
             algorithm_config.track_gain_k, algorithm_config.track_gain_d, algorithm_config.track_max_corr,
             algorithm_config.recovery_gain_k, algorithm_config.recovery_margin_m,
-            algorithm_config.recovery_exit_hold_s, algorithm_config.follow_gain_k, algorithm_config.follow_filter_a,
+            algorithm_config.recovery_exit_hold_s, algorithm_config.recovery_vz_deadband_m_s,
+            algorithm_config.follow_gain_k, algorithm_config.follow_filter_a,
             algorithm_config.follow_vel_tau_s, algorithm_config.confirm_boresight_deg,
             algorithm_config.confirm_rate_deg_s, algorithm_config.confirm_hold_s);
         error.clear();
