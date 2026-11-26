@@ -22,7 +22,7 @@ namespace {
 
 constexpr std::size_t kRequiredHistorySize = 20;
 constexpr std::int64_t kProgressLogIntervalMs = 5000;
-constexpr std::int64_t kUpdateLogIntervalMs = 500;
+constexpr std::int64_t kUpdateLogIntervalMs = 1000;
 constexpr double kPi = 3.14159265358979323846;
 
 std::string geo_text(const plane::model::GeoPoint& value) {
