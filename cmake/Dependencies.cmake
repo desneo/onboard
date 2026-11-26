@@ -7,7 +7,35 @@ set(PLANE_COMMON_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/../common/common_include"
 set(PLANE_MIDCOURSE_ALG_LIBRARY
     "${CMAKE_SOURCE_DIR}/../algorithm/midcourse_alg/build/libmidcourse_alg.so"
     CACHE FILEPATH "中制导算法 aarch64 动态库")
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+set(_plane_target_arch "${CMAKE_SYSTEM_PROCESSOR}")
+if(NOT _plane_target_arch MATCHES "^(aarch64|arm64|ARM64)$")
+  if(CMAKE_CXX_COMPILER_TARGET MATCHES "^(aarch64|arm64|ARM64)")
+    set(_plane_target_arch "aarch64")
+  else()
+    foreach(_plane_compiler IN ITEMS "${CMAKE_CXX_COMPILER}" "${CMAKE_C_COMPILER}")
+      if(_plane_compiler)
+        get_filename_component(_plane_compiler_name "${_plane_compiler}" NAME)
+        if(_plane_compiler_name MATCHES "(aarch64|arm64|ARM64)")
+          set(_plane_target_arch "aarch64")
+          break()
+        endif()
+      endif()
+    endforeach()
+  endif()
+endif()
+if(NOT _plane_target_arch MATCHES "^(aarch64|arm64|ARM64)$" AND CMAKE_CXX_COMPILER)
+  execute_process(
+    COMMAND "${CMAKE_CXX_COMPILER}" -dumpmachine
+    OUTPUT_VARIABLE _plane_cxx_machine
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+  )
+  if(_plane_cxx_machine MATCHES "^(aarch64|arm64|ARM64)")
+    set(_plane_target_arch "aarch64")
+  endif()
+endif()
+
+if(_plane_target_arch MATCHES "^(aarch64|arm64|ARM64)$")
   set(PLANE_PLATFORM_ARCH "arm64")
 else()
   set(PLANE_PLATFORM_ARCH "x64")
@@ -98,3 +126,36 @@ foreach(_target fmt::fmt spdlog::spdlog GeographicLib::GeographicLib MAVSDK::mav
     message(FATAL_ERROR "缺少 CMake target: ${_target}")
   endif()
 endforeach()
+
+set(_plane_is_arm64_target FALSE)
+if(PLANE_PLATFORM_DIR MATCHES "^arm64/" OR _plane_target_arch MATCHES "^(aarch64|arm64|ARM64)$")
+  set(_plane_is_arm64_target TRUE)
+endif()
+
+if(_plane_is_arm64_target AND
+   NOT CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$" AND
+   CMAKE_CXX_COMPILER)
+  execute_process(
+    COMMAND "${CMAKE_CXX_COMPILER}" -print-file-name=libzmq.so.5
+    OUTPUT_VARIABLE _plane_zmq_lib
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+  )
+  # 交叉编译环境未安装 arm64 系统库 libzmq5（运行期由目标板提供），
+  # 允许共享库间接依赖在目标板解析，同时保持本工程目标文件严格检查未定义符号。
+  if(_plane_zmq_lib STREQUAL "libzmq.so.5" OR NOT EXISTS "${_plane_zmq_lib}")
+    target_link_options(plane_behaviortree INTERFACE -Wl,--allow-shlib-undefined)
+  endif()
+endif()
+
+get_filename_component(_plane_midcourse_alg_dir "${PLANE_MIDCOURSE_ALG_LIBRARY}" DIRECTORY)
+set(_plane_bundle_lib_dir_list
+  "${PLANE_3RDPARTY_DIR}/fmt/12.2.0/${PLANE_PLATFORM_DIR}/lib"
+  "${PLANE_3RDPARTY_DIR}/spdlog/v1.17.0/${PLANE_PLATFORM_DIR}/lib"
+  "${PLANE_3RDPARTY_DIR}/geographiclib/v2.7/${PLANE_PLATFORM_DIR}/lib"
+  "${PLANE_3RDPARTY_DIR}/mavsdk/v3.17.4/${PLANE_PLATFORM_DIR}/lib"
+  "${PLANE_3RDPARTY_DIR}/zenohc/1.10.0/${PLANE_PLATFORM_DIR}/lib"
+  "${PLANE_3RDPARTY_DIR}/behaviortree/4.10.0/${PLANE_PLATFORM_DIR}/lib"
+  "${_plane_midcourse_alg_dir}"
+)
+list(JOIN _plane_bundle_lib_dir_list ":" PLANE_BUNDLE_LIB_DIRS)

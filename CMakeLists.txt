@@ -86,7 +86,11 @@ target_link_libraries(plane PRIVATE
   plane::deps
 )
 # 可执行文件直接输出到 build/plane/，该目录作为可整体拷贝的独立运行目录。
-set_target_properties(plane PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plane")
+set_target_properties(plane PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plane"
+  BUILD_WITH_INSTALL_RPATH TRUE
+  INSTALL_RPATH "\$ORIGIN/lib"
+)
 
 include(CTest)
 add_subdirectory(tools/gcs_sim)
@@ -269,7 +273,7 @@ endif()
 # 默认构建即组装 build/plane 独立运行目录：复制三方库、改写 rpath；不分发图像插件。
 add_custom_target(package_plane ALL
   COMMAND bash "${CMAKE_SOURCE_DIR}/tools/bundle_plane.sh" "${CMAKE_BINARY_DIR}" "${CMAKE_SOURCE_DIR}"
-    "${PLANE_MIDCOURSE_ALG_LIBRARY}"
+    "${PLANE_MIDCOURSE_ALG_LIBRARY}" "${PLANE_BUNDLE_LIB_DIRS}"
   DEPENDS plane
   COMMENT "组装 build/plane 独立运行目录（三方库 + rpath）"
   VERBATIM
