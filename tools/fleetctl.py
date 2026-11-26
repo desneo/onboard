@@ -1458,7 +1458,7 @@ def command_test_agent_info(args: argparse.Namespace, config: FleetConfig, remot
         raise FleetError(f"AgentInfo 验证失败: {exc}，证据目录: {run_dir}") from exc
 
 
-def radar_history_ready(text: str, target_id: str = "", required_size: int = 20) -> bool:
+def radar_history_ready(text: str, target_id: str = "", *, required_size: int) -> bool:
     """依据当前运行日志中的缓存帧数判断就绪，不将降频日志条数当作雷达帧数。"""
     return any(
         (not target_id or observed_track_id == target_id) and int(history_size) >= required_size
@@ -1620,6 +1620,15 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
         deployment = prepare_plane_deployment(plane, bundle, remote, run_dir, config.simulator.host)
         configuration = deployment.configuration
         check_sitl_profile_listeners(config, (configuration,), remote)
+        raw_target_history_size = configuration.get("midcourse", "target_history_size", "20")
+        try:
+            target_history_size = int(raw_target_history_size)
+        except ValueError as exc:
+            raise FleetError(
+                f"target_history_size 无效: {raw_target_history_size}（必须为 5～30 的整数）"
+            ) from exc
+        if not 5 <= target_history_size <= 30:
+            raise FleetError(f"target_history_size 无效: {target_history_size}（必须在 5～30 范围内）")
         flight_endpoint = configuration.get("flight_control", "udp_url")
         if configuration.get("flight_control", "link_type") == "serial":
             flight_endpoint = f"serial://{configuration.get('flight_control', 'serial_device')}:{configuration.get('flight_control', 'serial_baud')}"
@@ -1633,6 +1642,7 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
         use_px4_limits = configuration.get("midcourse_algorithm", "use_px4_limits", "false").lower() in {"1", "true", "on"}
         report["flight_endpoint"] = flight_endpoint
         report["control_output_mode"] = mode
+        report["target_history_size"] = target_history_size
         report["backup"] = backup_plane_runtime(plane, remote, run_id)
         save()
         stop_planes(planes, remote)
@@ -1694,6 +1704,22 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
             rf"geoPos.altitude=([-+0-9.eE]+)", state_text)
         if not state_matches or abs(float(state_matches[-1][0])) < 1.0 or abs(float(state_matches[-1][1])) < 1.0:
             raise FleetError("飞控尚未给出有效经纬度，环境未就绪")
+
+        def initialized_target(text: str) -> str | None:
+            matches = re.findall(
+                r"中制导初始化完成: trackId=([^\s]+) history_size=(\d+)(?=\s|$)", text
+            )
+            if not matches:
+                return None
+            actual_target, actual_size_text = matches[-1]
+            actual_size = int(actual_size_text)
+            if actual_size != target_history_size:
+                raise FleetError(
+                    "中制导初始化历史帧数与部署配置不一致: "
+                    f"history_size={actual_size} target_history_size={target_history_size}"
+                )
+            return actual_target
+
         if manual_task:
             if "Zenoh 已上线" not in plane_log("ready"):
                 raise FleetError("机载 Zenoh 尚未上线，环境未就绪")
@@ -1739,10 +1765,9 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
                 text = task_log("manual-running")
                 if "行为树结束: currentBehaviorTree=AntiUav" in text:
                     raise FleetError("反无任务在正常运行验收完成前结束，请检查目标更新和失败日志")
-                locked = re.search(r"中制导初始化完成: trackId=([^\s]+)", text)
-                if locked is None:
+                actual_target = initialized_target(text)
+                if actual_target is None:
                     return False
-                actual_target = locked.group(1)
                 if target_id and actual_target != target_id:
                     raise FleetError(f"实际锁定航迹与指定 track_id 不一致: trackId={actual_target}")
                 report["target_track_id"] = actual_target
@@ -1804,7 +1829,7 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
         save()
         print(
             "\n[midcourse] 板端自检通过，请现在向 " + plane.host + ":7790 持续发送雷达 UDP 数据。\n"
-            "[midcourse] 确认指定或唯一目标首帧后立即下发反无任务；任务下发后请继续发送至少 21 帧。\n"
+            f"[midcourse] 确认指定或唯一目标首帧后立即下发反无任务；任务下发后请继续发送至少 {target_history_size + 1} 帧。\n"
             "[midcourse] 7790 只需发送雷达航迹，防守机状态由 GCS 从 Zenoh 获取。\n"
             + (f"[midcourse] 本次锁定靶机 track_id={target_id}。\n" if target_id else
                "[midcourse] 本次未指定 track_id，雷达数据必须只有一个可用靶机候选。\n"),
@@ -1832,17 +1857,22 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
         report["flight_or_task_commands_sent"] = True
         save()
         print(
-            "\n[midcourse] 已下发反无任务，请保持雷达持续发送，以重新收集 20 帧并验证第 21 帧增量更新。\n"
+            f"\n[midcourse] 已下发反无任务，请保持雷达持续发送，以重新收集 {target_history_size} 帧"
+            f"并验证第 {target_history_size + 1} 帧增量更新。\n"
             "[midcourse] GCS 会过滤 50 米内匹配到友机的航迹；友机未出现在雷达帧中不会阻塞靶机转发。\n",
             flush=True,
         )
 
+        def automatic_midcourse_ready() -> bool:
+            text = plane_log("midcourse-wait")
+            return (initialized_target(text) is not None
+                    and "中制导算法首次增量量测更新" in text
+                    and offboard_started in text
+                    and "value=Offboard" in text)
+
         wait_until(
-            f"任务下发后外部雷达 20+1 帧到达并启动 {mode} Offboard",
-            lambda: "中制导初始化完成" in plane_log("midcourse-wait")
-            and "中制导算法首次增量量测更新" in plane_log("midcourse-wait")
-            and offboard_started in plane_log("midcourse-wait")
-            and "value=Offboard" in plane_log("midcourse-wait"),
+            f"任务下发后外部雷达 {target_history_size}+1 帧到达并启动 {mode} Offboard",
+            automatic_midcourse_ready,
             args.radar_timeout,
         )
         text_before_stop = plane_log("midcourse-running")
@@ -1863,7 +1893,10 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
             raise FleetError("飞控系统参数未在中制导会话启动前完成缓存")
         if not (0 <= algorithm_init_index < algorithm_update_index < target_update_index):
             raise FleetError("中制导接口调用顺序不符合 init → update → updateTarget")
-        passed(f"本次会话重新收集 20 帧、接口调用顺序、第 21 帧更新、{mode} Offboard 与持续运行验证通过")
+        passed(
+            f"本次会话重新收集 {target_history_size} 帧、接口调用顺序、第 {target_history_size + 1} 帧更新、"
+            f"{mode} Offboard 与持续运行验证通过"
+        )
 
         stop_command = shlex.join(
             [

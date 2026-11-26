@@ -20,7 +20,6 @@
 namespace plane::task {
 namespace {
 
-constexpr std::size_t kRequiredHistorySize = 20;
 constexpr std::int64_t kProgressLogIntervalMs = 5000;
 constexpr std::int64_t kUpdateLogIntervalMs = 1000;
 constexpr double kPi = 3.14159265358979323846;
@@ -184,10 +183,11 @@ struct MidcourseController::Impl {
         }
         const std::vector<plane::model::GcsTarget> history =
             target_store.gcs_target_updates_after(locked_track_id, target_revision).history;
-        if (history.size() < kRequiredHistorySize) {
+        const auto required_history_size = static_cast<std::size_t>(config.midcourse_target_history_size);
+        if (history.size() < required_history_size) {
             return false;
         }
-        const auto first = history.end() - static_cast<std::ptrdiff_t>(kRequiredHistorySize);
+        const auto first = history.end() - static_cast<std::ptrdiff_t>(required_history_size);
         std::vector<plane::model::GcsTarget> init_history(first, history.end());
         for (std::size_t index = 1; index < init_history.size(); ++index) {
             if (init_history[index].timestamp_ms <= init_history[index - 1].timestamp_ms) {
@@ -296,6 +296,11 @@ bool MidcourseController::begin(const std::string& requested_track_id, std::stri
         error = "中制导配置非法: target_timeout_ms 必须为正整数";
         return false;
     }
+    if (impl_->config.midcourse_target_history_size < plane::core::kMinMidcourseTargetHistorySize ||
+        impl_->config.midcourse_target_history_size > plane::core::kMaxMidcourseTargetHistorySize) {
+        error = "中制导配置非法: target_history_size 必须为 5 到 30 的整数";
+        return false;
+    }
     if (impl_->config.midcourse_init_timeout_ms <= 0 || impl_->config.bt_tick_interval_ms <= 0) {
         error = "中制导配置非法";
         return false;
@@ -311,8 +316,9 @@ bool MidcourseController::begin(const std::string& requested_track_id, std::stri
     impl_->last_measurement_timestamp_ms = 0;
     impl_->effective_config.reset();
     impl_->session.emplace();
-    SPDLOG_INFO("中制导会话启动: requested_track_id={} target_timeout_ms={}",
-                requested_track_id.empty() ? "<自动>" : requested_track_id, impl_->config.midcourse_target_timeout_ms);
+    SPDLOG_INFO("中制导会话启动: requested_track_id={} target_history_size={} target_timeout_ms={}",
+                requested_track_id.empty() ? "<自动>" : requested_track_id,
+                impl_->config.midcourse_target_history_size, impl_->config.midcourse_target_timeout_ms);
     return true;
 }
 
@@ -337,7 +343,9 @@ MidcourseController::TickResult MidcourseController::tick(std::string& error) {
                                                     .gcs_target_updates_after(impl_->locked_track_id,
                                                                               impl_->target_revision)
                                                     .history.size();
-                error = "等待中制导 20 帧雷达历史超时，当前 " + std::to_string(count) + "/20";
+                error = fmt::format("等待中制导 {} 帧雷达历史超时，当前 {}/{}",
+                                    impl_->config.midcourse_target_history_size, count,
+                                    impl_->config.midcourse_target_history_size);
                 return TickResult::Failure;
             }
             if (now - impl_->last_progress_log_ms >= kProgressLogIntervalMs) {
@@ -348,9 +356,11 @@ MidcourseController::TickResult MidcourseController::tick(std::string& error) {
                                                     .gcs_target_updates_after(impl_->locked_track_id,
                                                                               impl_->target_revision)
                                                     .history.size();
-                SPDLOG_INFO("等待中制导雷达历史: trackId={} history_size={}/20 elapsed_ms={} remaining_ms={}",
-                            impl_->locked_track_id.empty() ? "<自动>" : impl_->locked_track_id, count,
-                            now - impl_->start_ms, impl_->config.midcourse_init_timeout_ms - (now - impl_->start_ms));
+                SPDLOG_INFO(
+                    "等待中制导雷达历史: trackId={} history_size={}/{} elapsed_ms={} remaining_ms={}",
+                    impl_->locked_track_id.empty() ? "<自动>" : impl_->locked_track_id, count,
+                    impl_->config.midcourse_target_history_size, now - impl_->start_ms,
+                    impl_->config.midcourse_init_timeout_ms - (now - impl_->start_ms));
             }
             return TickResult::Running;
         }

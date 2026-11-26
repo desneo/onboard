@@ -15,7 +15,6 @@
 namespace plane::target {
 namespace {
 
-constexpr std::size_t kGcsTargetHistoryDepth = 20;
 constexpr std::int64_t kTargetSummaryIntervalMs = 20000;
 constexpr std::int64_t kMissingTargetIntervalMs = 2000;
 
@@ -273,7 +272,7 @@ void TargetStore::on_gcs_target(const plane::model::GcsTarget& target) {
         gcs_latest_[target.trackId] = target;
         auto& history = gcs_history_[target.trackId];
         history.push_back(TargetHistoryItem{target, ++gcs_target_revision_, now});
-        if (history.size() > kGcsTargetHistoryDepth) {
+        if (history.size() > static_cast<std::size_t>(config_.midcourse_target_history_size)) {
             history.pop_front();
         }
         history_size = history.size();

@@ -82,8 +82,9 @@ struct TargetStoreTestAccess {
 namespace {
 
 struct Fixture {
-    Fixture() : store(events, config), sink(std::make_shared<CaptureSink>()) {
+    explicit Fixture(int target_history_size = 20) : store(events, config), sink(std::make_shared<CaptureSink>()) {
         test_now_ms = 100000;
+        config.midcourse_target_history_size = target_history_size;
         auto logger = std::make_shared<spdlog::logger>("目标日志测试", sink);
         logger->set_level(spdlog::level::trace);
         spdlog::set_default_logger(logger);
@@ -181,6 +182,28 @@ void test_revision_updates() {
             "增量快照应与航迹历史一致，最多保留最近 20 帧");
     require(fixture.store.gcs_target_updates_after("B", 0).history.size() == 1,
             "其他航迹的 20 帧裁剪不得影响已保留的目标");
+}
+
+void test_configured_history_depth() {
+    Fixture fixture(30);
+    for (std::int64_t index = 0; index < 35; ++index) {
+        fixture.send(100000 + index, "A", 1000 + index);
+    }
+    const auto history = fixture.store.gcs_target_history("A");
+    require(history.size() == 30 && history.front().timestamp_ms == 1005 && history.back().timestamp_ms == 1034,
+            "target_history_size=30 时应保留每航迹最近 30 帧");
+    const auto updates = fixture.store.gcs_target_updates_after("A", 0);
+    require(updates.history.size() == 30 && updates.history.front().timestamp_ms == 1005 &&
+                updates.history.back().timestamp_ms == 1034,
+            "增量快照应采用配置的目标历史缓存深度");
+
+    for (std::int64_t index = 0; index < 31; ++index) {
+        fixture.send(101000 + index, "B", 2000 + index);
+    }
+    const auto other_history = fixture.store.gcs_target_history("B");
+    require(other_history.size() == 30 && other_history.front().timestamp_ms == 2001 &&
+                fixture.store.gcs_target_history("A").size() == 30,
+            "配置缓存深度应逐航迹独立生效");
 }
 
 void test_never_received_and_cancel() {
@@ -308,6 +331,7 @@ int main() {
     try {
         test_summary_and_history();
         test_revision_updates();
+        test_configured_history_depth();
         test_never_received_and_cancel();
         test_invalid_frames_and_recovery();
         test_old_cache_and_readable_time();

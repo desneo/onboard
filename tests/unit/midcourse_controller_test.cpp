@@ -103,8 +103,10 @@ plane::model::GcsTarget target(const std::string& id, int index) {
 }
 
 struct TimeoutFixture {
-    TimeoutFixture() : store(events, config), controller(events, config, flight, state, store) {
+    explicit TimeoutFixture(int target_history_size = 20)
+        : store(events, config), controller(events, config, flight, state, store) {
         test_now_ms = 1'000'000;
+        config.midcourse_target_history_size = target_history_size;
         state.value.geoPos = target("", 0).geoPos;
         state.value.startPos = state.value.geoPos;
         state.value.yaw_deg = 42.0F;
@@ -220,6 +222,21 @@ void test_history_wait_uses_last_reception() {
     require(fixture.flight.velocity_calls == 0, "不足 20 帧时不得下发控制");
 }
 
+void test_configured_history_size() {
+    TimeoutFixture fixture(30);
+    fixture.begin("target");
+    for (int index = 0; index < 29; ++index) fixture.send("target", index);
+    fixture.running();
+    require(fixture.flight.velocity_calls == 0 && fixture.flight.attitude_calls == 0,
+            "target_history_size=30 时收到 29 帧不得初始化或下发控制");
+    fixture.send("target", 29);
+    fixture.running();
+    require(fixture.flight.velocity_calls == 1, "target_history_size=30 时第 30 帧应完成初始化并下发控制");
+    fixture.send("target", 30);
+    fixture.running();
+    require(fixture.flight.velocity_calls == 2, "target_history_size=30 时第 31 帧应完成首次增量更新");
+}
+
 void test_only_accepted_current_target_refreshes_timeout() {
     TimeoutFixture fixture;
     fixture.config.midcourse_target_timeout_ms = 700;
@@ -251,6 +268,7 @@ void test_only_accepted_current_target_refreshes_timeout() {
 void test_independent_initialization_timeout_and_invalid_config() {
     TimeoutFixture fixture;
     fixture.config.midcourse_init_timeout_ms = 200;
+    fixture.config.midcourse_target_history_size = 30;
     fixture.config.midcourse_target_timeout_ms = 100;
     fixture.seed(1);
     fixture.begin("target");
@@ -262,7 +280,7 @@ void test_independent_initialization_timeout_and_invalid_config() {
     }
     test_now_ms += 21;
     require(fixture.controller.tick(fixture.error) == plane::task::MidcourseController::TickResult::Failure &&
-                fixture.error.find("等待中制导 20 帧雷达历史超时") == 0,
+                fixture.error == "等待中制导 30 帧雷达历史超时，当前 4/30",
             "持续有更新但历史不足仍须遵守独立初始化超时: " + fixture.error);
     fixture.controller.stop();
     for (const int invalid : {0, -1}) {
@@ -270,6 +288,13 @@ void test_independent_initialization_timeout_and_invalid_config() {
         require(!fixture.controller.begin("target", fixture.error) &&
                     fixture.error.find("target_timeout_ms 必须为正整数") != std::string::npos,
                 "直接构造非法 AppConfig 时不得启动会话");
+    }
+    fixture.config.midcourse_target_timeout_ms = 100;
+    for (const int invalid : {4, 31}) {
+        fixture.config.midcourse_target_history_size = invalid;
+        require(!fixture.controller.begin("target", fixture.error) &&
+                    fixture.error.find("target_history_size 必须为 5 到 30 的整数") != std::string::npos,
+                "直接构造越界 target_history_size 时不得启动会话");
     }
 }
 
@@ -284,6 +309,7 @@ int main() {
         test_target_timeout_boundaries_and_restart();
         test_new_session_ignores_cached_history();
         test_history_wait_uses_last_reception();
+        test_configured_history_size();
         test_only_accepted_current_target_refreshes_timeout();
         test_independent_initialization_timeout_and_invalid_config();
         test_now_ms = 1'000'000;

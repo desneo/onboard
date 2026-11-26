@@ -71,10 +71,10 @@ SITL UDP 端口取包内预置，主机统一使用 `192.168.1.56`。
 python3 tools/fleetctl.py test-midcourse --count 1 --target-track-id <track_id>
 ```
 
-该命令不会启动或停止 SITL；完成板端自检后会提示持续向 `192.168.1.100:7790` 发送至少
-21 个时间戳严格递增的 `radar_tracks` 扫描。7790 只接收雷达数据，防守机状态由 GCS 从
+该命令不会启动或停止 SITL；以下 N 表示包内 `midcourse.target_history_size` 的配置值。完成板端自检后会提示持续向
+`192.168.1.100:7790` 发送至少 N+1 个时间戳严格递增的 `radar_tracks` 扫描。7790 只接收雷达数据，防守机状态由 GCS 从
 Zenoh 获取，雷达帧无需包含防守机航迹。空扫描和 `coasting` 航迹会被合法接收但不发布为
-`GcsTarget`；测试所需的 20+1 帧必须包含指定 `track_id` 的 `confirmed` 航迹。运行日志中的
+`GcsTarget`；测试所需的 N+1 帧必须包含指定 `track_id` 的 `confirmed` 航迹。运行日志中的
 雷达接收统计用于区分 UDP 未到达、合法但无靶机输出的扫描和已发布靶机。
 
 用户通过地面站自行下发反无任务时，使用人工发令模式：
@@ -215,6 +215,7 @@ cd build/plane
 配置加载失败必须保留原有效配置，切换预置时不得残留另一种飞控连接的信息。
 中制导配置测试覆盖巡航与前馈参数、重规划周期与冻结时长、内部末端确认及其阈值、
 `recovery_vz_deadband_m_s` 的默认值与自定义值、
+`target_history_size` 的默认值 20、自定义边界值 5 和 30、越界值及非法整数输入、
 `update_dt_s` 与行为树周期一致和不一致的情况，以及省略 `update_dt_s` 时的周期换算。
 `fleetctl` 单测验证测试清单默认路径、`--config` 覆盖及完整运行包的唯一配置来源：
 板端已有配置损坏、格式陈旧或为空均不影响有效包部署；包内 `profile` 缺失、为空、引用包外文件或预置无效时，
@@ -225,7 +226,7 @@ SITL 使用包内预置端口及清单主机并检查实际监听，串口连接
 `radar_target_filter` 位于 `tools/gcs_sim/tests`，验证不带速度和方位角的雷达航迹、JSON 容错、
 空扫描、coasting 忽略、confirmed 过滤、严格时间戳输入、多友机全局匹配、
 50 米门限、NED 状态外推、过期状态失败关闭，以及“友机未出现在雷达帧时仍转发靶机”。
-`midcourse_controller` 使用真实 `libmidcourse_alg.so`，验证任务前历史不参与本次初始化、会话内重新收集 20 帧、增量更新、
+`midcourse_controller` 使用真实 `libmidcourse_alg.so`，验证任务前历史不参与本次初始化、会话内按配置重新收集 N 帧、增量更新、
 INI／PX4 限值来源、两种输出模式、会话重置和错误路径，以及目标更新超时的初始化、运行和边界场景；
 独立日志测试使用可控单调时间、日志捕获与算法门面测试替身，验证 2 Hz 成对日志的 499／500 ms 边界、
 首次调用、失败立即输出、会话重启和逐 tick 调用数量；真实算法库回归用于验证集成行为。
@@ -403,9 +404,10 @@ PX4 实际遥测的 `armed` 顺序为 `false → true → false`，自检全程�
 1. `ldd build/plane/plane` 包含 `libmidcourse_alg.so`，不包含 Pluma；算法库可由 `$ORIGIN/lib` 解析。
 2. `AntiUav` 根据飞行状态选择直接 Midcourse、Takeoff → Midcourse 或 Arm → Takeoff → Midcourse。
 3. 指定 ID 时锁定该目标；未指定时只允许唯一候选，不得在多个目标间自动跳换。
-4. 机载从进程启动起持续缓存目标，但任务前缓存不参与本次算法初始化。每次进入 Midcourse 后必须为锁定航迹
-   重新收到 20 帧有效且时间戳严格递增的数据，收齐前不得调用 `MidcourseAlgorithm::init` 或启动 Offboard；
-   第 21 帧产生首次增量更新。`MidcourseAlgorithm::update` 每个 50 ms tick 先于本 tick 的 `updateTarget` 调用。
+4. `[midcourse].target_history_size` 默认 20，范围 5～30，同时决定每航迹缓存深度和初始化所需帧数 N。
+   机载从进程启动起持续缓存目标，但任务前缓存不参与本次算法初始化。每次进入 Midcourse 后必须为锁定航迹
+   重新收到 N 帧有效且时间戳严格递增的数据，收齐前不得调用 `MidcourseAlgorithm::init` 或启动 Offboard；
+   第 N+1 帧产生首次增量更新。`MidcourseAlgorithm::update` 每个 50 ms tick 先于本 tick 的 `updateTarget` 调用。
 5. `[midcourse_algorithm]` 默认使用 INI 的四项限值，飞控缓存未就绪仍可校验并初始化聚合算法。
    `use_px4_limits = true` 时分别使用 `MPC_XY_VEL_MAX`、`MPC_Z_VEL_MAX_UP`、`MPC_Z_VEL_MAX_DN`、`MPC_ACC_HOR_MAX` 缓存值，
    缓存未就绪时任务失败，断连时缓存失效，重连后重新获取。
@@ -416,17 +418,17 @@ PX4 实际遥测的 `armed` 顺序为 `false → true → false`，自检全程�
    每次进入 Midcourse 都从零开始检查本次会话的目标更新，任务前缓存不得导致立即失败，也不得刷新计时或参与初始化。
    首帧必须在 5 秒内到达，之后每帧本次会话接受的锁定航迹有效更新都重新开始 5 秒计时；恰好等于阈值时继续，
    严格超过阈值后下一次 BT tick 失败，失败 tick 不再调用算法或下发控制。重复、乱序和其他航迹数据
-   不计入本次 20 帧，也不刷新计时。
+   不计入本次 N 帧，也不刷新计时。
    默认配置下，3 秒预测宽限期结束后至目标更新超时前，任务继续执行算法保持指令；
    超时后停止 Offboard、清空设定值、重置会话并取消目标需求，上报一次关联原 `taskId` 的 `Failed`。
    检查中文日志包含 `trackId`、未更新时长、实际阈值及本次会话从未收到或目标更新中断的说明；
-   恢复目标更新不得恢复旧任务。持续有有效数据但不足 20 帧时，原 30 秒历史初始化上限仍生效，
+   恢复目标更新不得恢复旧任务。持续有有效数据但不足 N 帧时，原 30 秒历史初始化上限仍生效，
    Arm／Takeoff 不受目标更新超时限制。Task Stop、新控制内容和异常退出均停止 Offboard 并重置会话。
 8. GCS 从 Zenoh 获取防守机状态，只过滤 50 米内实际匹配到的雷达航迹；雷达帧没有友机航迹时仍转发靶机，状态缺失或过期时暂停整帧。
-9. 使用非法捕获窗口触发提前配置校验失败，确认不等待 20 帧历史且失败原因保留原始校验错误，
+9. 使用非法捕获窗口触发提前配置校验失败，确认不等待 N 帧历史且失败原因保留原始校验错误，
    会话结束后清空 Offboard 设定值，`gcs_sim` 收到一次关联原 `taskId` 的 `TaskState`，
    其中 `status = "Failed"`、`currentBehaviorTree = "AntiUav"`、`currentNode = "Midcourse"`。
-10. 按调用顺序检查 `[info]` 的算法输入输出日志：`MidcourseAlgorithm::init` 的全部 20 帧 `history`、
+10. 按调用顺序检查 `[info]` 的算法输入输出日志：`MidcourseAlgorithm::init` 的全部 N 帧 `history`、
     `ned_ref`、完整 `MidCourseConfig`、返回值和原始 `error`；`MidcourseAlgorithm::update` 的完整
     `vehicle`（含实际 `yaw_rad`）和 `output`；`MidcourseAlgorithm::updateTarget` 的 `measurement`、返回值和原始 `error`。
     检查所有地理点的 `latitude`、`longitude`、`height`、`altitude`，
@@ -451,11 +453,11 @@ PX4 实际遥测的 `armed` 顺序为 `false → true → false`，自检全程�
 
 | 场景 | 通过标准 |
 | --- | --- |
-| GCS 目标 | 按 trackId 保存最新值，每个目标最多保留 20 条历史 |
+| GCS 目标 | 按 trackId 保存最新值，每个目标最多保留 `midcourse.target_history_size` 条历史 |
 | 目标日志汇总 | 每航迹首帧立即输出，约 1 Hz 连续更新至少 45 秒时后续约每 20 秒汇总，计数正确；无新数据不输出汇总 |
 | 所需目标缺失 | AntiUav 创建满 2 秒且所需航迹连续 2 秒无有效更新后，每 2 秒输出提示，包含真实接收时间、时区偏移、timestamp_ms 和未更新时长 |
 | 目标提示边界 | 错误航迹、重复或乱序数据不续期；从未收到明确标注；恢复后重新计时；停止、替换、接管、失败及完成后不再提示 |
-| 历史就绪判断 | fleetctl 根据匹配航迹在本次 Midcourse 会话内重新接收的数据判断 20 帧就绪，不使用任务前缓存，不累计日志条数，也不跨航迹累计 |
+| 历史就绪判断 | fleetctl 按 `midcourse.target_history_size` 根据匹配航迹在本次 Midcourse 会话内重新接收的数据判断 N 帧就绪，不使用任务前缓存，不累计日志条数，也不跨航迹累计 |
 | 动态安全高度 | SystemParam 更新后，后续默认起飞使用新值 |
 | 实机低电压 | 飞控连接正常且首次低于阈值时发送一次告警 |
 | 电压恢复 | 电压恢复后解除锁存，再次低电压可重新告警 |

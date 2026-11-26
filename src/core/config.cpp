@@ -334,6 +334,7 @@ std::string canonical_key(const std::string& section, const std::string& key) {
         {"behavior_tree.height_adjust_tolerance_m", "bt_height_adjust_tolerance_m"},
         {"safety.alert_voltage_threshold_v", "alert_voltage_threshold_v"},
         {"midcourse.init_timeout_ms", "midcourse_init_timeout_ms"},
+        {"midcourse.target_history_size", "midcourse_target_history_size"},
         {"midcourse.target_timeout_ms", "midcourse_target_timeout_ms"},
         {"midcourse.target_invalid_grace_s", "midcourse_target_invalid_grace_s"},
         {"midcourse.r_min_m", "midcourse_r_min_m"},
@@ -452,6 +453,12 @@ std::string read_main_config(const std::string& path, AppConfig& out) {
             out.alert_voltage_threshold_v = std::stod(value);
         } else if (key == "midcourse_init_timeout_ms") {
             out.midcourse_init_timeout_ms = std::stoi(value);
+        } else if (key == "midcourse_target_history_size") {
+            const int history_size = parse_positive_int(value);
+            if (history_size < kMinMidcourseTargetHistorySize || history_size > kMaxMidcourseTargetHistorySize) {
+                throw std::invalid_argument("midcourse.target_history_size 必须为 5 到 30 的整数");
+            }
+            out.midcourse_target_history_size = history_size;
         } else if (key == "midcourse_target_timeout_ms") {
             const int timeout_ms = parse_positive_int(value);
             if (timeout_ms == 0) {
@@ -491,6 +498,7 @@ bool load_config(const std::string& path, AppConfig& out, const std::vector<std:
     AppConfig loaded = out;
     loaded.log_flush_interval_ms = kDefaultLogFlushIntervalMs;
     loaded.pod_state_report_hz = kDefaultPodStateReportHz;
+    loaded.midcourse_target_history_size = kDefaultMidcourseTargetHistorySize;
     loaded.midcourse_target_timeout_ms = kDefaultMidcourseTargetTimeoutMs;
     std::string profile;
     try {

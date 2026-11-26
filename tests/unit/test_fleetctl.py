@@ -844,7 +844,7 @@ class FleetCtlTest(unittest.TestCase):
         running = (
             "行为树结构: currentBehaviorTree=AntiUav\n"
             "AntiUav 中制导任务已创建: taskId=user-task targetTrackId=target\n"
-            "中制导会话启动\n中制导初始化完成: trackId=target history_size=20\n"
+            "中制导会话启动\n中制导初始化完成: trackId=target history_size=30\n"
             "Offboard 速度及加速度启动\n中制导算法首次增量量测更新\n"
         ) + self.midcourse_update_logs()
         failure = (
@@ -880,7 +880,10 @@ class FleetCtlTest(unittest.TestCase):
             root = Path(directory)
             (root / "build").mkdir()
             (root / "build/gcs_sim").touch()
-            deployment = fleetctl.PlaneDeployment(root / "prepared", self.configuration(plane))
+            deployment = fleetctl.PlaneDeployment(
+                root / "prepared",
+                self.configuration(plane, "[midcourse]\ntarget_history_size = 30\n"),
+            )
             with patch.object(fleetctl, "ROOT", root), \
                  patch.object(fleetctl, "preflight") as preflight, \
                  patch.object(fleetctl, "ensure_bundle", return_value=root / "bundle"), \
@@ -904,6 +907,7 @@ class FleetCtlTest(unittest.TestCase):
             self.assertEqual(report["task_id"], "user-task")
             self.assertEqual(report["target_track_id"], "target")
             self.assertEqual(report["target_timeout_ms"], 5000)
+            self.assertEqual(report["target_history_size"], 30)
             self.assertEqual(report["timeout_evidence"],
                              {"track_id": "target", "age_ms": 5001, "target_timeout_ms": 5000})
             self.assertFalse(report["flight_or_task_commands_sent"])
@@ -933,8 +937,13 @@ class FleetCtlTest(unittest.TestCase):
                         f"{prefix}: trackId=mavlink_rc:1 timestamp_ms=1795076655339 "
                         f"history_size={history_size} 更新数量=20\n"
                     )
-                    self.assertEqual(fleetctl.radar_history_ready(text), history_size >= 20)
-                    self.assertEqual(fleetctl.radar_history_ready(text, "mavlink_rc:1"), history_size >= 20)
+                    self.assertEqual(
+                        fleetctl.radar_history_ready(text, required_size=20), history_size >= 20
+                    )
+                    self.assertEqual(
+                        fleetctl.radar_history_ready(text, "mavlink_rc:1", required_size=20),
+                        history_size >= 20,
+                    )
                     self.assertTrue(fleetctl.radar_history_ready(text, "mavlink_rc:1", required_size=1))
 
     def test_radar_history_requires_exact_requested_track(self):
@@ -943,19 +952,19 @@ class FleetCtlTest(unittest.TestCase):
             "GCS 目标更新汇总: trackId=targetX1 timestamp_ms=2000 history_size=20 更新数量=20\n"
             "GCS 目标更新: trackId=target.10 timestamp_ms=3000 history_size=20\n"
         )
-        self.assertTrue(fleetctl.radar_history_ready(text))
-        self.assertTrue(fleetctl.radar_history_ready(text, "targetX1"))
-        self.assertFalse(fleetctl.radar_history_ready(text, "target.1"))
-        self.assertFalse(fleetctl.radar_history_ready(text, "target"))
-        self.assertFalse(fleetctl.radar_history_ready(text, "missing"))
+        self.assertTrue(fleetctl.radar_history_ready(text, required_size=20))
+        self.assertTrue(fleetctl.radar_history_ready(text, "targetX1", required_size=20))
+        self.assertFalse(fleetctl.radar_history_ready(text, "target.1", required_size=20))
+        self.assertFalse(fleetctl.radar_history_ready(text, "target", required_size=20))
+        self.assertFalse(fleetctl.radar_history_ready(text, "missing", required_size=20))
 
     def test_radar_history_does_not_accumulate_log_lines_or_tracks(self):
         text = "".join(
             f"GCS 目标更新: trackId=target-{index % 2} timestamp_ms={1000 + index} history_size=10\n"
             for index in range(40)
         )
-        self.assertFalse(fleetctl.radar_history_ready(text))
-        self.assertFalse(fleetctl.radar_history_ready(text, "target-0"))
+        self.assertFalse(fleetctl.radar_history_ready(text, required_size=20))
+        self.assertFalse(fleetctl.radar_history_ready(text, "target-0", required_size=20))
 
     def test_radar_history_ignores_unrelated_and_incomplete_logs(self):
         for text in (
@@ -967,8 +976,8 @@ class FleetCtlTest(unittest.TestCase):
             "GCS 目标更新汇总: trackId=target timestamp_ms=1000 history_size=-20\n",
         ):
             with self.subTest(text=text):
-                self.assertFalse(fleetctl.radar_history_ready(text))
-                self.assertFalse(fleetctl.radar_history_ready(text, "target"))
+                self.assertFalse(fleetctl.radar_history_ready(text, required_size=20))
+                self.assertFalse(fleetctl.radar_history_ready(text, "target", required_size=20))
 
     def test_presence_preflight_only_contacts_selected_boards(self):
         config = fleetctl.load_config(fleetctl.DEFAULT_CONFIG)
