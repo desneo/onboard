@@ -142,13 +142,13 @@ struct MidcourseController::Impl {
     bool check_target_timeout_locked(std::string& error) const {
         std::optional<std::int64_t> received_ms;
         if (!locked_track_id.empty()) {
-            received_ms = target_store.gcs_target_last_received_ms(locked_track_id);
+            received_ms = target_store.gcs_target_updates_after(locked_track_id, target_revision).last_received_ms;
         }
         const auto age_ms = plane::core::now_ms() - received_ms.value_or(start_ms);
         if (age_ms <= config.midcourse_target_timeout_ms) {
             return true;
         }
-        const char* reason = !received_ms ? "从未收到" : *received_ms < start_ms ? "缓存已过期" : "目标更新中断";
+        const char* reason = !received_ms ? "本次会话从未收到" : "目标更新中断";
         error = fmt::format("中制导目标雷达信息超时: trackId={} 未更新时长={}毫秒 target_timeout_ms={}（{}）",
                             locked_track_id.empty() ? "<自动>" : locked_track_id, age_ms,
                             config.midcourse_target_timeout_ms, reason);
@@ -182,7 +182,8 @@ struct MidcourseController::Impl {
         if (initialized) {
             return true;
         }
-        const std::vector<plane::model::GcsTarget> history = target_store.gcs_target_history(locked_track_id);
+        const std::vector<plane::model::GcsTarget> history =
+            target_store.gcs_target_updates_after(locked_track_id, target_revision).history;
         if (history.size() < kRequiredHistorySize) {
             return false;
         }
@@ -262,6 +263,7 @@ struct MidcourseController::Impl {
     std::string requested_track_id;
     std::string locked_track_id;
     std::int64_t start_ms = 0;
+    std::uint64_t target_revision = 0;
     std::int64_t last_progress_log_ms = 0;
     std::int64_t last_measurement_timestamp_ms = 0;
     std::vector<plane::model::GcsTarget> pending_targets;
@@ -303,6 +305,7 @@ bool MidcourseController::begin(const std::string& requested_track_id, std::stri
     impl_->requested_track_id = requested_track_id;
     impl_->locked_track_id.clear();
     impl_->pending_targets.clear();
+    impl_->target_revision = impl_->target_store.gcs_target_revision();
     impl_->start_ms = plane::core::now_ms();
     impl_->last_progress_log_ms = impl_->start_ms - kProgressLogIntervalMs;
     impl_->last_measurement_timestamp_ms = 0;
@@ -330,7 +333,10 @@ MidcourseController::TickResult MidcourseController::tick(std::string& error) {
             if (now - impl_->start_ms > impl_->config.midcourse_init_timeout_ms) {
                 const std::size_t count = impl_->locked_track_id.empty()
                                               ? 0
-                                              : impl_->target_store.gcs_target_history(impl_->locked_track_id).size();
+                                              : impl_->target_store
+                                                    .gcs_target_updates_after(impl_->locked_track_id,
+                                                                              impl_->target_revision)
+                                                    .history.size();
                 error = "等待中制导 20 帧雷达历史超时，当前 " + std::to_string(count) + "/20";
                 return TickResult::Failure;
             }
@@ -338,7 +344,10 @@ MidcourseController::TickResult MidcourseController::tick(std::string& error) {
                 impl_->last_progress_log_ms = now;
                 const std::size_t count = impl_->locked_track_id.empty()
                                               ? 0
-                                              : impl_->target_store.gcs_target_history(impl_->locked_track_id).size();
+                                              : impl_->target_store
+                                                    .gcs_target_updates_after(impl_->locked_track_id,
+                                                                              impl_->target_revision)
+                                                    .history.size();
                 SPDLOG_INFO("等待中制导雷达历史: trackId={} history_size={}/20 elapsed_ms={} remaining_ms={}",
                             impl_->locked_track_id.empty() ? "<自动>" : impl_->locked_track_id, count,
                             now - impl_->start_ms, impl_->config.midcourse_init_timeout_ms - (now - impl_->start_ms));

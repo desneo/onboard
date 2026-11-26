@@ -103,7 +103,12 @@ std::vector<plane::model::GcsTarget> TargetStore::gcs_target_history(const std::
     if (it == gcs_history_.end()) {
         return {};
     }
-    return {it->second.begin(), it->second.end()};
+    std::vector<plane::model::GcsTarget> result;
+    result.reserve(it->second.size());
+    for (const auto& item : it->second) {
+        result.push_back(item.target);
+    }
+    return result;
 }
 
 std::optional<std::int64_t> TargetStore::gcs_target_last_received_ms(const std::string& track_id) const {
@@ -111,6 +116,30 @@ std::optional<std::int64_t> TargetStore::gcs_target_last_received_ms(const std::
     const auto reception = receptions_.find(track_id);
     if (reception == receptions_.end()) return std::nullopt;
     return reception->second.received_ms;
+}
+
+std::uint64_t TargetStore::gcs_target_revision() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return gcs_target_revision_;
+}
+
+GcsTargetUpdates TargetStore::gcs_target_updates_after(const std::string& track_id,
+                                                       std::uint64_t after_revision) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    GcsTargetUpdates result;
+    const auto history = gcs_history_.find(track_id);
+    if (history == gcs_history_.end()) {
+        return result;
+    }
+    result.history.reserve(history->second.size());
+    for (const auto& item : history->second) {
+        if (item.revision <= after_revision) {
+            continue;
+        }
+        result.history.push_back(item.target);
+        result.last_received_ms = item.received_ms;
+    }
+    return result;
 }
 
 void TargetStore::set_required_gcs_target(std::optional<std::string> track_id) {
@@ -243,7 +272,7 @@ void TargetStore::on_gcs_target(const plane::model::GcsTarget& target) {
         }
         gcs_latest_[target.trackId] = target;
         auto& history = gcs_history_[target.trackId];
-        history.push_back(target);
+        history.push_back(TargetHistoryItem{target, ++gcs_target_revision_, now});
         if (history.size() > kGcsTargetHistoryDepth) {
             history.pop_front();
         }

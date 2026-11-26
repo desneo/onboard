@@ -215,9 +215,13 @@ int main() {
         require(store.start(), "日志测试目标缓存启动失败");
         plane::task::MidcourseController controller(events, config, flight, state, store);
         controller.start();
-        for (int index = 0; index < 20; ++index) {
-            events.publish(plane::communication::events::kGcsTargetReceived, target(index));
-        }
+        int next_target_index = 0;
+        auto publish_session_history = [&]() {
+            for (int count = 0; count < 20; ++count) {
+                events.publish(plane::communication::events::kGcsTargetReceived, target(next_target_index++));
+            }
+        };
+        publish_session_history();
         std::string error;
         auto tick = [&](std::int64_t elapsed_ms) {
             test_now_ms = 1'000'000 + elapsed_ms;
@@ -226,11 +230,14 @@ int main() {
                     "日志测试控制 tick 失败: " + error);
         };
         require(controller.begin("log-target", error), "日志测试会话启动失败");
+        publish_session_history();
         tick(0);
         require_update_pairs(*sink, {1'000'000});
         for (int index = 1; index <= 9; ++index) {
             test_now_ms = 1'000'000 + index * 50;
-            if (index <= 2) events.publish(plane::communication::events::kGcsTargetReceived, target(19 + index));
+            if (index <= 2) {
+                events.publish(plane::communication::events::kGcsTargetReceived, target(next_target_index++));
+            }
             tick(index * 50);
         }
         tick(499);
@@ -255,7 +262,7 @@ int main() {
                        {"geoPos={latitude=30 longitude=120 height=20 altitude=300}", "startPos={latitude=",
                         "vn_m_s=7", "ve_m_s=8", "vd_m_s=9", "yaw_rad="});
         require_fields(sink->matching("::init 输入:").front().text,
-                       {"history=[", "timestamp_ms=1800000000000", "timestamp_ms=1800000019000", "ned_ref={",
+                       {"history=[", "timestamp_ms=1800000020000", "timestamp_ms=1800000039000", "ned_ref={",
                         "max_horizontal_speed_m_s=", "update_dt_s=", "recovery_vz_deadband_m_s=0.1",
                         "confirm_hold_s="});
 
@@ -264,6 +271,7 @@ int main() {
         config.midcourse_algorithm.control_output_mode = plane::algorithm::MidcourseControlMode::Attitude;
         test_now_ms = 1'001'001;
         require(controller.begin("log-target", error), "姿态日志会话启动失败");
+        publish_session_history();
         tick(1001);
         require_update_pairs(*sink, {1'000'000, 1'000'500, 1'001'000, 1'001'001});
         require(algorithm_calls.init == 2 && sink->matching("::init 输入:").size() == 2 &&
@@ -291,6 +299,7 @@ int main() {
         config.midcourse_algorithm.control_output_mode = plane::algorithm::MidcourseControlMode::VelocityAcceleration;
         test_now_ms = 1'001'003;
         require(controller.begin("log-target", error), "缺省航向日志会话启动失败");
+        publish_session_history();
         tick(1003);
         require_fields(sink->matching("::update 输出:").back().text, {"yaw_rad=nullopt", "返回值=true"});
         require_update_pairs(*sink, {1'000'000, 1'000'500, 1'001'000, 1'001'001, 1'001'002, 1'001'003});
@@ -299,12 +308,12 @@ int main() {
         // init 自身耗时跨过超时阈值时，不应再调用 update 或下发控制。
         config.midcourse_target_timeout_ms = 10;
         test_now_ms = 1'002'000;
-        events.publish(plane::communication::events::kGcsTargetReceived, target(22));
         algorithm_calls.init_advance_ms = 11;
         const int init_before_slow_init = algorithm_calls.init;
         const int update_before_slow_init = algorithm_calls.update;
         const int controls_before_slow_init = flight.velocity_calls + flight.attitude_calls;
         require(controller.begin("log-target", error), "初始化耗时超时场景启动失败");
+        publish_session_history();
         require(controller.tick(error) == plane::task::MidcourseController::TickResult::Failure &&
                     error.find("中制导目标雷达信息超时:") == 0 &&
                     error.find("未更新时长=11毫秒 target_timeout_ms=10") != std::string::npos,
@@ -320,10 +329,10 @@ int main() {
         algorithm_calls.init_advance_ms = 0;
         algorithm_calls.update_advance_ms = 11;
         test_now_ms = 1'003'000;
-        events.publish(plane::communication::events::kGcsTargetReceived, target(23));
         const int update_before_slow_update = algorithm_calls.update;
         const int controls_before_slow_update = flight.velocity_calls + flight.attitude_calls;
         require(controller.begin("log-target", error), "算法计算耗时超时场景启动失败");
+        publish_session_history();
         require(controller.tick(error) == plane::task::MidcourseController::TickResult::Failure &&
                     error.find("中制导目标雷达信息超时:") == 0 &&
                     error.find("未更新时长=11毫秒 target_timeout_ms=10") != std::string::npos,

@@ -144,6 +144,45 @@ void test_summary_and_history() {
             "无需求不提示，无数据不产生汇总");
 }
 
+void test_revision_updates() {
+    Fixture fixture;
+    require(fixture.store.gcs_target_revision() == 0, "新目标缓存版本应从 0 开始");
+
+    fixture.send(100000, "A", 1000);
+    const auto baseline = fixture.store.gcs_target_revision();
+    require(baseline == 1, "首个有效目标应递增全局版本");
+    fixture.send(100100, "A", 1001);
+    fixture.send(100200, "B", 2000);
+
+    const auto a_updates = fixture.store.gcs_target_updates_after("A", baseline);
+    require(a_updates.history.size() == 1 && a_updates.history.front().timestamp_ms == 1001 &&
+                a_updates.last_received_ms == 100100,
+            "航迹更新快照应只返回基线后的数据及其接收时间");
+    const auto b_updates = fixture.store.gcs_target_updates_after("B", baseline);
+    require(b_updates.history.size() == 1 && b_updates.history.front().timestamp_ms == 2000 &&
+                b_updates.last_received_ms == 100200,
+            "全局版本过滤后各航迹数据应保持隔离");
+
+    const auto accepted_revision = fixture.store.gcs_target_revision();
+    fixture.send(100300, "A", 1001);
+    fixture.send(100400, "A", 999);
+    require(fixture.store.gcs_target_revision() == accepted_revision,
+            "重复或乱序目标不得递增全局版本");
+    const auto rejected_updates = fixture.store.gcs_target_updates_after("A", accepted_revision);
+    require(rejected_updates.history.empty() && !rejected_updates.last_received_ms,
+            "重复或乱序目标不得出现在增量快照中");
+
+    for (std::int64_t index = 2; index <= 25; ++index) {
+        fixture.send(101000 + index, "A", 1000 + index);
+    }
+    const auto retained = fixture.store.gcs_target_updates_after("A", 0);
+    require(retained.history.size() == 20 && retained.history.front().timestamp_ms == 1006 &&
+                retained.history.back().timestamp_ms == 1025 && retained.last_received_ms == 101025,
+            "增量快照应与航迹历史一致，最多保留最近 20 帧");
+    require(fixture.store.gcs_target_updates_after("B", 0).history.size() == 1,
+            "其他航迹的 20 帧裁剪不得影响已保留的目标");
+}
+
 void test_never_received_and_cancel() {
     Fixture fixture;
     fixture.store.set_required_gcs_target("wanted");
@@ -268,6 +307,7 @@ void test_worker_wakeup_and_restart() {
 int main() {
     try {
         test_summary_and_history();
+        test_revision_updates();
         test_never_received_and_cancel();
         test_invalid_frames_and_recovery();
         test_old_cache_and_readable_time();

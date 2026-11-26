@@ -35,6 +35,9 @@ class TargetStore final : public plane::core::IModule, public TargetStoreApi {
     bool gcs_target(const std::string& track_id, plane::model::GcsTarget& out) const override;
     std::vector<plane::model::GcsTarget> gcs_target_history(const std::string& track_id) const override;
     std::optional<std::int64_t> gcs_target_last_received_ms(const std::string& track_id) const override;
+    std::uint64_t gcs_target_revision() const override;
+    GcsTargetUpdates gcs_target_updates_after(const std::string& track_id,
+                                              std::uint64_t after_revision) const override;
     void set_required_gcs_target(std::optional<std::string> track_id) override;
     void lock_required_gcs_target(const std::string& track_id) override;
 
@@ -46,6 +49,12 @@ class TargetStore final : public plane::core::IModule, public TargetStoreApi {
         std::chrono::system_clock::time_point received_time;
         std::int64_t last_summary_ms = 0;
         std::size_t pending_updates = 0;
+    };
+
+    struct TargetHistoryItem {
+        plane::model::GcsTarget target;
+        std::uint64_t revision = 0;
+        std::int64_t received_ms = 0;
     };
 
     struct RequiredTarget {
@@ -71,8 +80,9 @@ class TargetStore final : public plane::core::IModule, public TargetStoreApi {
     const plane::core::AppConfig& config_;
     mutable std::mutex mutex_;
     std::unordered_map<std::string, plane::model::GcsTarget> gcs_latest_;
-    std::unordered_map<std::string, std::deque<plane::model::GcsTarget>> gcs_history_;
+    std::unordered_map<std::string, std::deque<TargetHistoryItem>> gcs_history_;
     std::unordered_map<std::string, Reception> receptions_;
+    std::uint64_t gcs_target_revision_ = 0;
     std::optional<RequiredTarget> required_target_;
     // 输出与取消需求串行，避免取消返回后仍输出旧需求的提示。
     std::mutex notice_mutex_;

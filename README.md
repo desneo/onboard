@@ -20,7 +20,9 @@
 本版本完全移除本地视觉处理。`AntiUav` 任务恢复中制导阶段，但不恢复视觉／末制导；任务持续运行，
 直到目标雷达信息超时、任务失败、收到 Task Stop、新控制内容、人工接管或进程退出。
 整个中制导阶段（含等待初始化历史）按 `midcourse.target_timeout_ms` 检查目标更新，默认 5000 ms。
-进入时缓存已过期会立即失败并显式记录原因，超时后停止 Offboard 并上报 `Failed`。
+超时从每次进入 Midcourse 时重新计时；任务前缓存不触发立即失败，也不参与本次算法初始化。
+本次会话必须重新收到目标航迹 20 帧有效且时间戳严格递增的数据后才初始化并启动 Offboard；
+首帧和任意后续有效帧之间超过阈值时停止 Offboard 并上报 `Failed`。
 
 ### 单机飞行控制
 
@@ -330,7 +332,7 @@ SITL 测试统一使用 `tests/fleet.ini` 的 `simulator.host`（当前为 `192.
 | `behavior_tree.takeoff_tolerance_m` | 起飞高度判定容差 |
 | `behavior_tree.height_adjust_timeout_ms` | 航线开始前调整相对高度的超时 |
 | `behavior_tree.height_adjust_tolerance_m` | 航线开始前调整相对高度的到达容差 |
-| `midcourse.init_timeout_ms` | 等待严格递增的 20 帧雷达历史的最长时间，默认 30000 ms |
+| `midcourse.init_timeout_ms` | 等待本次 Midcourse 会话重新收到严格递增的 20 帧雷达数据的最长时间，默认 30000 ms |
 | `midcourse.target_timeout_ms` | 当前目标连续无有效更新的超时，默认 5000 ms，必须为正整数；整个 Midcourse 阶段适用 |
 | `midcourse_algorithm.use_px4_limits` | 默认 `false`，使用 INI 的四项规划限值；`true` 使用 PX4 缓存 |
 | `midcourse_algorithm.max_horizontal_speed_m_s` | 水平速度限值，默认 60 m/s |
@@ -410,8 +412,9 @@ python3 tools/fleetctl.py test-midcourse --count 1 --target-track-id <track_id>
 ```
 
 工具部署到 `uav1`，监听 `192.168.1.100:7790`。机载程序从启动起持续缓存每个航迹最近 20 帧，
-中制导会话直接使用已有历史，不从任务启动时重新计数；测试继续发送第 21 帧并验证增量更新、
-当前配置的 Offboard 输出、持续运行和 Task Stop 清理。目标 ID 留空时，机载只在当前候选唯一时自动锁定。
+但每次进入 Midcourse 都建立独立的初始化数据集，不使用进入前缓存。测试在会话开始后重新发送目标航迹
+20 帧有效且时间戳严格递增的数据，确认初始化和 Offboard 只在这 20 帧收齐后发生，再发送第 21 帧验证
+增量更新、持续运行和 Task Stop 清理。目标 ID 留空时，机载只在当前候选唯一时自动锁定。
 
 由用户通过地面站下发任务并联合验收时，执行：
 
@@ -426,8 +429,9 @@ python3 tools/fleetctl.py test-midcourse --count 1 --manual-task
 正常阶段通过后再按提示暂停该目标更新，验证超时失败及清理上报。报告位于
 `logs/fleet/<run_id>/midcourse-report.json`。
 
-目标更新超时使用机载接受该航迹有效更新时的本机单调接收时间，严格超过配置阈值后在下一次 BT tick 失败。
-从未收到目标时从进入 Midcourse 起计时；重复、乱序和其他目标的数据不刷新计时。超时失败后数据恢复不会恢复旧任务。
+目标更新超时从每次进入 Midcourse 起使用本机单调时间独立计时。任务前缓存既不刷新本次计时，也不参与算法初始化；
+首帧必须在配置阈值内到达，之后每帧被本次会话接受的目标更新都会重新开始计时，严格超过阈值后在下一次 BT tick 失败。
+重复、乱序和其他目标的数据既不计入本次 20 帧，也不刷新计时。超时失败后数据恢复不会恢复旧任务。
 `midcourse.init_timeout_ms` 的历史收集上限和算法 `target_invalid_grace_s` 的预测宽限期各自生效，
 目标更新超时可以提前结束初始化等待；Arm／Takeoff 阶段不受此超时限制。
 

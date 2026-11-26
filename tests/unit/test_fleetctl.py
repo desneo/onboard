@@ -935,6 +935,7 @@ class FleetCtlTest(unittest.TestCase):
                     )
                     self.assertEqual(fleetctl.radar_history_ready(text), history_size >= 20)
                     self.assertEqual(fleetctl.radar_history_ready(text, "mavlink_rc:1"), history_size >= 20)
+                    self.assertTrue(fleetctl.radar_history_ready(text, "mavlink_rc:1", required_size=1))
 
     def test_radar_history_requires_exact_requested_track(self):
         text = (

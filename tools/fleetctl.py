@@ -1458,10 +1458,10 @@ def command_test_agent_info(args: argparse.Namespace, config: FleetConfig, remot
         raise FleetError(f"AgentInfo 验证失败: {exc}，证据目录: {run_dir}") from exc
 
 
-def radar_history_ready(text: str, target_id: str = "") -> bool:
+def radar_history_ready(text: str, target_id: str = "", required_size: int = 20) -> bool:
     """依据当前运行日志中的缓存帧数判断就绪，不将降频日志条数当作雷达帧数。"""
     return any(
-        (not target_id or observed_track_id == target_id) and int(history_size) >= 20
+        (not target_id or observed_track_id == target_id) and int(history_size) >= required_size
         for observed_track_id, history_size in GCS_TARGET_HISTORY_RE.findall(text)
     )
 
@@ -1804,7 +1804,7 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
         save()
         print(
             "\n[midcourse] 板端自检通过，请现在向 " + plane.host + ":7790 持续发送雷达 UDP 数据。\n"
-            "[midcourse] 将先确认任务启动前已缓存至少 20 个严格递增扫描，再下发反无任务。\n"
+            "[midcourse] 确认指定或唯一目标首帧后立即下发反无任务；任务下发后请继续发送至少 21 帧。\n"
             "[midcourse] 7790 只需发送雷达航迹，防守机状态由 GCS 从 Zenoh 获取。\n"
             + (f"[midcourse] 本次锁定靶机 track_id={target_id}。\n" if target_id else
                "[midcourse] 本次未指定 track_id，雷达数据必须只有一个可用靶机候选。\n"),
@@ -1812,11 +1812,11 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
         )
 
         wait_until(
-            "任务启动前持续缓存 20 帧雷达历史",
-            lambda: radar_history_ready(plane_log("radar-cache-wait"), target_id),
+            "任务启动前确认指定或唯一雷达目标首帧",
+            lambda: radar_history_ready(plane_log("radar-cache-wait"), target_id, required_size=1),
             args.radar_timeout,
         )
-        passed("任务启动前已持续缓存至少 20 帧雷达历史")
+        passed("任务启动前已确认指定或唯一雷达目标，旧缓存不会参与本次中制导初始化")
 
         task_args = [
             test_dir + "/gcs_sim", "--plane-id", plane.plane_id, "--sender-id", "GCS",
@@ -1832,13 +1832,13 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
         report["flight_or_task_commands_sent"] = True
         save()
         print(
-            "\n[midcourse] 已下发反无任务，请保持雷达持续发送，以验证第 21 帧增量更新。\n"
+            "\n[midcourse] 已下发反无任务，请保持雷达持续发送，以重新收集 20 帧并验证第 21 帧增量更新。\n"
             "[midcourse] GCS 会过滤 50 米内匹配到友机的航迹；友机未出现在雷达帧中不会阻塞靶机转发。\n",
             flush=True,
         )
 
         wait_until(
-            f"外部雷达 20+1 帧到达并启动 {mode} Offboard",
+            f"任务下发后外部雷达 20+1 帧到达并启动 {mode} Offboard",
             lambda: "中制导初始化完成" in plane_log("midcourse-wait")
             and "中制导算法首次增量量测更新" in plane_log("midcourse-wait")
             and offboard_started in plane_log("midcourse-wait")
@@ -1863,7 +1863,7 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
             raise FleetError("飞控系统参数未在中制导会话启动前完成缓存")
         if not (0 <= algorithm_init_index < algorithm_update_index < target_update_index):
             raise FleetError("中制导接口调用顺序不符合 init → update → updateTarget")
-        passed(f"启动前 20 帧缓存、接口调用顺序、第 21 帧更新、{mode} Offboard 与持续运行验证通过")
+        passed(f"本次会话重新收集 20 帧、接口调用顺序、第 21 帧更新、{mode} Offboard 与持续运行验证通过")
 
         stop_command = shlex.join(
             [

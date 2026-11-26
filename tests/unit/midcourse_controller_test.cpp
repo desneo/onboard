@@ -165,10 +165,10 @@ void test_target_timeout_boundaries_and_restart() {
         ++test_now_ms;
         fixture.running();
         ++test_now_ms;
-        fixture.timed_out("从未收到", 5000);
+        fixture.timed_out("本次会话从未收到", 5000);
         require(fixture.error.find("未更新时长=5001毫秒") != std::string::npos &&
                     fixture.error.find("trackId=" + (id.empty() ? std::string("<自动>") : id)) != std::string::npos,
-                "从未收到场景应保留目标和真实等待时长");
+                "本次会话从未收到场景应保留目标和真实等待时长");
         fixture.controller.stop();
         fixture.begin(id);
         fixture.running();
@@ -177,20 +177,32 @@ void test_target_timeout_boundaries_and_restart() {
     }
 }
 
-void test_stale_initial_history() {
+void test_new_session_ignores_cached_history() {
     for (const std::string id : {"target", ""}) {
         TimeoutFixture fixture;
         fixture.seed();
         test_now_ms += 5001;
         fixture.begin(id);
-        fixture.timed_out("缓存已过期", 5000);
-        require(fixture.error.find("trackId=target") != std::string::npos,
-                "自动和指定模式均应检查实际锁定航迹的历史龄期");
-        fixture.controller.stop();
-        fixture.send("target", 20);
-        fixture.begin(id);
         fixture.running();
-        require(fixture.flight.velocity_calls == 1, "新会话应从恢复更新的历史正常初始化");
+        require(fixture.flight.velocity_calls == 0 && fixture.flight.attitude_calls == 0,
+                "任务前缓存不得初始化新会话或下发控制");
+        test_now_ms += 5000;
+        fixture.running();
+        ++test_now_ms;
+        fixture.timed_out("本次会话从未收到", 5000);
+        require(fixture.error.find("trackId=target") != std::string::npos,
+                "自动和指定模式均应独立监测本次会话目标");
+        fixture.controller.stop();
+
+        fixture.begin(id);
+        for (int index = 20; index < 39; ++index) fixture.send("target", index);
+        fixture.running();
+        require(fixture.flight.velocity_calls == 0 && fixture.flight.attitude_calls == 0,
+                "本次会话不足 20 帧时不得复用任务前缓存初始化");
+        fixture.send("target", 39);
+        fixture.running();
+        require(fixture.flight.velocity_calls == 1,
+                "新会话收到 20 帧有效更新后应使用本次会话历史初始化");
     }
 }
 
@@ -213,18 +225,19 @@ void test_only_accepted_current_target_refreshes_timeout() {
     fixture.config.midcourse_target_timeout_ms = 700;
     fixture.seed();
     fixture.begin("target");
+    for (int index = 20; index < 40; ++index) fixture.send("target", index);
     fixture.running();
     test_now_ms += 599;
-    fixture.send("target", 20);
+    fixture.send("target", 40);
     fixture.running();
     const auto last_received = test_now_ms;
     test_now_ms += 600;
     fixture.running();
     fixture.send("other", 0);
-    fixture.send("target", 20);
-    fixture.send("target", 19);
+    fixture.send("target", 40);
+    fixture.send("target", 39);
     fixture.send("", 21);
-    auto invalid = target("target", 21);
+    auto invalid = target("target", 41);
     invalid.timestamp_ms = 0;
     fixture.events.publish(plane::communication::events::kGcsTargetReceived, invalid);
     require(fixture.store.gcs_target_last_received_ms("target") == last_received,
@@ -269,7 +282,7 @@ std::int64_t now_ms() { return test_now_ms; }
 int main() {
     try {
         test_target_timeout_boundaries_and_restart();
-        test_stale_initial_history();
+        test_new_session_ignores_cached_history();
         test_history_wait_uses_last_reception();
         test_only_accepted_current_target_refreshes_timeout();
         test_independent_initialization_timeout_and_invalid_config();
@@ -306,7 +319,14 @@ int main() {
         }
         require(controller.begin("target", error), "中制导会话启动失败");
         require(controller.tick(error) == plane::task::MidcourseController::TickResult::Running,
-                "使用会话启动前持续缓存的 20 帧初始化失败: " + error);
+                "等待本次会话 20 帧失败: " + error);
+        require(flight.velocity_calls == 0 && flight.attitude_calls == 0,
+                "会话启动前缓存不得初始化算法或下发控制");
+        for (int index = 20; index < 40; ++index) {
+            events.publish(plane::communication::events::kGcsTargetReceived, target("target", index));
+        }
+        require(controller.tick(error) == plane::task::MidcourseController::TickResult::Running,
+                "使用本次会话 20 帧初始化失败: " + error);
         require(flight.cached_flight_params_gets == 0 && flight.velocity_calls == 1,
                 "INI 限值模式不应读取 PX4 缓存，且应下发首个速度及加速度指令");
         constexpr double kPi = 3.14159265358979323846;
@@ -319,7 +339,7 @@ int main() {
                         max_first_step_rad + 1e-9,
                 "中制导航向首拍未从实际 yaw_rad 按配置速率限幅");
 
-        events.publish(plane::communication::events::kGcsTargetReceived, target("target", 20));
+        events.publish(plane::communication::events::kGcsTargetReceived, target("target", 40));
         require(controller.tick(error) == plane::task::MidcourseController::TickResult::Running,
                 "第 21 帧更新失败: " + error);
         require(flight.velocity_calls == 2, "第 21 帧后未继续下发 NED 速度");
@@ -336,8 +356,11 @@ int main() {
         config.midcourse_algorithm.control_output_mode = plane::algorithm::MidcourseControlMode::Attitude;
         flight.cached_flight_params_available = true;
         require(controller.begin("target", error), "重复会话启动失败");
+        for (int index = 41; index < 61; ++index) {
+            events.publish(plane::communication::events::kGcsTargetReceived, target("target", index));
+        }
         require(controller.tick(error) == plane::task::MidcourseController::TickResult::Running,
-                "重复会话未从已有 20 帧重新初始化: " + error);
+                "重复会话未从本次新收 20 帧重新初始化: " + error);
         require(flight.cached_flight_params_gets == 1, "PX4 限值模式未获取飞控参数缓存");
         require(flight.attitude_calls == 1 && flight.velocity_calls == 67, "姿态档未下发姿态指令");
         double norm_squared = 0.0;
@@ -364,12 +387,12 @@ int main() {
         controller.stop();
 
         config.midcourse_algorithm.r_capture_max_m = 500.0;
+        require(controller.begin("bad-init-target", error), "非法初始化量测场景未启动");
         for (int index = 0; index < 20; ++index) {
             auto init_measurement = target("bad-init-target", index);
             if (index == 19) init_measurement.geoPos.latitude = std::numeric_limits<double>::quiet_NaN();
             events.publish(plane::communication::events::kGcsTargetReceived, init_measurement);
         }
-        require(controller.begin("bad-init-target", error), "非法初始化量测场景未启动");
         require(controller.tick(error) == plane::task::MidcourseController::TickResult::Failure &&
                     error.rfind("中制导 init 失败: ", 0) == 0,
                 "MidcourseAlgorithm::init 拒绝非法历史时应终止中制导: " + error);
@@ -379,6 +402,9 @@ int main() {
 
         state.value.yaw_deg = std::numeric_limits<float>::quiet_NaN();
         require(controller.begin("target", error), "非法航向场景未启动");
+        for (int index = 61; index < 81; ++index) {
+            events.publish(plane::communication::events::kGcsTargetReceived, target("target", index));
+        }
         require(controller.tick(error) == plane::task::MidcourseController::TickResult::Failure &&
                     error == "中制导本机实际航向 yaw_deg 必须为有限数",
                 "非有限实际航向应终止中制导: " + error);
@@ -388,10 +414,10 @@ int main() {
         state.value.yaw_deg = 42.0F;
         config.midcourse_algorithm.control_output_mode = plane::algorithm::MidcourseControlMode::VelocityAcceleration;
 
+        require(controller.begin("bad-target", error), "非法增量量测场景未启动");
         for (int index = 0; index < 20; ++index) {
             events.publish(plane::communication::events::kGcsTargetReceived, target("bad-target", index));
         }
-        require(controller.begin("bad-target", error), "非法增量量测场景未启动");
         require(controller.tick(error) == plane::task::MidcourseController::TickResult::Running,
                 "非法增量量测场景初始化失败: " + error);
         auto bad_measurement = target("bad-target", 20);

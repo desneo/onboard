@@ -221,16 +221,20 @@ EventBus 的发布同步执行订阅回调；诊断回调只负责轻量入队�
   配置加载后应用实际周期；日志重新初始化前先停止并回收旧刷新线程，正常退出前刷新剩余日志。
 - Flight Control 在飞控连接建立后读取并缓存通用 PX4 飞控系统参数；断连使缓存失效，重连后后台重读。
   中制导默认从 `[midcourse_algorithm]` 取规划限值，`use_px4_limits = true` 时从缓存取值。
-- Target Management 独立于任务生命周期持续保留每个航迹最近 20 帧；中制导启动和停止不得清除此历史。
+- Target Management 独立于任务生命周期持续保留每个航迹最近 20 帧；中制导启动和停止不得清除此全局历史，
+  但 Midcourse 每次进入时建立独立的会话初始化数据集，不得把进入前的全局历史交给算法初始化。
 - Target Management 在接受有效目标时原子更新最新值、历史、本机单调接收时间和墙钟接收时间，
   按航迹首帧即时记录、后续 20 秒汇总。独立的可唤醒监测线程只在存在目标需求时工作，
   连续 2 秒无所需目标更新后每 2 秒输出提示，不等待 BehaviorTree、MAVSDK 或算法锁。
-- `TargetStoreApi::gcs_target_last_received_ms` 以可选值提供指定航迹最后一次有效更新的本机单调接收时间，
-  查询与接收使用同一缓存锁；重复或乱序数据不更新该时间。Midcourse 在使用历史初始化、算法调用及控制下发前，
-  按 `[midcourse].target_timeout_ms` 检查当前目标的接收龄期，默认 5000 ms 且必须为正整数。
-  从未收到目标时从会话进入时刻计时，进入时已过期的缓存立即失败；严格超过阈值时由 BT tick 返回失败，
-  沿用执行引擎清理、取消目标需求和 `Failed` 上报链路。该检查覆盖初始化等待，不扩展到 Arm／Takeoff。
-  目标管理的 2 秒接收提示、30 秒历史初始化上限及算法预测宽限期保持各自职责。
+- Target Management 为每条被接受的目标更新分配进程内全局递增 revision，并在历史项中保存 revision 和本机
+  单调接收时间；重复或乱序数据不递增 revision。Midcourse 进入时记录 revision 快照，通过
+  `TargetStoreApi::gcs_target_updates_after` 只读取快照后的锁定航迹数据和最后接收时刻，使任务前缓存不参与
+  本次超时判断或算法初始化。
+  `[midcourse].target_timeout_ms` 默认 5000 ms 且必须为正整数：首帧从进入 Midcourse 起计时，随后每帧
+  被本次会话接受的锁定航迹数据刷新计时；重复、乱序和其他航迹既不进入本次初始化数据集，也不刷新计时。
+  严格超过阈值时由 BT tick 返回失败，沿用执行引擎清理、取消目标需求和 `Failed` 上报链路。
+  收齐本次会话 20 帧后才调用算法初始化并启动 Offboard；30 秒初始化上限独立生效。
+  这些检查覆盖初始化等待，不扩展到 Arm／Takeoff；目标管理的 2 秒接收提示和算法预测宽限期保持各自职责。
 - Task Execution Engine 在成功创建 `AntiUav` 任务树后、启动执行线程前声明目标需求，
   在停止、替换、接管、失败、完成及退出时取消需求；取消必须先于等待执行线程退出。
   `TargetStoreApi::set_required_gcs_target` 以 `nullopt` 取消、空字符串表示自动模式、非空字符串指定航迹。
@@ -336,7 +340,7 @@ EventBus 的发布同步执行订阅回调；诊断回调只负责轻量入队�
 | 执行职责 | Scheduler 与 Execution Engine 分离 |
 | 感知帧模型 | 消费最新帧，不积压旧帧 |
 | 地理计算 | 统一封装 GeographicLib |
-| GCS 目标历史 | 每个目标保留最近 20 条 |
+| GCS 目标历史 | 每个目标全局保留最近 20 条；Midcourse 初始化仅使用本次会话进入后重新收到的 20 条 |
 | 中制导集成 | 引用 `common_include/algorithm/midcourse_alg.h`，直连带 SONAME 的 `libmidcourse_alg.so`，不使用 Pluma |
 | 中制导输出 | 读取 `MidCourseOutput`，按指令类型使用 NED 速度和加速度前馈或 Attitude Offboard；飞控层转换单位及 MAVSDK 设定值格式，先发设定值再启动 Offboard |
 | 雷达友机过滤 | 友机状态来自 Zenoh；只过滤门限内实际匹配航迹，友机未出现在雷达帧中不阻塞靶机 |
