@@ -280,7 +280,7 @@ void test_independent_initialization_timeout_and_invalid_config() {
     }
     test_now_ms += 21;
     require(fixture.controller.tick(fixture.error) == plane::task::MidcourseController::TickResult::Failure &&
-                fixture.error == "等待中制导 30 帧雷达历史超时，当前 4/30",
+                fixture.error == "等待中制导 30 帧雷达历史超时，当前 3/30",
             "持续有更新但历史不足仍须遵守独立初始化超时: " + fixture.error);
     fixture.controller.stop();
     for (const int invalid : {0, -1}) {

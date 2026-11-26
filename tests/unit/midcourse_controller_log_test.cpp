@@ -245,11 +245,11 @@ int main() {
         require(algorithm_calls.update == 11 && flight.velocity_calls == 11,
                 "日志降频期间未逐 tick 调用算法并下发控制");
         tick(500);
-        require_update_pairs(*sink, {1'000'000, 1'000'500});
+        require_update_pairs(*sink, {1'000'000});
         tick(1000);
-        require_update_pairs(*sink, {1'000'000, 1'000'500, 1'001'000});
+        require_update_pairs(*sink, {1'000'000, 1'001'000});
         require(algorithm_calls.update == 13 && flight.velocity_calls == 13,
-                "500 毫秒边界影响了逐 tick 算法或控制调用");
+                "1000 毫秒日志边界影响了逐 tick 算法或控制调用");
         require(algorithm_calls.update_target == 2 && sink->matching("::updateTarget 输入:").size() == 2 &&
                     sink->matching("::updateTarget 输出:").size() == 2,
                 "updateTarget 日志不应跟随 update 降频");
@@ -264,7 +264,7 @@ int main() {
         require_fields(sink->matching("::init 输入:").front().text,
                        {"history=[", "timestamp_ms=1800000020000", "timestamp_ms=1800000039000", "ned_ref={",
                         "max_horizontal_speed_m_s=", "update_dt_s=", "recovery_vz_deadband_m_s=0.1",
-                        "confirm_hold_s="});
+                        "recovery_altitude_tolerance_m=0.3", "confirm_hold_s="});
 
         // 新会话不继承上一会话的日志时间，两个输出模式都保留完整字段。
         controller.stop();
@@ -273,7 +273,7 @@ int main() {
         require(controller.begin("log-target", error), "姿态日志会话启动失败");
         publish_session_history();
         tick(1001);
-        require_update_pairs(*sink, {1'000'000, 1'000'500, 1'001'000, 1'001'001});
+        require_update_pairs(*sink, {1'000'000, 1'001'000, 1'001'001});
         require(algorithm_calls.init == 2 && sink->matching("::init 输入:").size() == 2 &&
                     sink->matching("::init 输出:").size() == 2,
                 "每次 init 调用都应记录完整输入输出");
@@ -286,7 +286,7 @@ int main() {
         test_now_ms = 1'001'002;
         require(controller.tick(error) == plane::task::MidcourseController::TickResult::Failure,
                 "注入的 update 失败未终止当前 tick");
-        require_update_pairs(*sink, {1'000'000, 1'000'500, 1'001'000, 1'001'001, 1'001'002});
+        require_update_pairs(*sink, {1'000'000, 1'001'000, 1'001'001, 1'001'002});
         require_fields(sink->matching("::update 输出:").back().text,
                        {"返回值=false", "output=<无有效输出>", "error=测试注入的算法原始错误"});
         require(error == "中制导 update 失败: 测试注入的算法原始错误", "update 失败未保留原始错误");
@@ -302,7 +302,7 @@ int main() {
         publish_session_history();
         tick(1003);
         require_fields(sink->matching("::update 输出:").back().text, {"yaw_rad=nullopt", "返回值=true"});
-        require_update_pairs(*sink, {1'000'000, 1'000'500, 1'001'000, 1'001'001, 1'001'002, 1'001'003});
+        require_update_pairs(*sink, {1'000'000, 1'001'000, 1'001'001, 1'001'002, 1'001'003});
         controller.stop();
 
         // init 自身耗时跨过超时阈值时，不应再调用 update 或下发控制。
@@ -322,7 +322,7 @@ int main() {
                     algorithm_calls.update == update_before_slow_init &&
                     flight.velocity_calls + flight.attitude_calls == controls_before_slow_init,
                 "init 耗时跨过阈值后仍调用了 update 或下发控制");
-        require_update_pairs(*sink, {1'000'000, 1'000'500, 1'001'000, 1'001'001, 1'001'002, 1'001'003});
+        require_update_pairs(*sink, {1'000'000, 1'001'000, 1'001'001, 1'001'002, 1'001'003});
         controller.stop();
 
         // update 返回成功但计算期间跨过超时阈值时，仍须拦截本次控制下发。
@@ -341,7 +341,7 @@ int main() {
                     flight.velocity_calls + flight.attitude_calls == controls_before_slow_update,
                 "update 耗时跨过阈值后仍下发控制");
         require_update_pairs(*sink,
-                             {1'000'000, 1'000'500, 1'001'000, 1'001'001, 1'001'002, 1'001'003, 1'003'011});
+                             {1'000'000, 1'001'000, 1'001'001, 1'001'002, 1'001'003, 1'003'011});
         controller.stop();
     } catch (const std::exception& exception) {
         spdlog::set_default_logger(spdlog::stderr_color_mt("中制导日志测试错误"));

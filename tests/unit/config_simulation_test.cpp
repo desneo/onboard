@@ -40,7 +40,8 @@ int main() {
         defaults.midcourse_target_history_size != 20 ||
         defaults.midcourse_algorithm.replan_period_s != 1.0 ||
         defaults.midcourse_algorithm.replan_freeze_s != 2.5 ||
-        defaults.midcourse_algorithm.recovery_vz_deadband_m_s != 0.1) {
+        defaults.midcourse_algorithm.recovery_vz_deadband_m_s != 0.1 ||
+        defaults.midcourse_algorithm.recovery_altitude_tolerance_m != 0.3) {
         return 28;
     }
 
@@ -82,7 +83,7 @@ int main() {
                     "max_climb_speed_m_s = 8.0\nmax_descent_speed_m_s = 4.0\ncmd_accel_max_m_s2 = 7.0\n"
                     "approach_brake_k = 0.75\nhover_brake_accel_m_s2 = 4.0\ntrack_gain_d = 0.25\n"
                     "replan_period_s = 0.75\nreplan_freeze_s = 3.25\n"
-                    "recovery_vz_deadband_m_s = 0.25\n"
+                    "recovery_vz_deadband_m_s = 0.25\nrecovery_altitude_tolerance_m = 0.45\n"
                     "control_output_mode = Attitude\nyaw_mode = 0\n")) {
         return 4;
     }
@@ -98,6 +99,7 @@ int main() {
         algorithm.track_gain_d != 0.25 || algorithm.target_invalid_grace_s != 2.0 || algorithm.r_min_m != 75.0 ||
         algorithm.replan_period_s != 0.75 || algorithm.replan_freeze_s != 3.25 ||
         algorithm.recovery_vz_deadband_m_s != 0.25 ||
+        algorithm.recovery_altitude_tolerance_m != 0.45 ||
         algorithm.control_output_mode != plane::algorithm::MidcourseControlMode::Attitude ||
         algorithm.yaw_mode != 0) {
         return 6;

@@ -198,7 +198,7 @@ tail -f logs/plane.log
 首次目标增量更新以及 Offboard 启动。
 中制导算法的 `MidcourseAlgorithm::init/updateTarget` 每次调用均以 `[info]` 输出完整入参、
 返回值和原始 `error`，包括初始化全部历史量测和原始目标量测。
-`MidcourseAlgorithm::update` 的完整输入输出按 2 Hz 成对记录，会话首次调用和调用失败时立即记录，
+`MidcourseAlgorithm::update` 的完整输入输出按 1 Hz 成对记录，会话首次调用和调用失败时立即记录，
 输入包含实际航向的本机状态；算法调用及控制下发仍按每个 BT tick 执行。
 `update` 还记录有效的速度加速度指令或姿态四元数与推力，以及 `eta_seconds`、`following` 和
 `terminal_confirmed`；`yaw_rad` 为空时显示 `nullopt`，调用失败时显示无有效输出。
@@ -352,6 +352,7 @@ SITL 测试统一使用 `tests/fleet.ini` 的 `simulator.host`（当前为 `192.
 | `midcourse_algorithm.replan_freeze_s` | 重规划近端冻结时长，默认 2.5 秒 |
 | `midcourse_algorithm.track_gain_d` | 轨迹跟踪速度误差反馈增益，默认 `0.0`，仅使用位置反馈 |
 | `midcourse_algorithm.recovery_vz_deadband_m_s` | 高度恢复退出时允许的下降速度死区，默认 `0.1 m/s` |
+| `midcourse_algorithm.recovery_altitude_tolerance_m` | 高度恢复退出时允许的高度容差，默认 `0.3 m` |
 | `midcourse_algorithm.enable_internal_terminal_confirmation` | 允许算法内部确认，默认 `false`。开启后达到确认条件时算法输出悬停设定值，任务继续运行 |
 | `midcourse_algorithm.confirm_boresight_deg` / `confirm_rate_deg_s` / `confirm_hold_s` | 内部确认的离轴角上限、弹轴角速率上限和持续时长，默认 5 度、5 度/秒和 2 秒 |
 
@@ -428,7 +429,7 @@ python3 tools/fleetctl.py test-midcourse --count 1 --manual-task
 人工发令模式将完整运行包部署到 `192.168.1.100:/home/firefly/plane`，检查飞控连接、实际遥测和通信，
 启动只观测的 GCS 并采集证据。工具保持现有 SITL 和用户雷达链路，只接收用户实际下发的任务及目标更新，
 不自动发送 Task、Command 或 Task Stop。出现“环境已就绪，可以开始下发反无任务。”后，
-用户保持当前目标雷达更新并下发任务；按实际 `taskId` 和目标航迹检查 Offboard 持续控制与 2 Hz 日志，
+用户保持当前目标雷达更新并下发任务；按实际 `taskId` 和目标航迹检查 Offboard 持续控制与 1 Hz 日志，
 正常阶段通过后再按提示暂停该目标更新，验证超时失败及清理上报。报告位于
 `logs/fleet/<run_id>/midcourse-report.json`。
 

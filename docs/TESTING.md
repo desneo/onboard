@@ -86,7 +86,7 @@ python3 tools/fleetctl.py test-midcourse --count 1 --manual-task
 该模式全量部署 uav1 到 `/home/firefly/plane`，使用既有 SITL 并核对飞控连接、实际遥测、通信和日志采集。
 观测 GCS 不接管雷达 UDP 输入，不发布目标，也不发送 Task、Command 或 Task Stop。
 确认“环境已就绪，可以开始下发反无任务。”后，由用户保持目标雷达更新并下发任务，
-按实际 `taskId` 和目标航迹验证初始化、Offboard 持续控制，并采集至少 5 秒稳定的 2 Hz 日志及持续目标更新。
+按实际 `taskId` 和目标航迹验证初始化、Offboard 持续控制，并采集至少 5 秒稳定的 1 Hz 日志及持续目标更新。
 正常阶段通过后提示用户暂停该目标更新，验证严格超过配置阈值后的失败日志、Offboard 停止、
 会话清理和 `TaskState::Failed`；恢复目标数据后旧任务不得重启。报告及原始证据保存在
 `logs/fleet/<run_id>/`。部署就绪只表示具备发令条件，任务验收结果以实际执行证据为准。
@@ -214,7 +214,7 @@ cd build/plane
 仅包含一架飞机的预置，以及 `profile` 缺失或为空、配置读取失败、重复 ID/IP、必填项无效、零匹配和多匹配。
 配置加载失败必须保留原有效配置，切换预置时不得残留另一种飞控连接的信息。
 中制导配置测试覆盖巡航与前馈参数、重规划周期与冻结时长、内部末端确认及其阈值、
-`recovery_vz_deadband_m_s` 的默认值与自定义值、
+`recovery_vz_deadband_m_s`、`recovery_altitude_tolerance_m` 的默认值与自定义值、
 `target_history_size` 的默认值 20、自定义边界值 5 和 30、越界值及非法整数输入、
 `update_dt_s` 与行为树周期一致和不一致的情况，以及省略 `update_dt_s` 时的周期换算。
 `fleetctl` 单测验证测试清单默认路径、`--config` 覆盖及完整运行包的唯一配置来源：
@@ -228,7 +228,7 @@ SITL 使用包内预置端口及清单主机并检查实际监听，串口连接
 50 米门限、NED 状态外推、过期状态失败关闭，以及“友机未出现在雷达帧时仍转发靶机”。
 `midcourse_controller` 使用真实 `libmidcourse_alg.so`，验证任务前历史不参与本次初始化、会话内按配置重新收集 N 帧、增量更新、
 INI／PX4 限值来源、两种输出模式、会话重置和错误路径，以及目标更新超时的初始化、运行和边界场景；
-独立日志测试使用可控单调时间、日志捕获与算法门面测试替身，验证 2 Hz 成对日志的 499／500 ms 边界、
+独立日志测试使用可控单调时间、日志捕获与算法门面测试替身，验证 1 Hz 成对日志的 500／1000 ms 边界、
 首次调用、失败立即输出、会话重启和逐 tick 调用数量；真实算法库回归用于验证集成行为。
 `attitude_conversion` 验证四元数归一化与姿态转换。
 按板端 `logs/plane.log` 的时间顺序检查聚合门面初始化、Offboard 启动和首次增量更新。
@@ -253,7 +253,7 @@ ctest --test-dir build -R '^(logging_flush|config_simulation|task_scheduler_take
   直接构造无效 `LogOptions` 不得启动刷新线程，重新初始化须应用新周期、回收旧线程，不重复刷新或妨碍退出。
 - `task_scheduler_takeover` 覆盖 Task、Command、自检的成功、失败和中止结束摘要，
   以真实文件或 sink 刷新计数确认立即刷新，不依赖下一条警告或错误触发。
-- `midcourse_controller_log` 回归 2 Hz 日志的数量、配对和失败即时记录，确认刷新周期不改变算法调用或控制频率。
+- `midcourse_controller_log` 回归 1 Hz 日志的数量、配对和失败即时记录，确认刷新周期不改变算法调用或控制频率。
 - 在 uav1 以相同日志内容、速率、条数和终端输出模式，分别采样修改前后各 60 秒，
   记录单核 100% 口径的进程 CPU 平均占用、刷新次数与日志条数；CPU 增量目标不超过 1 个百分点。
   定时刷新按配置周期统计，警告、错误、终态和退出的额外刷新单独解释。
@@ -433,8 +433,8 @@ PX4 实际遥测的 `armed` 顺序为 `false → true → false`，自检全程�
     `vehicle`（含实际 `yaw_rad`）和 `output`；`MidcourseAlgorithm::updateTarget` 的 `measurement`、返回值和原始 `error`。
     检查所有地理点的 `latitude`、`longitude`、`height`、`altitude`，
     两种控制指令的全部字段、`yaw_rad=nullopt`、`eta_seconds`、`following`、`terminal_confirmed`。
-    `init/updateTarget` 每次调用均记录；`update` 输入输出成对按 2 Hz 记录，会话首次调用和调用失败立即记录，
-    可控时间验证首拍立即记录、499 ms 不增加日志、500 ms 增加一对日志；不足 500 ms 时发生 `update` 失败也立即记录，
+    `init/updateTarget` 每次调用均记录；`update` 输入输出成对按 1 Hz 记录，会话首次调用和调用失败立即记录，
+    可控时间验证首拍立即记录、500 ms 不增加日志、1000 ms 增加一对日志；不足 1000 ms 时发生 `update` 失败也立即记录，
     stop／begin 后重新首拍记录。算法调用及控制下发仍逐 tick 执行，并通过调用计数核对。
     每组日志均保留返回值和原始 `error`，失败时不将出参标为有效值，
     高频日志不附加会话号、调用号或更新号；

@@ -261,6 +261,7 @@ bool load_midcourse_algorithm_option(const std::string& key, const std::string& 
         {"recovery_margin_m", &MidCourseConfig::recovery_margin_m},
         {"recovery_exit_hold_s", &MidCourseConfig::recovery_exit_hold_s},
         {"recovery_vz_deadband_m_s", &MidCourseConfig::recovery_vz_deadband_m_s},
+        {"recovery_altitude_tolerance_m", &MidCourseConfig::recovery_altitude_tolerance_m},
         {"follow_gain_k", &MidCourseConfig::follow_gain_k},
         {"follow_filter_a", &MidCourseConfig::follow_filter_a},
         {"follow_vel_tau_s", &MidCourseConfig::follow_vel_tau_s},
