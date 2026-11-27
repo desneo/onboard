@@ -1,6 +1,9 @@
+#include <spdlog/sinks/ostream_sink.h>
 #include <spdlog/spdlog.h>
 
 #include <cstdint>
+#include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -140,6 +143,55 @@ void route_dispatch_failure_is_preserved() {
             "飞控派发失败的具体原因没有传给执行引擎");
 }
 
+void route_logs_received_waypoint_progress(std::ostringstream& output) {
+    output.str({});
+    test_now_ms = 1000;
+    plane::core::AppConfig config;
+    plane::task::CommandContext context;
+    context.type = plane::model::CommandType::Route;
+    context.waypoints.resize(100);
+    FakeFlightControl flight;
+    flight.status.connected = true;
+    // 航线启动后可以先缓存航点总数，收到回调前的 0/100 只是初始值。
+    flight.status.mission_total = 100;
+    plane::task::MissionNode node("Mission", BT::NodeConfig{}, &flight, nullptr, &config, &context);
+
+    require(node.executeTick() == BT::NodeStatus::RUNNING, "航线应进入运行状态");
+    test_now_ms += 4999;
+    require(node.executeTick() == BT::NodeStatus::RUNNING && output.str().empty(), "航线进度日志在 5 秒前不应输出");
+    ++test_now_ms;
+    require(node.executeTick() == BT::NodeStatus::RUNNING && output.str() == "节点 Mission 等待航点进度遥测\n",
+            "本次进度回调到达前应提示等待");
+
+    flight.status.mission_progress_received = true;
+    test_now_ms += 5000;
+    require(node.executeTick() == BT::NodeStatus::RUNNING &&
+                output.str().find("航线飞行中，航点进度 1/100\n") != std::string::npos,
+            "首条有效回调的零基索引 0 应显示为 1/100");
+
+    flight.status.mission_current = 9;
+    test_now_ms += 5000;
+    require(node.executeTick() == BT::NodeStatus::RUNNING &&
+                output.str().find("航线飞行中，航点进度 10/100\n") != std::string::npos,
+            "当前航点应以一基序号和总数显示");
+
+    flight.status.mission_current = 99;
+    test_now_ms += 5000;
+    require(node.executeTick() == BT::NodeStatus::RUNNING &&
+                output.str().find("航线飞行中，航点进度 100/100\n") != std::string::npos,
+            "航向最后一个航点时仍应运行并显示 100/100");
+
+    flight.status.mission_current = 100;
+    test_now_ms += 5000;
+    require(node.executeTick() == BT::NodeStatus::SUCCESS, "索引等于总数时航线应完成");
+    const auto messages = output.str();
+    require(messages.find("节点 Mission 执行成功\n") != std::string::npos &&
+                messages.find("101/100") == std::string::npos,
+            "航线完成时应直接记录成功");
+    require(messages.find("elapsed_ms") == std::string::npos && messages.find("tick_count") == std::string::npos,
+            "航线运行和完成日志应省略耗时和 tick 次数");
+}
+
 }  // namespace
 
 // 测试目标替换时间源，验证长时间运行而无需真实等待或连接飞控。
@@ -148,15 +200,25 @@ std::int64_t now_ms() { return test_now_ms; }
 }  // namespace plane::core
 
 int main() {
+    std::ostringstream output;
+    const auto previous_logger = spdlog::default_logger();
+    auto sink = std::make_shared<spdlog::sinks::ostream_sink_mt>(output);
+    auto logger = std::make_shared<spdlog::logger>("mission_node_timeout", sink);
+    logger->set_pattern("%v");
+    logger->set_level(spdlog::level::info);
+    spdlog::set_default_logger(logger);
     try {
         route_waits_until_finished();
         waypoint_keeps_timeout();
         route_can_be_halted();
         route_dispatch_failure_is_preserved();
+        route_logs_received_waypoint_progress(output);
     } catch (const std::exception& error) {
+        spdlog::set_default_logger(previous_logger);
         SPDLOG_ERROR("航线超时回归测试失败: {}", error.what());
         return 1;
     }
+    spdlog::set_default_logger(previous_logger);
     SPDLOG_INFO("航线超时回归测试通过");
     return 0;
 }

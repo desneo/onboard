@@ -19,6 +19,7 @@ class MissionNode final : public FlightActionNode {
     bool timeout_enabled() const override;
     bool dispatch(std::string& error) override;
     BT::NodeStatus checkFinish() override;
+    void log_running_progress() const override;
 
    private:
     const CommandContext* command_context_;

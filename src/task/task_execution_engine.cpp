@@ -152,7 +152,7 @@ BT::Tree TaskExecutionEngine::build_command_tree(const std::vector<std::string>&
     factory.registerNodeType<DisarmNode>("Disarm", &flight_control_, &state_store_, &config_);
     factory.registerNodeType<SelfCheckNode>("SelfCheck", &flight_control_, &ticking_);
     factory.registerNodeType<TakeoffNode>("Takeoff", &flight_control_, &state_store_, &config_, &system_param_,
-                                          &command_context_);
+                                          &command_context_, /*log_position_progress=*/true);
     factory.registerNodeType<LandNode>("Land", &flight_control_, &state_store_, &config_);
     factory.registerNodeType<RtlNode>("RTL", &flight_control_, &state_store_, &config_);
     factory.registerNodeType<HoverNode>("Hover", &flight_control_, &state_store_, &config_);

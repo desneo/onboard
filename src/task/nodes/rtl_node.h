@@ -12,6 +12,7 @@ class RtlNode final : public FlightActionNode {
    protected:
     bool dispatch(std::string& error) override;
     BT::NodeStatus checkFinish() override;
+    void log_running_progress() const override { log_altitude_and_mode_progress(); }
 };
 
 }  // namespace plane::task

@@ -106,6 +106,9 @@ python3 tools/fleetctl.py down --count 2
 `test` 使用完整的 `build/plane`。停止现有机载进程前，先完成运行包及配置引用的校验；
 包内 `profile` 必须非空、为包内相对路径且引用实际存在的预置。随后按以下顺序准备板端环境：
 
+交叉编译运行包无法在代码机执行时，本地依赖自检延后到目标板；每次部署仍须在启动程序前于目标板完成
+动态库解析检查和 `./plane --deps-check`，失败时不得启动。
+
 1. 校验板端架构与 Ubuntu 版本，再把清单中的代理写入板端 `/etc/apt/apt.conf.d/99zz-fleet-proxy`。
 2. 按清单补装核心运行依赖。
 3. 重启 SITL，解析飞控地址。
@@ -288,6 +291,9 @@ ctest --test-dir build -R '^mission_node_timeout$' --output-on-failure
 - Route 在等待首次进度、飞行时间超过普通节点超时和长时间运行时均保持 RUNNING，直到任务进度完成。
 - Waypoint 仍遵守普通节点超时。
 - 长航线仍支持中止和重新启动，飞控分发失败仍返回 FAILURE。
+- 首条进度回调到达前日志提示等待，收到后每 5 秒记录当前航点，飞向第 10 个航点时显示 `10/100`。
+  飞向最后一个航点时显示 `100/100`，完成时记录节点结果。
+- 板端实际执行航点或航线时，每次 `MissionProgress` 回调均记录 MAVSDK 原始 `current` 和 `total`。
 
 ### 4.4 航线起飞与高度调整
 
@@ -304,6 +310,9 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 - 临时航点任务完成、达到高度容差并退出 Mission 后才开始正式航线；
 - 高度调整使用 `behavior_tree.node_timeout_ms`，常规中止和超时时切换 Hold，人工接管中止时保留飞手选定的模式；
 - 起飞节点使用指定高度或默认安全高度下发起飞指令，观测到 `Takeoff` 后等待 `Hold` 和 `InAir` 才判定完成。
+- 起飞运行日志每 5 秒输出 `geoPos.height` 和 `geoPos.altitude`，分别为相对高度和海拔，固定保留 1 位小数。
+  高度来自本机状态缓存，高度为零时显示实际数值。飞控未连接或高度数值无效时显示「位置遥测不可用」。
+  完成日志记录两项高度，运行及结果日志均省略 tick 次数。
 
 ## 5. 相机／吊舱控制
 

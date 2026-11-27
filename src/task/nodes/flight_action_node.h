@@ -3,6 +3,7 @@
 #include <behaviortree_cpp/action_node.h>
 #include <spdlog/spdlog.h>
 
+#include <cmath>
 #include <cstdint>
 #include <string>
 
@@ -24,9 +25,6 @@ class FlightActionNode : public BT::StatefulActionNode {
           state_store_(state_store),
           app_config_(app_config) {}
 
-    /// 该节点被 tick 的次数（首帧 onStart + 之后每次 onRunning）。
-    int tick_count() const noexcept { return tick_count_; }
-
     static constexpr char kFailureDetail[] = "failure_detail";
 
    protected:
@@ -44,7 +42,6 @@ class FlightActionNode : public BT::StatefulActionNode {
         if (!dispatched_) {
             return start_action();
         }
-        ++tick_count_;
         if (timeout_enabled() && plane::core::now_ms() - start_ms_ > node_timeout_ms()) {
             record_failure("节点 " + name() + " 超时（" + std::to_string(node_timeout_ms()) + " 毫秒）");
             SPDLOG_ERROR("{}", failure_detail_);
@@ -67,6 +64,23 @@ class FlightActionNode : public BT::StatefulActionNode {
 
     virtual bool dispatch(std::string& error) = 0;
     virtual BT::NodeStatus checkFinish() = 0;
+    virtual void log_running_progress() const {}
+
+    static bool has_loggable_altitude(const plane::model::VehicleState& state) {
+        return state.fcLinkState == "connected" && std::isfinite(state.geoPos.height) &&
+               std::isfinite(state.geoPos.altitude);
+    }
+
+    void log_altitude_and_mode_progress() const {
+        const auto state = state_store_->own_state();
+        const auto status = flight_control_->flight_status();
+        if (has_loggable_altitude(state)) {
+            SPDLOG_INFO("节点 {} 运行中，geoPos.height={:.1f} geoPos.altitude={:.1f} flight_mode={}", name(),
+                        state.geoPos.height, state.geoPos.altitude, status.flight_mode);
+        } else {
+            SPDLOG_INFO("节点 {} 运行中，位置遥测不可用，flight_mode={}", name(), status.flight_mode);
+        }
+    }
 
     /// 保存业务根因，供执行引擎在失败时上报；日志不承担跨模块传递详情。
     void record_failure(const std::string& detail) {
@@ -83,7 +97,6 @@ class FlightActionNode : public BT::StatefulActionNode {
         if (!flight_control_->control_can_advance()) {
             return BT::NodeStatus::RUNNING;
         }
-        ++tick_count_;
         start_ms_ = plane::core::now_ms();
         last_running_log_ms_ = start_ms_;
         if (config().blackboard) {
@@ -102,23 +115,23 @@ class FlightActionNode : public BT::StatefulActionNode {
         return report_status(checkFinish());
     }
 
-    /// 统一打印节点结果：RUNNING 每 5 秒一次心跳，SUCCESS/FAILURE 各打印一次。
+    /// 每 5 秒调用运行进度日志，成功和失败时记录节点结果。
     BT::NodeStatus report_status(BT::NodeStatus status) {
         switch (status) {
             case BT::NodeStatus::RUNNING: {
                 const std::int64_t now = plane::core::now_ms();
                 if (now - last_running_log_ms_ >= kRunningLogIntervalMs) {
                     last_running_log_ms_ = now;
-                    SPDLOG_INFO("节点 {} 运行中（elapsed_ms={} tick_count_={}）", name(), now - start_ms_, tick_count_);
+                    log_running_progress();
                 }
                 break;
             }
             case BT::NodeStatus::SUCCESS:
-                SPDLOG_INFO("节点 {} 执行成功（tick_count_={}）", name(), tick_count_);
+                SPDLOG_INFO("节点 {} 执行成功", name());
                 break;
             case BT::NodeStatus::FAILURE:
                 if (failure_detail_.empty()) record_failure("节点 " + name() + " 执行失败");
-                SPDLOG_ERROR("节点 {} 执行失败（tick_count_={}）", name(), tick_count_);
+                SPDLOG_ERROR("节点 {} 执行失败", name());
                 break;
             default:
                 break;
@@ -129,7 +142,6 @@ class FlightActionNode : public BT::StatefulActionNode {
     static constexpr std::int64_t kRunningLogIntervalMs = 5000;
     std::int64_t start_ms_ = 0;
     std::int64_t last_running_log_ms_ = 0;
-    int tick_count_ = 0;
     bool dispatched_ = false;
     std::string failure_detail_;
 };

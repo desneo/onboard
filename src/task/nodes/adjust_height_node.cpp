@@ -78,6 +78,17 @@ BT::NodeStatus AdjustHeightNode::checkFinish() {
     return BT::NodeStatus::SUCCESS;
 }
 
+void AdjustHeightNode::log_running_progress() const {
+    const auto state = state_store_->own_state();
+    if (has_loggable_altitude(state)) {
+        SPDLOG_INFO("节点 {} 运行中，geoPos.height={:.1f} target_relative_height_m_={:.1f}", name(),
+                    state.geoPos.height, target_relative_height_m_);
+    } else {
+        SPDLOG_INFO("节点 {} 运行中，位置遥测不可用，target_relative_height_m_={:.1f}", name(),
+                    target_relative_height_m_);
+    }
+}
+
 void AdjustHeightNode::onTimeout() { stop_temporary_mission(); }
 
 void AdjustHeightNode::onHalted() {

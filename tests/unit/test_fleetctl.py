@@ -2,6 +2,7 @@
 
 import argparse
 import dataclasses
+import errno
 import importlib.util
 import json
 from pathlib import Path
@@ -356,6 +357,16 @@ class FleetCtlTest(unittest.TestCase):
                     fleetctl.ensure_bundle()
                 binary.write_text("#!/bin/sh\n[ \"$1\" = '--deps-check' ]\n", encoding="utf-8")
                 self.assertEqual(fleetctl.ensure_bundle(), bundle)
+                with patch.object(fleetctl.subprocess, "run", side_effect=OSError(errno.ENOEXEC, "Exec format error")):
+                    self.assertEqual(fleetctl.ensure_bundle(), bundle)
+
+    def test_remote_dependency_check_runs_program_self_check(self):
+        plane = fleetctl.load_config(fleetctl.DEFAULT_CONFIG).planes[0]
+        remote = Mock()
+        remote.run.return_value = subprocess.CompletedProcess([], 0, stdout="依赖检查通过\n")
+        fleetctl.check_remote_dependencies(plane, remote)
+        script = remote.run.call_args.args[1]
+        self.assertIn("./plane --deps-check", script)
 
     def test_profile_zenoh_endpoints_sort_peers_and_allow_optional_groundstation(self):
         local_ip = "192.168.1.100"

@@ -474,6 +474,7 @@ void FlightControlModule::attach_system(const std::shared_ptr<mavsdk::System>& s
             cache_.mission_total = value.total;
             cache_.mission_progress_updated = ManualTakeover::Clock::now();
         }
+        SPDLOG_INFO("飞控航点进度更新：current={} total={}", value.current, value.total);
         update_takeover_evidence();
     });
     system_->subscribe_is_connected([this, generation](bool connected) {
@@ -1282,6 +1283,8 @@ FlightStatus FlightControlModule::flight_status_locked() const {
     status.mode_updated = cache_.mode_updated;
     status.flight_mode = magic_enum::enum_name(cache_.flight_mode);
     status.link_generation = link_generation_;
+    status.mission_progress_received =
+        status.connected && cache_.mission_progress_updated != ManualTakeover::Clock::time_point{};
     return status;
 }
 

@@ -26,6 +26,7 @@ struct FlightStatus {
     std::chrono::steady_clock::time_point mode_updated{};
     std::string flight_mode;
     std::uint64_t link_generation = 0;
+    bool mission_progress_received = false;  ///< 已收到航点进度回调
 };
 
 inline constexpr auto kSelfCheckTelemetryMaxAge = std::chrono::seconds(3);

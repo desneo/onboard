@@ -1,7 +1,10 @@
+#include <spdlog/sinks/ostream_sink.h>
 #include <spdlog/spdlog.h>
 
 #include <cmath>
 #include <cstdint>
+#include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -119,7 +122,7 @@ void anti_uav_tree_depends_on_flight_state() {
             "已起飞的 AntiUav 节点错误");
 }
 
-void height_adjust_uses_relative_height() {
+void height_adjust_uses_relative_height(std::ostringstream& output) {
     test_now_ms = 1000;
     plane::core::AppConfig config;
     config.bt_height_adjust_tolerance_m = 1.0;
@@ -137,6 +140,7 @@ void height_adjust_uses_relative_height() {
     states.state.geoPos.height = 5.0F;
     states.state.geoPos.altitude = 105.0F;
     states.state.flightMode = "Hold";
+    states.state.fcLinkState = "connected";
     plane::task::AdjustHeightNode node("AdjustHeight", BT::NodeConfig{}, &flight, &states, &config, &context);
 
     require(node.executeTick() == BT::NodeStatus::RUNNING, "相对高度调整应进入运行状态");
@@ -148,6 +152,12 @@ void height_adjust_uses_relative_height() {
             "临时航点应使用当前位置经度");
     require(std::fabs(flight.last_waypoint.height - 20.0F) < 0.001F, "临时航点应使用首航点相对高度");
     require(std::fabs(flight.last_waypoint.altitude - 105.0F) < 0.001F, "构造临时航点时不得把首航点海拔当成相对高度");
+
+    test_now_ms += 5000;
+    require(node.executeTick() == BT::NodeStatus::RUNNING &&
+                output.str().find("节点 AdjustHeight 运行中，geoPos.height=5.0 target_relative_height_m_=20.0\n") !=
+                    std::string::npos,
+            "高度调整进度应输出当前相对高度和目标相对高度");
 
     states.state.geoPos.height = 19.2F;
     states.state.geoPos.altitude = 119.2F;
@@ -201,7 +211,8 @@ void height_adjust_timeout_stops_temporary_mission() {
 }
 
 
-void height_adjust_reports_in_air_loss() {
+void height_adjust_reports_in_air_loss(std::ostringstream& output) {
+    output.str({});
     test_now_ms = 1000;
     plane::core::AppConfig config;
     plane::task::CommandContext context;
@@ -221,6 +232,11 @@ void height_adjust_reports_in_air_loss() {
     std::string detail;
     require(node_config.blackboard->get(plane::task::FlightActionNode::kFailureDetail, detail) &&
                 detail == "调整高度期间飞机离地状态丢失", "高度调整失败的业务根因未传给执行引擎");
+    const auto messages = output.str();
+    require(messages.find(detail) != std::string::npos &&
+                messages.find("节点 AdjustHeight 执行失败\n") != std::string::npos &&
+                messages.find("tick_count") == std::string::npos,
+            "失败日志应保留业务根因并移除 tick 次数");
 }
 
 void takeoff_waits_for_hold_after_in_air() {
@@ -276,6 +292,61 @@ void takeoff_uses_configured_timeout() {
     require(node.executeTick() == BT::NodeStatus::FAILURE, "超过 bt_node_timeout_ms 后起飞节点应超时失败");
 }
 
+void takeoff_logs_current_altitudes(std::ostringstream& output) {
+    output.str({});
+    test_now_ms = 1000;
+    plane::core::AppConfig config;
+    plane::task::CommandContext context;
+    context.type = plane::model::CommandType::Takeoff;
+    context.takeoffHeight_m = 20.0F;
+    FakeFlightControl flight;
+    flight.status.connected = true;
+    flight.status.flight_mode = "Takeoff";
+    flight.status.in_air = true;
+    FakeStateStore states;
+    states.state.fcLinkState = "connected";
+    states.state.geoPos = plane::model::GeoPoint{0.0, 0.0, 12.34F, 56.74F};
+    FakeSystemParam params;
+    plane::task::TakeoffNode node("Takeoff", BT::NodeConfig{}, &flight, &states, &config, &params, &context,
+                                 /*log_position_progress=*/true);
+
+    require(node.executeTick() == BT::NodeStatus::RUNNING, "起飞应进入运行状态");
+    test_now_ms += 4999;
+    require(node.executeTick() == BT::NodeStatus::RUNNING && output.str().empty(), "起飞进度日志在 5 秒前不应输出");
+    ++test_now_ms;
+    require(node.executeTick() == BT::NodeStatus::RUNNING, "仍处于 Takeoff 模式时应继续运行");
+    const auto first_progress = output.str();
+    require(first_progress == "节点 Takeoff 运行中，geoPos.height=12.3 geoPos.altitude=56.7\n",
+            "起飞进度应从同一份遥测输出相对高度和海拔，保留一位小数");
+    require(node.executeTick() == BT::NodeStatus::RUNNING && output.str() == first_progress,
+            "同一时刻再次轮询不应重复输出起飞进度");
+
+    states.state.geoPos = plane::model::GeoPoint{};
+    test_now_ms += 5000;
+    require(node.executeTick() == BT::NodeStatus::RUNNING &&
+                output.str().find("geoPos.height=0.0 geoPos.altitude=0.0") != std::string::npos,
+            "下一周期应输出更新后的遥测，并接受有效的零高度");
+
+    states.state.fcLinkState = "disconnected";
+    test_now_ms += 5000;
+    require(node.executeTick() == BT::NodeStatus::RUNNING &&
+                output.str().find("节点 Takeoff 运行中，位置遥测不可用") != std::string::npos,
+            "本机状态显示飞控断连时应提示位置遥测不可用");
+
+    states.state.fcLinkState = "connected";
+    states.state.geoPos = plane::model::GeoPoint{0.0, 0.0, 20.24F, 64.64F};
+    flight.status.flight_mode = "Hold";
+    flight.status.landed_in_air = true;
+    require(node.executeTick() == BT::NodeStatus::SUCCESS, "通常的起飞完成条件应保持不变");
+    const auto messages = output.str();
+    const auto completed = messages.find("起飞完成");
+    require(completed != std::string::npos &&
+                messages.find("geoPos.height=20.2 geoPos.altitude=64.6", completed) != std::string::npos,
+            "起飞完成日志应包含最新相对高度和海拔");
+    require(messages.find("elapsed_ms") == std::string::npos && messages.find("tick_count") == std::string::npos,
+            "起飞运行和完成日志应省略耗时和 tick 次数");
+}
+
 }  // namespace
 
 namespace plane::core {
@@ -283,19 +354,29 @@ std::int64_t now_ms() { return test_now_ms; }
 }  // namespace plane::core
 
 int main() {
+    std::ostringstream output;
+    const auto previous_logger = spdlog::default_logger();
+    auto sink = std::make_shared<spdlog::sinks::ostream_sink_mt>(output);
+    auto logger = std::make_shared<spdlog::logger>("route_preflight", sink);
+    logger->set_pattern("%v");
+    logger->set_level(spdlog::level::info);
+    spdlog::set_default_logger(logger);
     try {
         route_tree_depends_on_flight_state();
         anti_uav_tree_depends_on_flight_state();
-        height_adjust_uses_relative_height();
+        height_adjust_uses_relative_height(output);
         height_adjust_supports_descent_and_halt();
         height_adjust_timeout_stops_temporary_mission();
-        height_adjust_reports_in_air_loss();
+        height_adjust_reports_in_air_loss(output);
         takeoff_waits_for_hold_after_in_air();
         takeoff_uses_configured_timeout();
+        takeoff_logs_current_altitudes(output);
     } catch (const std::exception& error) {
+        spdlog::set_default_logger(previous_logger);
         SPDLOG_ERROR("航线起飞与高度调整测试失败: {}", error.what());
         return 1;
     }
+    spdlog::set_default_logger(previous_logger);
     SPDLOG_INFO("航线起飞与高度调整测试通过");
     return 0;
 }

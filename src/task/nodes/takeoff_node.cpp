@@ -22,9 +22,30 @@ BT::NodeStatus TakeoffNode::checkFinish() {
         !status.in_air || status.on_ground || !status.landed_in_air) {
         return BT::NodeStatus::RUNNING;
     }
-    SPDLOG_INFO("起飞完成: geoPos.height={:.1f} target_relative_height_m_={:.1f} flight_mode={}",
-                state_store_->own_state().geoPos.height, target_relative_height_m_, status.flight_mode);
+    const auto state = state_store_->own_state();
+    if (!log_position_progress_) {
+        SPDLOG_INFO("起飞完成: geoPos.height={:.1f} target_relative_height_m_={:.1f} flight_mode={}",
+                    state.geoPos.height, target_relative_height_m_, status.flight_mode);
+    } else if (has_loggable_altitude(state)) {
+        SPDLOG_INFO("起飞完成，geoPos.height={:.1f} geoPos.altitude={:.1f} target_relative_height_m_={:.1f} flight_mode={}",
+                    state.geoPos.height, state.geoPos.altitude, target_relative_height_m_, status.flight_mode);
+    } else {
+        SPDLOG_INFO("起飞完成，位置遥测不可用，target_relative_height_m_={:.1f} flight_mode={}",
+                    target_relative_height_m_, status.flight_mode);
+    }
     return BT::NodeStatus::SUCCESS;
+}
+
+void TakeoffNode::log_running_progress() const {
+    if (!log_position_progress_) return;
+
+    const auto state = state_store_->own_state();
+    if (has_loggable_altitude(state)) {
+        SPDLOG_INFO("节点 {} 运行中，geoPos.height={:.1f} geoPos.altitude={:.1f}", name(), state.geoPos.height,
+                    state.geoPos.altitude);
+    } else {
+        SPDLOG_INFO("节点 {} 运行中，位置遥测不可用", name());
+    }
 }
 
 }  // namespace plane::task

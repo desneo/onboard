@@ -7,6 +7,7 @@ import argparse
 import configparser
 import dataclasses
 import datetime as dt
+import errno
 import hashlib
 import ipaddress
 import json
@@ -394,7 +395,12 @@ def check_bundle_dependencies(bundle: Path) -> None:
             [str((bundle / "plane").resolve()), "--deps-check"], cwd=bundle,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=30, check=False,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except OSError as exc:
+        if exc.errno == errno.ENOEXEC:
+            print("[build] 运行包与代码机架构不同，依赖自检延后到目标板执行")
+            return
+        raise FleetError(f"运行包依赖自检无法执行: {exc}") from exc
+    except subprocess.TimeoutExpired as exc:
         raise FleetError(f"运行包依赖自检无法执行: {exc}") from exc
     if result.returncode != 0:
         raise FleetError(f"运行包依赖自检失败: {sanitize_output(result.stdout).strip()}")
@@ -921,14 +927,14 @@ def check_remote_dependencies(plane: Plane, remote: RemoteExecutor) -> None:
         "unresolved=$(ldd \"$target\" 2>/dev/null | awk '/not found/ {print $1}'); "
         "if [ -n \"$unresolved\" ]; then "
         "printf '%s: 缺少 %s\\n' \"$target\" \"$(printf '%s' \"$unresolved\" | tr '\\n' ' ')\"; missing=1; fi; "
-        "done; exit \"$missing\""
+        "done; if [ \"$missing\" -ne 0 ]; then exit \"$missing\"; fi; ./plane --deps-check"
     )
     result = remote.run(plane, script, timeout=20, check=False)
     if result.returncode != 0:
         raise FleetError(
-            f"{plane.plane_id} 运行库检查失败，未启动程序:\n{sanitize_output(result.stdout).strip()}"
+            f"{plane.plane_id} 运行包依赖检查失败，未启动程序:\n{sanitize_output(result.stdout).strip()}"
         )
-    print(f"[deps] {plane.plane_id}: 可执行文件与插件依赖完整")
+    print(f"[deps] {plane.plane_id}: 运行库与程序依赖自检通过")
 
 
 def start_plane(plane: Plane, remote: RemoteExecutor) -> None:
