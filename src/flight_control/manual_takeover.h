@@ -16,7 +16,6 @@ class ManualTakeover {
     enum class Action { Other, Takeoff, Mission, Hold };
 
     struct Evidence {
-        bool takeoff_complete = false;
         bool mission_complete = false;
     };
 
@@ -101,6 +100,12 @@ class ManualTakeover {
             if (reason == Action::Other) {
                 return take_over(mode, previous);
             }
+            if (reason == Action::Takeoff) {
+                // 飞控完成起飞后自动切回 Hold 属于正常交接，完成与否由 Takeoff 节点按实际模式
+                // 和离地状态判定，不能在这里用短时间窗口核对起飞遥测。
+                clear_takeoff();
+                return {};
+            }
             hold_check_ = HoldCheck{reason, now + kHoldCheckTime, previous};
         } else if (mode == Mode::Offboard && previous == Mode::Takeoff && takeoff_expected_) {
             // PX4 起飞完成的模式切换可能晚于机载首次进入 Offboard。
@@ -116,19 +121,13 @@ class ManualTakeover {
             return {};
         }
         const Action reason = hold_check_->reason;
-        const bool expected = reason == Action::Takeoff ? takeoff_expected_ : action_ == reason;
-        if (!expected || now >= hold_check_->until) {
+        if (action_ != reason || now >= hold_check_->until) {
             return take_over(Mode::Hold, hold_check_->previous);
         }
-        if (!hold_confirmed(reason, evidence)) {
+        if (reason != Action::Mission || !evidence.mission_complete) {
             return {std::nullopt, true};
         }
-        if (reason == Action::Takeoff) {
-            clear_takeoff();
-        }
-        if (action_ == reason) {
-            action_ = Action::Other;
-        }
+        action_ = Action::Other;
         hold_check_.reset();
         return {};
     }
@@ -143,11 +142,6 @@ class ManualTakeover {
         Clock::time_point until;
         Mode previous;
     };
-
-    static bool hold_confirmed(Action reason, Evidence evidence) {
-        return (reason == Action::Takeoff && evidence.takeoff_complete) ||
-               (reason == Action::Mission && evidence.mission_complete);
-    }
 
     Action expected_hold(Mode previous, Clock::time_point now) const {
         if (previous == Mode::Mission && action_ == Action::Mission) {

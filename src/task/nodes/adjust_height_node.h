@@ -19,7 +19,6 @@ class AdjustHeightNode final : public FlightActionNode {
    protected:
     bool dispatch(std::string& error) override;
     BT::NodeStatus checkFinish() override;
-    std::int64_t node_timeout_ms() const override;
     void onTimeout() override;
     void onHalted() override;
 

@@ -330,8 +330,6 @@ std::string canonical_key(const std::string& section, const std::string& key) {
         {"flight_control.route_speed_m_s", "fc_route_speed_m_s"},
         {"behavior_tree.tick_interval_ms", "bt_tick_interval_ms"},
         {"behavior_tree.node_timeout_ms", "bt_node_timeout_ms"},
-        {"behavior_tree.takeoff_tolerance_m", "bt_takeoff_tolerance_m"},
-        {"behavior_tree.height_adjust_timeout_ms", "bt_height_adjust_timeout_ms"},
         {"behavior_tree.height_adjust_tolerance_m", "bt_height_adjust_tolerance_m"},
         {"safety.alert_voltage_threshold_v", "alert_voltage_threshold_v"},
         {"midcourse.init_timeout_ms", "midcourse_init_timeout_ms"},
@@ -444,10 +442,6 @@ std::string read_main_config(const std::string& path, AppConfig& out) {
             out.bt_tick_interval_ms = std::stoi(value);
         } else if (key == "bt_node_timeout_ms") {
             out.bt_node_timeout_ms = std::stoi(value);
-        } else if (key == "bt_takeoff_tolerance_m") {
-            out.bt_takeoff_tolerance_m = std::stod(value);
-        } else if (key == "bt_height_adjust_timeout_ms") {
-            out.bt_height_adjust_timeout_ms = std::stoi(value);
         } else if (key == "bt_height_adjust_tolerance_m") {
             out.bt_height_adjust_tolerance_m = std::stod(value);
         } else if (key == "alert_voltage_threshold_v") {

@@ -181,7 +181,7 @@ void height_adjust_supports_descent_and_halt() {
 void height_adjust_timeout_stops_temporary_mission() {
     test_now_ms = 1000;
     plane::core::AppConfig config;
-    config.bt_height_adjust_timeout_ms = 1000;
+    config.bt_node_timeout_ms = 1000;
     plane::task::CommandContext context;
     context.type = plane::model::CommandType::Route;
     context.waypoints.resize(1);
@@ -193,8 +193,10 @@ void height_adjust_timeout_stops_temporary_mission() {
     plane::task::AdjustHeightNode node("AdjustHeight", BT::NodeConfig{}, &flight, &states, &config, &context);
 
     require(node.executeTick() == BT::NodeStatus::RUNNING, "超时测试应先进入运行状态");
-    test_now_ms += 1001;
-    require(node.executeTick() == BT::NodeStatus::FAILURE, "高度调整超时应失败");
+    test_now_ms += 1000;
+    require(node.executeTick() == BT::NodeStatus::RUNNING, "高度调整达到 bt_node_timeout_ms 时仍应运行");
+    ++test_now_ms;
+    require(node.executeTick() == BT::NodeStatus::FAILURE, "高度调整超过 bt_node_timeout_ms 后应失败");
     require(flight.hold_calls == 1, "高度调整超时后应切换 Hold 停止临时任务");
 }
 
@@ -221,23 +223,57 @@ void height_adjust_reports_in_air_loss() {
                 detail == "调整高度期间飞机离地状态丢失", "高度调整失败的业务根因未传给执行引擎");
 }
 
-void takeoff_checks_dispatched_relative_height() {
+void takeoff_waits_for_hold_after_in_air() {
+    test_now_ms = 1000;
     plane::core::AppConfig config;
-    config.bt_takeoff_tolerance_m = 1.0;
+    require(config.bt_node_timeout_ms == 600000, "全局节点默认超时应为 600000 ms");
     plane::task::CommandContext context;
     context.takeoffHeight_m = 20.0F;
     FakeFlightControl flight;
-    flight.status.in_air = true;
+    flight.status.flight_mode = "Hold";
     FakeStateStore states;
-    states.state.geoPos.height = 12.0F;
+    states.state.geoPos.height = 19.5F;
     FakeSystemParam params;
     params.value.safeHeight_m = 10.0;
     plane::task::TakeoffNode node("Takeoff", BT::NodeConfig{}, &flight, &states, &config, &params, &context);
 
-    require(node.executeTick() == BT::NodeStatus::RUNNING, "未达到实际起飞目标高度时不得完成");
+    require(node.executeTick() == BT::NodeStatus::RUNNING, "起飞下发前处于 Hold 且未进入 Takeoff 时不得完成");
     require(std::fabs(flight.takeoff_height_m - 20.0F) < 0.001F, "应下发上下文中的起飞高度");
-    states.state.geoPos.height = 19.1F;
-    require(node.executeTick() == BT::NodeStatus::SUCCESS, "达到实际起飞目标高度后应完成");
+
+    flight.status.flight_mode = "Takeoff";
+    flight.status.in_air = true;
+    flight.status.on_ground = false;
+    flight.status.landed_in_air = false;
+    require(node.executeTick() == BT::NodeStatus::RUNNING, "TakingOff 过渡态且仍在 Takeoff 模式时不得完成");
+
+    flight.status.landed_in_air = true;
+    require(node.executeTick() == BT::NodeStatus::RUNNING, "未切换回 Hold 模式前不得完成");
+
+    // 即使高度估计偏低，只要从 Takeoff 切回 Hold 且确认在空中即完成。
+    states.state.geoPos.height = 12.0F;
+    flight.status.flight_mode = "Hold";
+    require(node.executeTick() == BT::NodeStatus::SUCCESS, "进入空中后由 Takeoff 切回 Hold 应完成");
+}
+
+void takeoff_uses_configured_timeout() {
+    test_now_ms = 1000;
+    plane::core::AppConfig config;
+    config.bt_node_timeout_ms = 5000;
+    plane::task::CommandContext context;
+    context.takeoffHeight_m = 20.0F;
+    FakeFlightControl flight;
+    flight.status.flight_mode = "Takeoff";
+    flight.status.in_air = true;
+    flight.status.landed_in_air = false;
+    FakeStateStore states;
+    FakeSystemParam params;
+    plane::task::TakeoffNode node("Takeoff", BT::NodeConfig{}, &flight, &states, &config, &params, &context);
+
+    require(node.executeTick() == BT::NodeStatus::RUNNING, "起飞超时测试应先进入运行状态");
+    test_now_ms += 4000;
+    require(node.executeTick() == BT::NodeStatus::RUNNING, "未超过 bt_node_timeout_ms 前不得超时");
+    test_now_ms += 1500;
+    require(node.executeTick() == BT::NodeStatus::FAILURE, "超过 bt_node_timeout_ms 后起飞节点应超时失败");
 }
 
 }  // namespace
@@ -254,7 +290,8 @@ int main() {
         height_adjust_supports_descent_and_halt();
         height_adjust_timeout_stops_temporary_mission();
         height_adjust_reports_in_air_loss();
-        takeoff_checks_dispatched_relative_height();
+        takeoff_waits_for_hold_after_in_air();
+        takeoff_uses_configured_timeout();
     } catch (const std::exception& error) {
         SPDLOG_ERROR("航线起飞与高度调整测试失败: {}", error.what());
         return 1;

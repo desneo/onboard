@@ -78,8 +78,6 @@ BT::NodeStatus AdjustHeightNode::checkFinish() {
     return BT::NodeStatus::SUCCESS;
 }
 
-std::int64_t AdjustHeightNode::node_timeout_ms() const { return app_config_->bt_height_adjust_timeout_ms; }
-
 void AdjustHeightNode::onTimeout() { stop_temporary_mission(); }
 
 void AdjustHeightNode::onHalted() {

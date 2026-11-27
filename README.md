@@ -35,7 +35,7 @@
 系统不维护任务或指令等待队列，任意时刻只执行一个 Task 或 Command。收到新的控制内容时，中止当前执行并立即切换到最新内容。
 自检仅在空闲时启动，自检期间人工接管、显式上锁和停桨指令可以中止它。
 
-人工接管优先于所有自动任务和指令。执行中，PX4 切入 `Position`、`Stabilized` 或非预期的 `Loiter` 时，机载立即停止旧执行的控制下发并通知地面站。飞手随后拨回原档位，旧执行也不会恢复。
+人工接管优先于所有自动任务和指令。执行中，PX4 切入 `Position`、`Stabilized` 或非预期的 `Loiter` 时，机载立即停止旧执行的控制下发并通知地面站；起飞结束时飞控自动切回 `Hold` 属于正常交接，由 `Takeoff` 节点判定完成，不触发接管。飞手随后拨回原档位，旧执行也不会恢复。
 
 ### 相机／吊舱控制
 
@@ -329,9 +329,7 @@ SITL 测试统一使用 `tests/fleet.ini` 的 `simulator.host`（当前为 `192.
 | `flight_control.heartbeat_timeout_ms` | MAVSDK 心跳超时 |
 | `flight_control.route_speed_m_s` | 航点、航线以及航线开始前临时高度航点的速度 |
 | `behavior_tree.tick_interval_ms` | 行为树 tick 周期 |
-| `behavior_tree.node_timeout_ms` | 普通行为树节点超时；Route 航线飞行不受该时限限制，持续等待飞控任务进度完成 |
-| `behavior_tree.takeoff_tolerance_m` | 起飞高度判定容差 |
-| `behavior_tree.height_adjust_timeout_ms` | 航线开始前调整相对高度的超时 |
+| `behavior_tree.node_timeout_ms` | 普通行为树节点的统一超时（默认 600000 ms），包括起飞和航线前高度调整。Route 正式航线阶段持续等待飞控任务进度完成 |
 | `behavior_tree.height_adjust_tolerance_m` | 航线开始前调整相对高度的到达容差 |
 | `midcourse.target_history_size` | 每航迹目标历史缓存帧数，同时为 Midcourse 初始化所需的会话内有效帧数；默认 20，范围 5～30 |
 | `midcourse.init_timeout_ms` | 等待本次 Midcourse 会话重新收到 `target_history_size` 帧严格递增雷达数据的最长时间，默认 30000 ms |

@@ -50,9 +50,7 @@ struct AppConfig {
     bool is_sim = false;
 
     int bt_tick_interval_ms = 50;
-    int bt_node_timeout_ms = 30000;
-    double bt_takeoff_tolerance_m = 1.0;
-    int bt_height_adjust_timeout_ms = 120000;
+    int bt_node_timeout_ms = 600000;
     double bt_height_adjust_tolerance_m = 1.0;
 
     double alert_voltage_threshold_v = 21.0;

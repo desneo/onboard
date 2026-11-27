@@ -302,8 +302,8 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 - 高度调整只使用首航点和当前状态的相对高度，不混用海拔高度；
 - 高度调整向飞控下发当前位置、目标相对高度的临时非穿越航点，不使用 Offboard；
 - 临时航点任务完成、达到高度容差并退出 Mission 后才开始正式航线；
-- 常规中止和超时时切换 Hold，人工接管中止时保留飞手选定的模式；
-- 起飞节点使用本次实际下发的目标高度判定完成。
+- 高度调整使用 `behavior_tree.node_timeout_ms`，常规中止和超时时切换 Hold，人工接管中止时保留飞手选定的模式；
+- 起飞节点使用指定高度或默认安全高度下发起飞指令，观测到 `Takeoff` 后等待 `Hold` 和 `InAir` 才判定完成。
 
 ## 5. 相机／吊舱控制
 
@@ -330,7 +330,7 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 | 串口连接 | 使用配置的设备和波特率连接 PX4 |
 | Arm/Disarm | 指令成功且以真实 armed 状态判定完成 |
 | SelfCheck | 实际解锁后自动恢复上锁，飞机保持在地面，地面端收到可关联的成功或失败结果 |
-| Takeoff | 使用指定高度；未指定时使用安全高度；达到容差后完成 |
+| Takeoff | 使用指定高度；未指定时使用安全高度；进入 `Takeoff` 后确认在空中（`InAir`）且切换回 `Hold` 模式后完成，默认超时 600 秒 |
 | Land/RTL | 以实际离地状态判定完成 |
 | Hover | PX4 接受 Hold 指令 |
 | Waypoint | 上传单航点并以 Mission Progress 判定完成 |
@@ -342,7 +342,7 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 
 ### 6.1 人工接管
 
-运行 `ctest --test-dir build -R '^(manual_takeover|task_scheduler_takeover)$' --output-on-failure` 验证模式基线、快速切换、正常 `Hold`、完成遥测延迟、接管前后模式、任务中止，以及接管操作日志和告警的单次记录。
+运行 `ctest --test-dir build -R '^(manual_takeover|task_scheduler_takeover)$' --output-on-failure` 验证模式基线、快速切换、起飞结束的正常 `Hold` 交接、航点完成遥测核对、接管前后模式、任务中止，以及接管操作日志和告警的单次记录。
 
 将机载程序部署到 `uav1` 的 `/home/firefly/plane`。
 连接 `192.168.1.56` 的 PX4 SITL，使用 `mavlink status` 确认连到 `uav1` 的机载链路，再在该 PX4 实例的控制台调高机载链路 `HEARTBEAT` 频率。命令中的端口取 PX4 侧实例的本地 UDP 端口。
@@ -356,7 +356,7 @@ mavlink stream -u <机载链路的PX4本地UDP端口> -s HEARTBEAT -r 20
 | 场景 | 通过标准 |
 | --- | --- |
 | 飞前 `Position`，随后由程序接手 | 正常起飞并进入预期自动模式。启动和重连时的首个模式不触发接管。 |
-| 正常 `Hold` | 起飞完成、`Hover`、临时高度航点与正式航点正常结束均不记录接管操作日志或发送接管告警。起飞尾段短暂覆盖 Offboard 后仍可正常交接。 |
+| 正常 `Hold` | 起飞完成后的 `Takeoff → Hold` 直接按正常交接处理，不受遥测晚到影响；`Hover`、临时高度航点与正式航点正常结束均不记录接管操作日志或发送接管告警。起飞尾段短暂覆盖 Offboard 后仍可正常交接。 |
 | `Mission` 或 `Offboard` 中切入 `Loiter`、`Stabilized`、`Position` | 逐个独立验证三个入口，检查 PX4 的实际模式。接管操作日志和 `manual_takeover` 告警均包含前后模式 `previous`、`value`、停止自动控制操作，以及被中止的 `taskId` 或 `commandId`，二者内容一致。航线未完成时进入 `Loiter`，在核对窗口结束前暂停下发，随后中止。接管后的出站抓包没有旧飞控指令、Offboard 设定值或切换 `Hold` 的清理报文。 |
 | `Hold` 核对期间快速切换 | `Mission → Hold → Mission` 核对超时后仍按首次 `Mission → Hold` 判定，日志与告警保留 `previous=Mission value=Hold`。另行验证 `Mission → Hold → Stabilized` 时立即接管，记录 `previous=Hold value=Stabilized`。 |
 | 快速拨动 `Loiter → Stabilized → Position` | 第一次符合接管条件即中止。同一次执行只产生一条接管操作日志和一条 `manual_takeover` 告警，Task 上报 `Aborted`。旧报文重传只回 `Ack`，清理完成后新的 Task 或 Command 可以执行。 |

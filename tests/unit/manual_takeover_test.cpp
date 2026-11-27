@@ -48,7 +48,7 @@ void hold_completed_mission_and_expiry() {
     auto result = detector.observe(Mode::Hold, {}, kStart + 100ms);
     require(result.pending && !result.takeover && detector.deadline() == kStart + 400ms,
             "航点完成证据可晚于 Hold，核对期间应暂停下发");
-    result = detector.update({false, true}, kStart + 250ms);
+    result = detector.update({true}, kStart + 250ms);
     require(!result.pending && !result.takeover, "本次航点完成后正常进入 Hold 不应中止");
 
     detector.expect(Action::Mission);
@@ -72,7 +72,7 @@ void pilot_mode_overrides_pending_hold() {
     auto result = detector.observe(Mode::Stabilized, {}, kStart + 100ms);
     require(result.takeover == Mode::Stabilized && result.previous == Mode::Hold && !result.pending,
             "核对期间切到 Stabilized 必须立即中止并记录 Hold 到 Stabilized");
-    require(!detector.update({false, true}, kStart + 150ms).takeover, "迟到的航点状态不得影响接管");
+    require(!detector.update({true}, kStart + 150ms).takeover, "迟到的航点状态不得影响接管");
 }
 
 void failed_action_preserves_pending_hold_transition() {
@@ -83,7 +83,7 @@ void failed_action_preserves_pending_hold_transition() {
     require(detector.observe(Mode::Hold, {}, kStart + 50ms).pending, "应先核对本次航点是否完成");
     detector.observe(Mode::ReturnToLaunch, {}, kStart + 100ms);
     detector.action_failed(Action::Mission);
-    const auto result = detector.update({false, true}, kStart + 150ms);
+    const auto result = detector.update({true}, kStart + 150ms);
     require(result.takeover == Mode::Hold && result.previous == Mode::Mission && !result.pending,
             "航点动作失败后应立即按首次 Mission 到 Hold 接管，不被后续返航模式覆盖");
 }
@@ -98,28 +98,26 @@ void allow_owned_hold_and_takeoff_handoff() {
     detector.start();
     detector.expect(Action::Takeoff);
     detector.observe(Mode::Takeoff, {}, kStart + 100ms);
-    require(detector.observe(Mode::Hold, {}, kStart + 200ms).pending, "起飞结束等待目标高度遥测");
-    const auto result = detector.update({true, false}, kStart + 300ms);
-    require(!result.pending && !result.takeover, "已达起飞高度应解除 Hold 核对且不触发接管");
-    require(!detector.observe(Mode::Offboard, {}, kStart + 350ms).takeover, "起飞后应能进入 Offboard");
+    const auto result = detector.observe(Mode::Hold, {}, kStart + 200ms);
+    require(!result.pending && !result.takeover, "起飞结束切回 Hold 属于正常交接，不得暂停或中止");
+    require(!detector.observe(Mode::Offboard, {}, kStart + 350ms).takeover, "起飞交接后应能进入 Offboard");
 
     detector.finish();
     detector.start();
     detector.expect(Action::Takeoff);
     detector.observe(Mode::Takeoff, {}, kStart + 400ms);
-    detector.observe(Mode::Offboard, {true, false}, kStart + 500ms);
-    require(!detector.observe(Mode::Hold, {true, false}, kStart + 550ms).takeover,
-            "起飞完成覆盖首次 Offboard 时应允许交接");
-    detector.observe(Mode::Offboard, {true, false}, kStart + 600ms);
-    require(detector.observe(Mode::Hold, {true, false}, kStart + 650ms).takeover == Mode::Hold,
+    detector.observe(Mode::Offboard, {}, kStart + 500ms);
+    require(!detector.observe(Mode::Hold, {}, kStart + 550ms).takeover, "起飞完成覆盖首次 Offboard 时应允许交接");
+    detector.observe(Mode::Offboard, {}, kStart + 600ms);
+    require(detector.observe(Mode::Hold, {}, kStart + 650ms).takeover == Mode::Hold,
             "起飞正常 Hold 只应豁免一次");
 
     detector.finish();
     detector.start();
     detector.expect(Action::Takeoff);
     detector.observe(Mode::Takeoff, {}, kStart + 700ms);
-    detector.observe(Mode::Offboard, {true, false}, kStart + 750ms);
-    require(detector.observe(Mode::Hold, {true, false}, kStart + 1750ms).takeover == Mode::Hold,
+    detector.observe(Mode::Offboard, {}, kStart + 750ms);
+    require(detector.observe(Mode::Hold, {}, kStart + 1750ms).takeover == Mode::Hold,
             "起飞交接结束后应及时恢复对非预期 Loiter 的检测");
 }
 

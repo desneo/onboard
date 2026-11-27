@@ -127,8 +127,7 @@ class FlightControlModule final : public plane::core::IModule, public FlightCont
     SelfCheckArmResult run_self_check_action(const FlightStatus& expected, bool arming,
                                             const std::atomic<bool>* active, std::string& error);
     bool wait_for_control(std::string& error);
-    bool expect_action(ManualTakeover::Action action, std::string& error, float takeoff_height_m = 0.0F,
-                       int mission_total = 0);
+    bool expect_action(ManualTakeover::Action action, std::string& error, int mission_total = 0);
     void action_failed(ManualTakeover::Action action);
     void update_takeover_evidence();
     ManualTakeover::Evidence takeover_evidence_locked() const;
@@ -171,9 +170,7 @@ class FlightControlModule final : public plane::core::IModule, public FlightCont
     std::condition_variable control_cv_;
     ManualTakeover manual_takeover_;
     std::uint64_t execution_id_ = 0;
-    ManualTakeover::Clock::time_point takeoff_requested_at_{};
     ManualTakeover::Clock::time_point mission_requested_at_{};
-    float control_takeoff_height_m_ = 0.0F;
     int control_mission_total_ = 0;
     std::optional<ManualTakeoverEvent> takeover_event_;
     enum class ControlGate { Open, CheckingHold, Takeover };

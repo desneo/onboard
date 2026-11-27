@@ -20,6 +20,7 @@ struct FlightStatus {
     float takeoff_altitude_m = 0.0F;  ///< 最近一次 Takeoff 指令高度
     bool connected = false;
     bool on_ground = false;
+    bool landed_in_air = false;  ///< 飞控 landed_state 处于 InAir（区分 TakingOff 过渡态）
     std::chrono::steady_clock::time_point armed_updated{};
     std::chrono::steady_clock::time_point ground_updated{};
     std::chrono::steady_clock::time_point mode_updated{};

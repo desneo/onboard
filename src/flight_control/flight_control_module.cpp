@@ -172,7 +172,6 @@ void FlightControlModule::release() {}
 void FlightControlModule::begin_control(std::uint64_t execution_id) {
     std::lock_guard<std::mutex> lock(control_mutex_);
     execution_id_ = execution_id;
-    control_takeoff_height_m_ = 0.0F;
     control_mission_total_ = 0;
     manual_takeover_.start();
 }
@@ -210,8 +209,7 @@ bool FlightControlModule::wait_for_control(std::string& error) {
     return false;
 }
 
-bool FlightControlModule::expect_action(ManualTakeover::Action action, std::string& error, float takeoff_height_m,
-                                        int mission_total) {
+bool FlightControlModule::expect_action(ManualTakeover::Action action, std::string& error, int mission_total) {
     std::unique_lock<std::mutex> lock(control_mutex_);
     control_cv_.wait(lock, [this]() { return !running_ || control_gate_ != ControlGate::CheckingHold; });
     if (!control_can_advance()) {
@@ -220,10 +218,7 @@ bool FlightControlModule::expect_action(ManualTakeover::Action action, std::stri
     }
     if (execution_id_ != 0) {
         const auto now = ManualTakeover::Clock::now();
-        if (action == ManualTakeover::Action::Takeoff) {
-            takeoff_requested_at_ = now;
-            control_takeoff_height_m_ = takeoff_height_m;
-        } else if (action == ManualTakeover::Action::Mission) {
+        if (action == ManualTakeover::Action::Mission) {
             mission_requested_at_ = now;
             control_mission_total_ = mission_total;
         }
@@ -242,10 +237,8 @@ void FlightControlModule::action_failed(ManualTakeover::Action action) {
 
 ManualTakeover::Evidence FlightControlModule::takeover_evidence_locked() const {
     std::lock_guard<std::mutex> lock(cache_mutex_);
-    return {control_takeoff_height_m_ > 0.0F && cache_.position_updated >= takeoff_requested_at_ && cache_.in_air &&
-                cache_.relative_altitude_m >= control_takeoff_height_m_ - config_.bt_takeoff_tolerance_m,
-            control_mission_total_ > 0 && cache_.mission_progress_updated >= mission_requested_at_ &&
-                cache_.mission_total == control_mission_total_ && cache_.mission_current >= cache_.mission_total};
+    return {control_mission_total_ > 0 && cache_.mission_progress_updated >= mission_requested_at_ &&
+            cache_.mission_total == control_mission_total_ && cache_.mission_current >= cache_.mission_total};
 }
 
 void FlightControlModule::apply_takeover_result_locked(const ManualTakeover::Result& result) {
@@ -453,6 +446,7 @@ void FlightControlModule::attach_system(const std::shared_ptr<mavsdk::System>& s
         if (value != previous) {
             SPDLOG_INFO("飞控着地状态变化：landed_state={}", magic_enum::enum_name(value));
         }
+        update_takeover_evidence();
     });
     telemetry_->subscribe_in_air([this, generation](bool value) {
         if (connection_generation_ != generation) {
@@ -904,7 +898,7 @@ bool FlightControlModule::takeoff(float height_m, std::string& error) {
         report_command_failed(error);
         return false;
     }
-    if (!expect_action(ManualTakeover::Action::Takeoff, error, height_m) || !ensure_connected(error, "Takeoff")) {
+    if (!expect_action(ManualTakeover::Action::Takeoff, error) || !ensure_connected(error, "Takeoff")) {
         return false;
     }
     report_command_started("Takeoff（height_m=" + std::to_string(height_m) + "）");
@@ -1041,7 +1035,7 @@ bool FlightControlModule::upload_and_start_mission(const std::vector<plane::mode
         cache_.mission_progress_updated = {};
     }
     if (!ensure_connected(error, "StartMission") ||
-        !expect_action(ManualTakeover::Action::Mission, error, 0.0F, static_cast<int>(points.size()))) {
+        !expect_action(ManualTakeover::Action::Mission, error, static_cast<int>(points.size()))) {
         return false;
     }
     report_command_started("StartMission");
@@ -1282,6 +1276,7 @@ FlightStatus FlightControlModule::flight_status_locked() const {
     status.takeoff_altitude_m = cache_.takeoff_altitude_m;
     status.connected = connected_;
     status.on_ground = cache_.landed_state == mavsdk::Telemetry::LandedState::OnGround;
+    status.landed_in_air = cache_.landed_state == mavsdk::Telemetry::LandedState::InAir;
     status.armed_updated = cache_.armed_updated;
     status.ground_updated = cache_.ground_updated;
     status.mode_updated = cache_.mode_updated;
