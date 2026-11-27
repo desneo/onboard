@@ -125,7 +125,7 @@ bool TaskExecutionEngine::start_command(std::uint64_t execution_id, const plane:
     if (height <= 0.0F) {
         height = static_cast<float>(system_param_.current().safeHeight_m);
         if (command.type == plane::model::CommandType::Takeoff) {
-            SPDLOG_INFO("起飞指令未指定高度，使用安全高度: {} 米", height);
+            SPDLOG_INFO("起飞指令未指定高度，使用安全高度: {:.1f} 米", height);
         }
     }
     command_context_.takeoffHeight_m = height;

@@ -152,6 +152,12 @@ if(BUILD_TESTING)
   target_link_libraries(state_store_quiet_test PRIVATE plane::common_include plane::eventpp spdlog::spdlog)
   add_test(NAME state_store_quiet COMMAND state_store_quiet_test)
 
+  add_executable(state_monitor_log_test tests/unit/state_monitor_log_test.cpp src/state/state_monitor.cpp)
+  target_include_directories(state_monitor_log_test PRIVATE src)
+  target_compile_options(state_monitor_log_test PRIVATE -Wall -Wextra)
+  target_link_libraries(state_monitor_log_test PRIVATE plane::common_include plane::eventpp spdlog::spdlog)
+  add_test(NAME state_monitor_log COMMAND state_monitor_log_test)
+
   add_executable(config_simulation_test tests/unit/config_simulation_test.cpp src/core/config.cpp)
   target_include_directories(config_simulation_test PRIVATE src)
   target_compile_options(config_simulation_test PRIVATE -Wall -Wextra)

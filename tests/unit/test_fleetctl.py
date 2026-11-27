@@ -859,8 +859,8 @@ class FleetCtlTest(unittest.TestCase):
             elif "cat " in script and "/gcs.log" in script:
                 output = (
                     f"收到飞机状态: planeId={plane.plane_id} fcLinkState=connected inair=true "
-                    "flightMode=Offboard voltage_v=24 geoPos.latitude=30 geoPos.longitude=120 "
-                    "geoPos.height=20 geoPos.altitude=100\n"
+                    "flightMode=Offboard voltage_v=24.00 geoPos.latitude=-30.123457 geoPos.longitude=120.000000 "
+                    "geoPos.height=20.0 geoPos.altitude=100.0\n"
                 )
                 if state["pause"]:
                     output += "收到任务状态: taskId=user-task status=Failed currentNode=Midcourse\n"

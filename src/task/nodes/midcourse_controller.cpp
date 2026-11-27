@@ -25,8 +25,8 @@ constexpr std::int64_t kUpdateLogIntervalMs = 1000;
 constexpr double kPi = 3.14159265358979323846;
 
 std::string geo_text(const plane::model::GeoPoint& value) {
-    return fmt::format("{{latitude={} longitude={} height={} altitude={}}}", value.latitude, value.longitude,
-                       value.height, value.altitude);
+    return fmt::format("{{latitude={:.6f} longitude={:.6f} height={:.1f} altitude={:.1f}}}", value.latitude,
+                       value.longitude, value.height, value.altitude);
 }
 
 std::string measurement_text(const plane::algorithm::TargetMeasurement& value) {

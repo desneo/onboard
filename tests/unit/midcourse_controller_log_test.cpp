@@ -206,6 +206,7 @@ int main() {
         FakeFlightControl flight;
         FakeStateStore state;
         state.value.geoPos = target(0).geoPos;
+        state.value.geoPos.latitude = -30.12345678;
         state.value.startPos = target(1).geoPos;
         state.value.vn_m_s = 7.0;
         state.value.ve_m_s = 8.0;
@@ -259,7 +260,7 @@ int main() {
                                         "yaw_rad=0.7", "eta_seconds=12.5", "following=true",
                                         "terminal_confirmed=false", "返回值=true", "error="});
         require_fields(sink->matching("::update 输入:").front().text,
-                       {"geoPos={latitude=30 longitude=120 height=20 altitude=300}", "startPos={latitude=",
+                       {"geoPos={latitude=-30.123457 longitude=120.000000 height=20.0 altitude=300.0}", "startPos={latitude=",
                         "vn_m_s=7", "ve_m_s=8", "vd_m_s=9", "yaw_rad="});
         require_fields(sink->matching("::init 输入:").front().text,
                        {"history=[", "timestamp_ms=1800000020000", "timestamp_ms=1800000039000", "ned_ref={",

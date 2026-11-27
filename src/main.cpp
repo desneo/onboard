@@ -67,7 +67,7 @@ int main(int argc, char** argv) {
     const plane::core::BuildInfo build_info = plane::core::current_build_info();
     SPDLOG_INFO("plane 程序启动: version={} git_hash={} build_type={}", build_info.version, build_info.git_hash,
                 build_info.build_type);
-    SPDLOG_INFO("运行配置: safeHeight_m={} state_report_period_ms={} is_sim={} flush_interval_ms={}",
+    SPDLOG_INFO("运行配置: safeHeight_m={:.1f} state_report_period_ms={} is_sim={} flush_interval_ms={}",
                 config.system_param.safeHeight_m, config.state_report_period_ms, config.is_sim ? "true" : "false",
                 config.log_flush_interval_ms);
 

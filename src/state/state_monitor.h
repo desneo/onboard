@@ -25,7 +25,6 @@ class StateMonitor final : public plane::core::IModule {
 
    private:
     void on_own_state(const plane::model::VehicleState& state);
-    void send_alert(const std::string& detail);
 
     plane::core::EventBus& event_bus_;
     const plane::core::AppConfig& config_;

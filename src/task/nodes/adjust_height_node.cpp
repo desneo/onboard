@@ -36,7 +36,7 @@ bool AdjustHeightNode::dispatch(std::string& error) {
     plane::model::GeoPoint temporary_waypoint = state.geoPos;
     temporary_waypoint.height = target_relative_height_m_;
     SPDLOG_INFO(
-        "通过临时航点调整相对高度: latitude={:.7f} longitude={:.7f} geoPos.height={:.1f} "
+        "通过临时航点调整相对高度: latitude={:.6f} longitude={:.6f} geoPos.height={:.1f} "
         "target_relative_height_m_={:.1f} error_m={:.1f}",
         temporary_waypoint.latitude, temporary_waypoint.longitude, state.geoPos.height, target_relative_height_m_,
         error_m);

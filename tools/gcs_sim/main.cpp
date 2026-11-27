@@ -479,8 +479,8 @@ int main(int argc, char** argv) {
                     SPDLOG_WARN("忽略非法友机状态: senderId={} error={}", envelope.sender_id, filter_error);
                 }
                 SPDLOG_INFO(
-                    "收到飞机状态: planeId={} fcLinkState={} inair={} flightMode={} voltage_v={} "
-                    "geoPos.latitude={} geoPos.longitude={} geoPos.height={} geoPos.altitude={}",
+                    "收到飞机状态: planeId={} fcLinkState={} inair={} flightMode={} voltage_v={:.2f} "
+                    "geoPos.latitude={:.6f} geoPos.longitude={:.6f} geoPos.height={:.1f} geoPos.altitude={:.1f}",
                     state.planeId, state.fcLinkState, state.inair, state.flightMode, state.voltage_v,
                     state.geoPos.latitude, state.geoPos.longitude, state.geoPos.height, state.geoPos.altitude);
             } else {
@@ -779,8 +779,8 @@ int main(int argc, char** argv) {
         if (action.kind == ActionKind::PodCommand) {
             try {
                 if (action.pod.type == plane::model::PodCommandType::SetRate) {
-                    SPDLOG_INFO("开始发送吊舱速度: pitchRate_deg_s={} yawRate_deg_s={}", action.pod.pitchRate_deg_s,
-                                action.pod.yawRate_deg_s);
+                    SPDLOG_INFO("开始发送吊舱速度: pitchRate_deg_s={:.2f} yawRate_deg_s={:.2f}",
+                                action.pod.pitchRate_deg_s, action.pod.yawRate_deg_s);
                     auto next = std::chrono::steady_clock::now();
                     const auto end = next + action.pod_rate_duration;
                     do {
