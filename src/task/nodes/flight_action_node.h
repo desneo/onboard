@@ -29,6 +29,7 @@ class FlightActionNode : public BT::StatefulActionNode {
 
    protected:
     BT::NodeStatus onStart() override {
+        tick_count_ = 1;
         dispatched_ = false;
         failure_detail_.clear();
         if (config().blackboard) config().blackboard->set(kFailureDetail, std::string{});
@@ -36,6 +37,7 @@ class FlightActionNode : public BT::StatefulActionNode {
     }
 
     BT::NodeStatus onRunning() override {
+        ++tick_count_;
         if (!flight_control_->control_can_advance()) {
             return BT::NodeStatus::RUNNING;
         }
@@ -98,7 +100,6 @@ class FlightActionNode : public BT::StatefulActionNode {
             return BT::NodeStatus::RUNNING;
         }
         start_ms_ = plane::core::now_ms();
-        last_running_log_ms_ = start_ms_;
         if (config().blackboard) {
             config().blackboard->set("current_node", std::string(name()));
         }
@@ -115,13 +116,12 @@ class FlightActionNode : public BT::StatefulActionNode {
         return report_status(checkFinish());
     }
 
-    /// 每 5 秒调用运行进度日志，成功和失败时记录节点结果。
+    /// 按节点 tick 次数记录运行进度，成功和失败时记录节点结果。
     BT::NodeStatus report_status(BT::NodeStatus status) {
         switch (status) {
             case BT::NodeStatus::RUNNING: {
-                const std::int64_t now = plane::core::now_ms();
-                if (now - last_running_log_ms_ >= kRunningLogIntervalMs) {
-                    last_running_log_ms_ = now;
+                const int rate_hz = app_config_->bt_update_rate_hz;
+                if (rate_hz > 0 && tick_count_ % (kRunningLogIntervalSeconds * rate_hz) == 0) {
                     log_running_progress();
                 }
                 break;
@@ -139,9 +139,9 @@ class FlightActionNode : public BT::StatefulActionNode {
         return status;
     }
 
-    static constexpr std::int64_t kRunningLogIntervalMs = 5000;
+    static constexpr std::uint64_t kRunningLogIntervalSeconds = 5;
     std::int64_t start_ms_ = 0;
-    std::int64_t last_running_log_ms_ = 0;
+    std::uint64_t tick_count_ = 0;
     bool dispatched_ = false;
     std::string failure_detail_;
 };

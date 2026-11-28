@@ -25,6 +25,12 @@ void require(bool condition, const std::string& message) {
     }
 }
 
+void run_ticks(BT::TreeNode& node, int count) {
+    for (int i = 0; i < count; ++i) {
+        require(node.executeTick() == BT::NodeStatus::RUNNING, "节点应保持运行");
+    }
+}
+
 class FakeFlightControl final : public plane::flight_control::FlightControlApi {
    public:
     plane::flight_control::FlightStatus status;
@@ -125,6 +131,7 @@ void anti_uav_tree_depends_on_flight_state() {
 void height_adjust_uses_relative_height(std::ostringstream& output) {
     test_now_ms = 1000;
     plane::core::AppConfig config;
+    config.bt_update_rate_hz = 20;
     config.bt_height_adjust_tolerance_m = 1.0;
     plane::task::CommandContext context;
     context.type = plane::model::CommandType::Route;
@@ -153,10 +160,9 @@ void height_adjust_uses_relative_height(std::ostringstream& output) {
     require(std::fabs(flight.last_waypoint.height - 20.0F) < 0.001F, "临时航点应使用首航点相对高度");
     require(std::fabs(flight.last_waypoint.altitude - 105.0F) < 0.001F, "构造临时航点时不得把首航点海拔当成相对高度");
 
-    test_now_ms += 5000;
-    require(node.executeTick() == BT::NodeStatus::RUNNING &&
-                output.str().find("节点 AdjustHeight 运行中，geoPos.height=5.0 target_relative_height_m_=20.0\n") !=
-                    std::string::npos,
+    run_ticks(node, 99);
+    require(output.str().find("节点 AdjustHeight 运行中，geoPos.height=5.0 target_relative_height_m_=20.0\n") !=
+                std::string::npos,
             "高度调整进度应输出当前相对高度和目标相对高度");
 
     states.state.geoPos.height = 19.2F;
@@ -170,6 +176,7 @@ void height_adjust_uses_relative_height(std::ostringstream& output) {
 
 void height_adjust_supports_descent_and_halt() {
     plane::core::AppConfig config;
+    config.bt_update_rate_hz = 20;
     plane::task::CommandContext context;
     context.type = plane::model::CommandType::Route;
     context.waypoints.resize(1);
@@ -191,6 +198,7 @@ void height_adjust_supports_descent_and_halt() {
 void height_adjust_timeout_stops_temporary_mission() {
     test_now_ms = 1000;
     plane::core::AppConfig config;
+    config.bt_update_rate_hz = 20;
     config.bt_node_timeout_ms = 1000;
     plane::task::CommandContext context;
     context.type = plane::model::CommandType::Route;
@@ -215,6 +223,7 @@ void height_adjust_reports_in_air_loss(std::ostringstream& output) {
     output.str({});
     test_now_ms = 1000;
     plane::core::AppConfig config;
+    config.bt_update_rate_hz = 20;
     plane::task::CommandContext context;
     context.type = plane::model::CommandType::Route;
     context.waypoints.resize(1);
@@ -242,6 +251,7 @@ void height_adjust_reports_in_air_loss(std::ostringstream& output) {
 void takeoff_waits_for_hold_after_in_air() {
     test_now_ms = 1000;
     plane::core::AppConfig config;
+    config.bt_update_rate_hz = 20;
     require(config.bt_node_timeout_ms == 600000, "全局节点默认超时应为 600000 ms");
     plane::task::CommandContext context;
     context.takeoffHeight_m = 20.0F;
@@ -274,6 +284,7 @@ void takeoff_waits_for_hold_after_in_air() {
 void takeoff_uses_configured_timeout() {
     test_now_ms = 1000;
     plane::core::AppConfig config;
+    config.bt_update_rate_hz = 20;
     config.bt_node_timeout_ms = 5000;
     plane::task::CommandContext context;
     context.takeoffHeight_m = 20.0F;
@@ -296,6 +307,7 @@ void takeoff_logs_current_altitudes(std::ostringstream& output) {
     output.str({});
     test_now_ms = 1000;
     plane::core::AppConfig config;
+    config.bt_update_rate_hz = 20;
     plane::task::CommandContext context;
     context.type = plane::model::CommandType::Takeoff;
     context.takeoffHeight_m = 20.0F;
@@ -310,27 +322,23 @@ void takeoff_logs_current_altitudes(std::ostringstream& output) {
     plane::task::TakeoffNode node("Takeoff", BT::NodeConfig{}, &flight, &states, &config, &params, &context,
                                  /*log_position_progress=*/true);
 
-    require(node.executeTick() == BT::NodeStatus::RUNNING, "起飞应进入运行状态");
-    test_now_ms += 4999;
-    require(node.executeTick() == BT::NodeStatus::RUNNING && output.str().empty(), "起飞进度日志在 5 秒前不应输出");
-    ++test_now_ms;
-    require(node.executeTick() == BT::NodeStatus::RUNNING, "仍处于 Takeoff 模式时应继续运行");
+    run_ticks(node, 99);
+    require(output.str().empty(), "前 99 次 tick 不应输出起飞进度日志");
+    run_ticks(node, 1);
     const auto first_progress = output.str();
     require(first_progress == "节点 Takeoff 运行中，geoPos.height=12.3 geoPos.altitude=56.7\n",
             "起飞进度应从同一份遥测输出相对高度和海拔，保留一位小数");
-    require(node.executeTick() == BT::NodeStatus::RUNNING && output.str() == first_progress,
-            "同一时刻再次轮询不应重复输出起飞进度");
+    run_ticks(node, 99);
+    require(output.str() == first_progress, "第 200 次 tick 前不应重复输出起飞进度");
 
     states.state.geoPos = plane::model::GeoPoint{};
-    test_now_ms += 5000;
-    require(node.executeTick() == BT::NodeStatus::RUNNING &&
-                output.str().find("geoPos.height=0.0 geoPos.altitude=0.0") != std::string::npos,
+    run_ticks(node, 1);
+    require(output.str().find("geoPos.height=0.0 geoPos.altitude=0.0") != std::string::npos,
             "下一周期应输出更新后的遥测，并接受有效的零高度");
 
     states.state.fcLinkState = "disconnected";
-    test_now_ms += 5000;
-    require(node.executeTick() == BT::NodeStatus::RUNNING &&
-                output.str().find("节点 Takeoff 运行中，位置遥测不可用") != std::string::npos,
+    run_ticks(node, 100);
+    require(output.str().find("节点 Takeoff 运行中，位置遥测不可用") != std::string::npos,
             "本机状态显示飞控断连时应提示位置遥测不可用");
 
     states.state.fcLinkState = "connected";

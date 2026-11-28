@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -28,16 +29,37 @@ int main() {
         file << content;
         return static_cast<bool>(file);
     };
-    const auto write_main = [&](const std::string& content) {
+    struct RequiredOptions {
+        std::optional<std::string> pod_state_report_hz = "5";
+        std::optional<std::string> tree_update_rate_hz = "20";
+        std::optional<std::string> target_history_size = "20";
+        std::optional<std::string> target_timeout_ms = "5000";
+    };
+    const auto write_main = [&](const std::string& content, const RequiredOptions& options = {}) {
         std::ofstream file(path);
-        file << "[deployment]\nprofile = " << cleanup.profile_path << '\n' << content;
+        file << "[deployment]\nprofile = " << cleanup.profile_path << '\n';
+        if (options.pod_state_report_hz) {
+            file << "[camera]\npod_state_report_hz = " << *options.pod_state_report_hz << '\n';
+        }
+        if (options.tree_update_rate_hz) {
+            file << "[behavior_tree]\ntree_update_rate_hz = " << *options.tree_update_rate_hz << '\n';
+        }
+        file << "[midcourse]\n";
+        if (options.target_history_size) {
+            file << "target_history_size = " << *options.target_history_size << '\n';
+        }
+        if (options.target_timeout_ms) {
+            file << "target_timeout_ms = " << *options.target_timeout_ms << '\n';
+        }
+        file << content;
         return static_cast<bool>(file);
     };
     const plane::core::AppConfig defaults;
     if (!defaults.plane_id.empty() || !defaults.board_ip.empty() || !defaults.fc_link_type.empty() ||
         !defaults.fc_udp_url.empty() || !defaults.fc_serial_device.empty() || defaults.fc_serial_baud != 0 ||
-        defaults.log_flush_interval_ms != 1000 || defaults.midcourse_target_timeout_ms != 5000 ||
-        defaults.midcourse_target_history_size != 20 ||
+        defaults.log_flush_interval_ms != 1000 || defaults.pod_state_report_hz != 0 ||
+        defaults.bt_update_rate_hz != 0 || defaults.bt_tick_period_s() != 0.0 ||
+        defaults.midcourse_target_timeout_ms != 0 || defaults.midcourse_target_history_size != 0 ||
         defaults.midcourse_algorithm.replan_period_s != 1.0 ||
         defaults.midcourse_algorithm.replan_freeze_s != 2.5 ||
         defaults.midcourse_algorithm.recovery_vz_deadband_m_s != 0.1 ||
@@ -76,15 +98,18 @@ int main() {
         if (!plane::core::load_config(path, config, &first) || config.is_sim != test.expected) return 3;
     }
 
+    RequiredOptions custom_options;
+    custom_options.target_history_size = "30";
+    custom_options.target_timeout_ms = "6500";
     if (!write_main("[logging]\nflush_interval_ms = 250\n"
-                    "[midcourse]\ninit_timeout_ms = 12345\ntarget_history_size = 30\ntarget_timeout_ms = 6500\n"
+                    "[midcourse]\ninit_timeout_ms = 12345\n"
                     "target_invalid_grace_s = 2.0\nr_min_m = 75.0\n"
                     "[midcourse_algorithm]\nuse_px4_limits = true\nmax_horizontal_speed_m_s = 30.0\n"
                     "max_climb_speed_m_s = 8.0\nmax_descent_speed_m_s = 4.0\ncmd_accel_max_m_s2 = 7.0\n"
                     "approach_brake_k = 0.75\nhover_brake_accel_m_s2 = 4.0\ntrack_gain_d = 0.25\n"
                     "replan_period_s = 0.75\nreplan_freeze_s = 3.25\n"
                     "recovery_vz_deadband_m_s = 0.25\nrecovery_altitude_tolerance_m = 0.45\n"
-                    "control_output_mode = Attitude\nyaw_mode = 0\n")) {
+                    "control_output_mode = Attitude\nyaw_mode = 0\n", custom_options)) {
         return 4;
     }
     plane::core::AppConfig config;
@@ -106,7 +131,9 @@ int main() {
     }
 
     for (const std::string invalid : {"0", "-1", "abc", "5.0", "5000ms", "2147483648", ""}) {
-        if (!write_main("[midcourse]\ntarget_timeout_ms = " + invalid + '\n')) return 40;
+        auto options = custom_options;
+        options.target_timeout_ms = invalid;
+        if (!write_main("", options)) return 40;
         const auto previous_plane_id = config.plane_id;
         if (plane::core::load_config(path, config, &first) || config.midcourse_target_timeout_ms != 6500 ||
             config.plane_id != previous_plane_id) {
@@ -115,7 +142,9 @@ int main() {
     }
 
     for (const std::string invalid : {"0", "4", "31", "-1", "abc", "5.0", "30frames", "2147483648", ""}) {
-        if (!write_main("[midcourse]\ntarget_history_size = " + invalid + '\n')) return 44;
+        auto options = custom_options;
+        options.target_history_size = invalid;
+        if (!write_main("", options)) return 44;
         const auto previous_plane_id = config.plane_id;
         if (plane::core::load_config(path, config, &first) || config.midcourse_target_history_size != 30 ||
             config.midcourse_target_timeout_ms != 6500 || config.plane_id != previous_plane_id) {
@@ -130,12 +159,16 @@ int main() {
             return 43;
         }
     }
-    if (!write_main("[midcourse]\ntarget_history_size = 5\n") ||
+    RequiredOptions minimum_history_options;
+    minimum_history_options.target_history_size = "5";
+    if (!write_main("", minimum_history_options) ||
         !plane::core::load_config(path, config, &first) || config.midcourse_target_history_size != 5) {
         return 46;
     }
 
-    if (!write_main("[camera]\npod_state_report_hz = 8\n")) return 7;
+    RequiredOptions pod_options;
+    pod_options.pod_state_report_hz = "8";
+    if (!write_main("", pod_options)) return 7;
     const std::string uav1 =
         "[uav1]\nboard_ip = 192.168.1.100\nfc_url = udpout://192.168.1.56:14280\n"
         "pod_model = jielian_a2416a\npod_video_url = rtsp://192.168.1.56:8554/jielian_a2416a\n"
@@ -251,31 +284,64 @@ int main() {
         }
     }
     for (const auto* invalid : {"0", "-1", "5.5", "8Hz", "", "9999999999999999999"}) {
-        if (!write_main(std::string("[camera]\npod_state_report_hz = ") + invalid + '\n')) return 17;
-        config.pod_state_report_hz = 8;
-        if (!plane::core::load_config(path, config, &first) || config.pod_state_report_hz != 5) return 18;
+        RequiredOptions options;
+        options.pod_state_report_hz = invalid;
+        if (!write_main("", options)) return 17;
+        if (plane::core::load_config(path, config, &first) || config.pod_state_report_hz != 8) return 18;
     }
+    RequiredOptions tree_options;
+    tree_options.tree_update_rate_hz = "10";
     if (!write_main("[midcourse_algorithm]\nv_cruise_m_s = 45.0\ntau_ff_s = 1.5\nr_min_m = 60.0\n"
-                    "update_dt_s = 0.08\nenable_internal_terminal_confirmation = true\n"
-                    "confirm_boresight_deg = 6.0\nconfirm_rate_deg_s = 7.0\nconfirm_hold_s = 2.5\n"
-                    "[behavior_tree]\ntick_interval_ms = 80\n")) {
+                    "update_dt_s = 0.1\nenable_internal_terminal_confirmation = true\n"
+                    "confirm_boresight_deg = 6.0\nconfirm_rate_deg_s = 7.0\nconfirm_hold_s = 2.5\n", tree_options)) {
         return 19;
     }
-    if (!plane::core::load_config(path, config, &first) || config.bt_tick_interval_ms != 80 ||
+    if (!plane::core::load_config(path, config, &first) || config.bt_update_rate_hz != 10 ||
         algorithm.v_cruise_m_s != 45.0 || algorithm.tau_ff_s != 1.5 || algorithm.r_min_m != 60.0 ||
-        algorithm.update_dt_s != 0.08 || !algorithm.enable_internal_terminal_confirmation ||
+        algorithm.update_dt_s != 0.1 || !algorithm.enable_internal_terminal_confirmation ||
         algorithm.confirm_boresight_deg != 6.0 || algorithm.confirm_rate_deg_s != 7.0 ||
         algorithm.confirm_hold_s != 2.5) {
         return 20;
     }
     for (const auto* invalid : {"0.05", "0", "nan"}) {
-        if (!write_main(std::string("[behavior_tree]\ntick_interval_ms = 80\n[midcourse_algorithm]\nupdate_dt_s = ") +
-                        invalid + '\n')) {
+        if (!write_main(std::string("[midcourse_algorithm]\nupdate_dt_s = ") + invalid + '\n', tree_options)) {
             return 21;
         }
-        if (plane::core::load_config(path, config, &first) || algorithm.update_dt_s != 0.08) return 22;
+        if (plane::core::load_config(path, config, &first) || algorithm.update_dt_s != 0.1) return 22;
     }
-    if (!write_main("[behavior_tree]\ntick_interval_ms = 25\n")) return 23;
-    if (!plane::core::load_config(path, config, &first) || algorithm.update_dt_s != 0.025) return 24;
+    tree_options.tree_update_rate_hz = "40";
+    if (!write_main("", tree_options)) return 23;
+    if (!plane::core::load_config(path, config, &first) || config.bt_update_rate_hz != 40 ||
+        config.bt_tick_period_s() != 0.025 || algorithm.update_dt_s != 0.025) {
+        return 24;
+    }
+    for (const auto* invalid : {"0", "-1", "12.5", "20Hz", "", "9999999999999999999"}) {
+        RequiredOptions options;
+        options.tree_update_rate_hz = invalid;
+        if (!write_main("", options)) return 31;
+        if (plane::core::load_config(path, config, &first) || config.bt_update_rate_hz != 40 ||
+            algorithm.update_dt_s != 0.025) {
+            return 32;
+        }
+    }
+    for (const auto member : {&RequiredOptions::pod_state_report_hz, &RequiredOptions::tree_update_rate_hz,
+                              &RequiredOptions::target_history_size, &RequiredOptions::target_timeout_ms}) {
+        auto options = custom_options;
+        options.pod_state_report_hz = "8";
+        options.tree_update_rate_hz = "40";
+        (options.*member).reset();
+        if (!write_main("", options)) return 33;
+        plane::core::AppConfig fresh;
+        if (plane::core::load_config(path, fresh, &first) || fresh.pod_state_report_hz != 0 ||
+            fresh.bt_update_rate_hz != 0 || fresh.midcourse_target_history_size != 0 ||
+            fresh.midcourse_target_timeout_ms != 0) {
+            return 34;
+        }
+        if (plane::core::load_config(path, config, &first) || config.pod_state_report_hz != 5 ||
+            config.bt_update_rate_hz != 40 || config.midcourse_target_history_size != 20 ||
+            config.midcourse_target_timeout_ms != 5000 || algorithm.update_dt_s != 0.025) {
+            return 35;
+        }
+    }
     return 0;
 }

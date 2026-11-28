@@ -100,7 +100,10 @@ int main() {
     const std::string profile_path = std::string(path) + "/profile.ini";
     {
         std::ofstream file(config_path);
-        file << "[deployment]\nprofile = " << profile_path << '\n';
+        file << "[deployment]\nprofile = " << profile_path << '\n'
+             << "[camera]\npod_state_report_hz = 5\n"
+             << "[behavior_tree]\ntree_update_rate_hz = 20\n"
+             << "[midcourse]\ntarget_history_size = 20\ntarget_timeout_ms = 5000\n";
     }
     {
         std::ofstream file(profile_path);
@@ -476,7 +479,7 @@ int main() {
     }
     // GCS 先在线再启动飞机：history 发现与启动待发送合并。
     module.stop();
-    config.pod_state_report_hz = plane::core::kDefaultPodStateReportHz;
+    config.pod_state_report_hz = 5;
     {
         std::lock_guard<std::mutex> lock(mutex);
         pod_report_times.clear();

@@ -273,7 +273,7 @@ void TaskExecutionEngine::halt_tree(bool restore_self_check) {
 }
 
 void TaskExecutionEngine::tick_loop() {
-    const auto interval = std::chrono::milliseconds(config_.bt_tick_interval_ms);
+    const std::chrono::duration<double> interval{config_.bt_tick_period_s()};
     while (ticking_) {
         if (!flight_control_.control_can_advance()) {
             std::this_thread::sleep_for(interval);

@@ -106,7 +106,10 @@ struct TimeoutFixture {
     explicit TimeoutFixture(int target_history_size = 20)
         : store(events, config), controller(events, config, flight, state, store) {
         test_now_ms = 1'000'000;
+        config.bt_update_rate_hz = 20;
         config.midcourse_target_history_size = target_history_size;
+        config.midcourse_target_timeout_ms = 5000;
+        config.midcourse_algorithm.update_dt_s = config.bt_tick_period_s();
         state.value.geoPos = target("", 0).geoPos;
         state.value.startPos = state.value.geoPos;
         state.value.yaw_deg = 42.0F;
@@ -357,8 +360,11 @@ int main() {
         test_now_ms = 1'000'000;
         plane::core::EventBus events;
         plane::core::AppConfig config;
-        config.bt_tick_interval_ms = 50;
+        config.bt_update_rate_hz = 20;
         config.midcourse_init_timeout_ms = 30000;
+        config.midcourse_target_history_size = 20;
+        config.midcourse_target_timeout_ms = 5000;
+        config.midcourse_algorithm.update_dt_s = config.bt_tick_period_s();
         FakeFlightControl flight;
         flight.cached_flight_params_available = false;
         FakeStateStore state;

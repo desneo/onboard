@@ -66,6 +66,7 @@ int main() {
     }
 
     plane::core::AppConfig config;
+    config.pod_state_report_hz = 5;
     config.plane_id = "alert-queue-test";
     config.is_sim = true;
     config.zenoh_config_file = zenoh_config;

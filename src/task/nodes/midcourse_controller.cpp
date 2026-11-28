@@ -304,7 +304,7 @@ bool MidcourseController::begin(const std::string& requested_track_id,
         error = "中制导配置非法: target_history_size 必须为 5 到 30 的整数";
         return false;
     }
-    if (impl_->config.midcourse_init_timeout_ms <= 0 || impl_->config.bt_tick_interval_ms <= 0) {
+    if (impl_->config.midcourse_init_timeout_ms <= 0 || impl_->config.bt_update_rate_hz <= 0) {
         error = "中制导配置非法";
         return false;
     }

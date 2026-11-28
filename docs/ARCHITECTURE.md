@@ -109,7 +109,7 @@ ZenohTransport 管理原生 queryable 的生命周期和带超时的 get。`Comm
 查询属于信息接口，回包为标准 `Message`。停止时先释放 queryable，再关闭 Session。
 成功解码 TaskInfo、Command、SystemParam 或 GcsTarget 时更新地面站链路活跃时间。
 
-`PodCommand` 使用指定飞机单播，Communication 校验报文并向 Camera 交接指令，设备 I/O 在 Camera 工作线程执行。Communication 读取 Camera 的最新快照，以独立的 `camera.pod_state_report_hz` 周期上报 `PodState`。
+`PodCommand` 使用指定飞机单播，Communication 校验报文并向 Camera 交接指令，设备 I/O 在 Camera 工作线程执行。Communication 读取 Camera 的最新快照，按必填的 `camera.pod_state_report_hz` 配置频率上报 `PodState`。
 
 吊舱传输工厂当前识别 `udp://<主机>:<端口>`，仿真接入为各型号注入 UDP 会话保活。RK3588 实物接入可在工厂中增加 `serial:///dev/<设备>:<波特率>` 分支，由串口实现处理拆帧、粘包和坏帧重同步。艾晟和捷联的厂商串口参数为 `230400 8N1`，中科默认 `115200`、无校验。中科实物上电自检后主动上报，串口接入按设备协议选择收发周期。
 
@@ -221,7 +221,7 @@ EventBus 的发布同步执行订阅回调；诊断回调只负责轻量入队�
   配置加载后应用实际周期；日志重新初始化前先停止并回收旧刷新线程，正常退出前刷新剩余日志。
 - Flight Control 在飞控连接建立后读取并缓存通用 PX4 飞控系统参数；断连使缓存失效，重连后后台重读。
   中制导默认从 `[midcourse_algorithm]` 取规划限值，`use_px4_limits = true` 时从缓存取值。
-- `[midcourse].target_history_size` 默认 20，必须为 5～30 的整数，同时作为每航迹目标历史缓存深度和
+- `[midcourse].target_history_size` 必须填写 5～30 的整数，同时作为每航迹目标历史缓存深度和
   Midcourse 初始化所需的本次任务有效帧数 N。Target Management 独立于任务生命周期持续保留每个航迹最近 N 帧；
   中制导启动和停止不得清除此全局历史。Task Execution Engine 在反无任务启动时记录 revision 快照，Midcourse 只使用
   快照后的锁定航迹数据，使 Arm／Takeoff 期间收到的数据参与初始化、任务启动前的全局历史不参与初始化。
@@ -231,7 +231,7 @@ EventBus 的发布同步执行订阅回调；诊断回调只负责轻量入队�
 - Target Management 为每条被接受的目标更新分配进程内全局递增 revision，并在历史项中保存 revision 和本机
   单调接收时间；重复或乱序数据不递增 revision。`TargetStoreApi::gcs_target_updates_after` 返回反无任务 revision
   快照后的锁定航迹数据和最后接收时刻。
-  `[midcourse].target_timeout_ms` 默认 5000 ms 且必须为正整数：超时检查从进入 Midcourse 起生效；已有本次任务数据时
+  `[midcourse].target_timeout_ms` 必填正整数，单位为毫秒。超时检查从进入 Midcourse 起生效；已有本次任务数据时
   按最后接收时间检查，尚无数据时从进入 Midcourse 起等待首帧。随后每帧被本次任务接受的锁定航迹数据刷新计时；
   重复、乱序和其他航迹既不进入本次初始化数据集，也不刷新计时。
   严格超过阈值时由 BT tick 返回失败，沿用执行引擎清理、取消目标需求和 `Failed` 上报链路。

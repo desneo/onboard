@@ -240,7 +240,10 @@ class FakeSystemParam final : public plane::core::SystemParamApi {
 struct Fixture {
     explicit Fixture(bool armed, bool in_air = false)
         : flight(armed, in_air), targets(events, config), engine(events, config, flight, states, params, targets) {
-        config.bt_tick_interval_ms = 10;
+        config.bt_update_rate_hz = 100;
+        config.midcourse_target_history_size = 20;
+        config.midcourse_target_timeout_ms = 5000;
+        config.midcourse_algorithm.update_dt_s = 0.05;
         events.subscribe<plane::task::TaskEngineResult>(
             plane::task::events::kEngineResult, [this](const plane::task::TaskEngineResult& result) {
                 {

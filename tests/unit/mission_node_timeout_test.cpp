@@ -56,9 +56,16 @@ void require(bool condition, const std::string& message) {
     }
 }
 
+void run_ticks(plane::task::MissionNode& node, int count) {
+    for (int i = 0; i < count; ++i) {
+        require(node.executeTick() == BT::NodeStatus::RUNNING, "航线应保持运行");
+    }
+}
+
 void route_waits_until_finished() {
     test_now_ms = 1000;
     plane::core::AppConfig config;
+    config.bt_update_rate_hz = 20;
     config.bt_node_timeout_ms = 30000;
     plane::task::CommandContext context;
     context.type = plane::model::CommandType::Route;
@@ -82,6 +89,7 @@ void route_waits_until_finished() {
 void waypoint_keeps_timeout() {
     test_now_ms = 1000;
     plane::core::AppConfig config;
+    config.bt_update_rate_hz = 20;
     config.bt_node_timeout_ms = 30000;
     plane::task::CommandContext context;
     context.type = plane::model::CommandType::Waypoint;
@@ -108,26 +116,41 @@ void waypoint_keeps_timeout() {
             "重新执行时没有清除前次节点失败原因");
 }
 
-void route_can_be_halted() {
+void route_can_be_halted(std::ostringstream& output) {
+    output.str({});
     test_now_ms = 1000;
     plane::core::AppConfig config;
+    config.bt_update_rate_hz = 2;
     plane::task::CommandContext context;
     context.type = plane::model::CommandType::Route;
     context.waypoints.resize(2);
     FakeFlightControl flight;
     flight.status.mission_total = 2;
     plane::task::MissionNode node("Mission", BT::NodeConfig{}, &flight, nullptr, &config, &context);
+    FakeFlightControl other_flight;
+    plane::task::MissionNode other("OtherMission", BT::NodeConfig{}, &other_flight, nullptr, &config, &context);
 
-    require(node.executeTick() == BT::NodeStatus::RUNNING, "航线启动");
+    run_ticks(node, 1);
     test_now_ms += 60000;
-    require(node.executeTick() == BT::NodeStatus::RUNNING, "长航线继续运行");
+    run_ticks(node, 8);
+    run_ticks(other, 1);
+    require(output.str().empty(), "节点独立计数，累计墙钟时间和其他节点的 tick 均不触发进度日志");
+    const std::string progress = "节点 Mission 等待航点进度遥测\n";
+    run_ticks(node, 1);
+    require(output.str() == progress, "2 Hz 时第 10 次 tick 应输出进度日志");
+    run_ticks(node, 1);
     node.haltNode();
     require(node.status() == BT::NodeStatus::IDLE, "无超时航线仍支持中止");
-    require(node.executeTick() == BT::NodeStatus::RUNNING && flight.route_calls == 2, "中止后可重新启动航线");
+    output.str({});
+    run_ticks(node, 9);
+    require(flight.route_calls == 2 && output.str().empty(), "中止后重新启动航线，前 9 次 tick 不输出进度日志");
+    run_ticks(node, 1);
+    require(output.str() == progress, "重新开始后第 10 次 tick 输出进度日志");
 }
 
 void route_dispatch_failure_is_preserved() {
     plane::core::AppConfig config;
+    config.bt_update_rate_hz = 20;
     plane::task::CommandContext context;
     context.type = plane::model::CommandType::Route;
     context.waypoints.resize(1);
@@ -147,6 +170,7 @@ void route_logs_received_waypoint_progress(std::ostringstream& output) {
     output.str({});
     test_now_ms = 1000;
     plane::core::AppConfig config;
+    config.bt_update_rate_hz = 20;
     plane::task::CommandContext context;
     context.type = plane::model::CommandType::Route;
     context.waypoints.resize(100);
@@ -156,33 +180,27 @@ void route_logs_received_waypoint_progress(std::ostringstream& output) {
     flight.status.mission_total = 100;
     plane::task::MissionNode node("Mission", BT::NodeConfig{}, &flight, nullptr, &config, &context);
 
-    require(node.executeTick() == BT::NodeStatus::RUNNING, "航线应进入运行状态");
-    test_now_ms += 4999;
-    require(node.executeTick() == BT::NodeStatus::RUNNING && output.str().empty(), "航线进度日志在 5 秒前不应输出");
-    ++test_now_ms;
-    require(node.executeTick() == BT::NodeStatus::RUNNING && output.str() == "节点 Mission 等待航点进度遥测\n",
-            "本次进度回调到达前应提示等待");
+    run_ticks(node, 99);
+    require(output.str().empty(), "20 Hz 时前 99 次 tick 不应输出航线进度日志");
+    run_ticks(node, 1);
+    require(output.str() == "节点 Mission 等待航点进度遥测\n", "第 100 次 tick 应提示等待进度遥测");
 
     flight.status.mission_progress_received = true;
-    test_now_ms += 5000;
-    require(node.executeTick() == BT::NodeStatus::RUNNING &&
-                output.str().find("航线飞行中，航点进度 1/100\n") != std::string::npos,
+    run_ticks(node, 100);
+    require(output.str().find("航线飞行中，航点进度 1/100\n") != std::string::npos,
             "首条有效回调的零基索引 0 应显示为 1/100");
 
     flight.status.mission_current = 9;
-    test_now_ms += 5000;
-    require(node.executeTick() == BT::NodeStatus::RUNNING &&
-                output.str().find("航线飞行中，航点进度 10/100\n") != std::string::npos,
+    run_ticks(node, 100);
+    require(output.str().find("航线飞行中，航点进度 10/100\n") != std::string::npos,
             "当前航点应以一基序号和总数显示");
 
     flight.status.mission_current = 99;
-    test_now_ms += 5000;
-    require(node.executeTick() == BT::NodeStatus::RUNNING &&
-                output.str().find("航线飞行中，航点进度 100/100\n") != std::string::npos,
+    run_ticks(node, 100);
+    require(output.str().find("航线飞行中，航点进度 100/100\n") != std::string::npos,
             "航向最后一个航点时仍应运行并显示 100/100");
 
     flight.status.mission_current = 100;
-    test_now_ms += 5000;
     require(node.executeTick() == BT::NodeStatus::SUCCESS, "索引等于总数时航线应完成");
     const auto messages = output.str();
     require(messages.find("节点 Mission 执行成功\n") != std::string::npos &&
@@ -210,7 +228,7 @@ int main() {
     try {
         route_waits_until_finished();
         waypoint_keeps_timeout();
-        route_can_be_halted();
+        route_can_be_halted(output);
         route_dispatch_failure_is_preserved();
         route_logs_received_waypoint_progress(output);
     } catch (const std::exception& error) {

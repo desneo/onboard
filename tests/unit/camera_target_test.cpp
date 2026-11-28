@@ -55,6 +55,7 @@ bool wait_for(Predicate predicate, Clock::duration timeout = 1500ms) {
 int main() {
     plane::core::EventBus event_bus;
     plane::core::AppConfig config;
+    config.midcourse_target_history_size = 20;
     plane::target::TargetStore targets(event_bus, config);
     if (!targets.init() || !targets.start()) return 1;
 

@@ -9,11 +9,8 @@
 
 namespace plane::core {
 
-inline constexpr int kDefaultPodStateReportHz = 5;
-inline constexpr int kDefaultMidcourseTargetHistorySize = 20;
 inline constexpr int kMinMidcourseTargetHistorySize = 5;
 inline constexpr int kMaxMidcourseTargetHistorySize = 30;
-inline constexpr int kDefaultMidcourseTargetTimeoutMs = 5000;
 
 /// 运行配置；第一版系统参数与 SystemParam 对齐（ARCHITECTURE §7）。
 struct AppConfig {
@@ -26,7 +23,7 @@ struct AppConfig {
     std::string pod_model;
     std::string pod_video_url;
     std::string pod_control_url;
-    int pod_state_report_hz = kDefaultPodStateReportHz;
+    int pod_state_report_hz = 0;
 
     std::string plane_id;
     std::string zenoh_config_file;
@@ -49,29 +46,31 @@ struct AppConfig {
     /// 或旧 SITL 的 14580-14589 时置为 true，同时用于 AgentInfo.isSim。
     bool is_sim = false;
 
-    int bt_tick_interval_ms = 50;
+    int bt_update_rate_hz = 0;
     int bt_node_timeout_ms = 600000;
     double bt_height_adjust_tolerance_m = 1.0;
+
+    double bt_tick_period_s() const { return bt_update_rate_hz > 0 ? 1.0 / bt_update_rate_hz : 0.0; }
 
     double alert_voltage_threshold_v = 21.0;
 
     int midcourse_init_timeout_ms = 30000;
-    int midcourse_target_history_size = kDefaultMidcourseTargetHistorySize;
-    int midcourse_target_timeout_ms = kDefaultMidcourseTargetTimeoutMs;
+    int midcourse_target_history_size = 0;
+    int midcourse_target_timeout_ms = 0;
     bool midcourse_use_px4_limits = false;
-    plane::algorithm::MidCourseConfig midcourse_algorithm = [](int tick_interval_ms) {
+    plane::algorithm::MidCourseConfig midcourse_algorithm = [](double tick_period_s) {
         plane::algorithm::MidCourseConfig config;
         config.max_horizontal_speed_m_s = 60.0;
         config.max_climb_speed_m_s = 20.0;
         config.max_descent_speed_m_s = 20.0;
         config.cmd_accel_max_m_s2 = 20.0;
-        config.update_dt_s = tick_interval_ms / 1000.0;
+        config.update_dt_s = tick_period_s;
         config.target_invalid_grace_s = 3.0;
         config.control_output_mode = plane::algorithm::MidcourseControlMode::VelocityAcceleration;
         config.yaw_mode = 1;
         config.enable_internal_terminal_confirmation = false;
         return config;
-    }(bt_tick_interval_ms);
+    }(bt_tick_period_s());
 };
 
 /// 加载主配置和必填的部署预置。加载失败时保留原配置并返回 false。

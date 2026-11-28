@@ -19,7 +19,7 @@
 
 本版本完全移除本地视觉处理。`AntiUav` 任务恢复中制导阶段，但不恢复视觉／末制导；任务持续运行，
 直到目标雷达信息超时、任务失败、收到 Task Stop、新控制内容、人工接管或进程退出。
-整个中制导阶段（含等待初始化历史）按 `midcourse.target_timeout_ms` 检查目标更新，默认 5000 ms。
+整个中制导阶段（含等待初始化历史）按 `midcourse.target_timeout_ms` 检查目标更新，随包配置值为 5000 ms。
 超时检查从每次进入 Midcourse 时生效；任务前缓存不参与本次算法初始化。
 从反无任务启动起累计 `midcourse.target_history_size` 指定数量的目标航迹有效数据，Arm／Takeoff 期间收到的数据有效；
 进入 Midcourse 时数据已收齐且最新帧未超时，就立即初始化并启动 Offboard；
@@ -39,7 +39,7 @@
 
 ### 相机／吊舱控制
 
-机载通过 UDP 接入艾晟 ASD-2、中科 D80 和捷联 A2416A 仿真吊舱。艾晟和中科支持双轴连续转动、单轴归零和指定机械角，固定光轴的捷联支持状态上报。机载向 `sendToStation` 发布 `PodState`，默认 5 Hz，`fields` 提供中文展示键和值。视频流地址随 `AgentInfo` 发布。
+机载通过 UDP 接入艾晟 ASD-2、中科 D80 和捷联 A2416A 仿真吊舱。艾晟和中科支持双轴连续转动、单轴归零和指定机械角，固定光轴的捷联支持状态上报。机载按配置频率向 `sendToStation` 发布 `PodState`，`fields` 提供中文展示键和值。视频流地址随 `AgentInfo` 发布。
 
 ### 地面站与机间通信
 
@@ -306,7 +306,7 @@ pod_control_url = udp://192.168.1.56:8001
 | `system.safe_height_m` | 未指定起飞高度时使用的安全高度 |
 | `system.log_dir` | 日志目录 |
 | `logging.flush_interval_ms` | 普通日志批量刷新周期，默认 1000 ms，必须为正整数；警告、错误和任务／指令／自检结束摘要立即刷新 |
-| `camera.pod_state_report_hz` | `PodState` 上报频率，默认 5 Hz |
+| `camera.pod_state_report_hz` | `PodState` 上报频率，必填正整数，随包配置为 5 Hz |
 | `system.state_report_period_ms` | 状态上报周期 |
 | `communication.zenoh_config_file` | Zenoh 原生配置文件，默认 `config/zenoh.json5` |
 | `communication.ack_timeout_ms` / `ack_max_retries` | 可靠消息确认超时和重试次数 |
@@ -328,12 +328,12 @@ SITL 测试统一使用 `tests/fleet.ini` 的 `simulator.host`（当前为 `192.
 | --- | --- |
 | `flight_control.heartbeat_timeout_ms` | MAVSDK 心跳超时 |
 | `flight_control.route_speed_m_s` | 航点、航线以及航线开始前临时高度航点的速度 |
-| `behavior_tree.tick_interval_ms` | 行为树 tick 周期 |
+| `behavior_tree.tree_update_rate_hz` | 行为树刷新频率，必填正整数，随包配置为 20 Hz |
 | `behavior_tree.node_timeout_ms` | 普通行为树节点的统一超时（默认 600000 ms），包括起飞和航线前高度调整。Route 正式航线阶段持续等待飞控任务进度完成 |
 | `behavior_tree.height_adjust_tolerance_m` | 航线开始前调整相对高度的到达容差 |
-| `midcourse.target_history_size` | 每航迹目标历史缓存帧数，同时为 Midcourse 初始化所需的本次任务有效帧数；默认 20，范围 5～30 |
+| `midcourse.target_history_size` | 每航迹目标历史缓存帧数，同时为 Midcourse 初始化所需的本次任务有效帧数。必填，范围 5～30，随包配置为 20 |
 | `midcourse.init_timeout_ms` | 进入 Midcourse 后等待本次任务累计满 `target_history_size` 帧严格递增雷达数据的最长时间，默认 30000 ms |
-| `midcourse.target_timeout_ms` | 当前目标连续无有效更新的超时，默认 5000 ms，必须为正整数；整个 Midcourse 阶段适用 |
+| `midcourse.target_timeout_ms` | 当前目标连续无有效更新的超时，整个 Midcourse 阶段适用。必填正整数，随包配置为 5000 ms |
 | `midcourse_algorithm.use_px4_limits` | 默认 `false`，使用 INI 的四项规划限值；`true` 使用 PX4 缓存 |
 | `midcourse_algorithm.max_horizontal_speed_m_s` | 水平速度限值，默认 60 m/s |
 | `midcourse_algorithm.max_climb_speed_m_s` / `max_descent_speed_m_s` | 爬升、下降速度限值，默认均为 20 m/s |
@@ -341,7 +341,7 @@ SITL 测试统一使用 `tests/fleet.ini` 的 `simulator.host`（当前为 `192.
 | `midcourse_algorithm.v_cruise_m_s` | 逼近段巡航速度，默认 55 m/s |
 | `midcourse_algorithm.approach_brake_k` | 逼近段到点减速增益，默认 0.5 s⁻¹ |
 | `midcourse_algorithm.tau_ff_s` / `r_min_m` | 视线角速率前馈增益和距离保护，默认 1 秒和 50 米 |
-| `midcourse_algorithm.update_dt_s` | 中制导算法更新周期，默认 0.05 秒，须与 `behavior_tree.tick_interval_ms` 对应 |
+| `midcourse_algorithm.update_dt_s` | 中制导算法更新周期，默认 0.05 秒，须与行为树 tick 周期一致 |
 | `midcourse_algorithm.target_invalid_grace_s` | 目标预测宽限期，默认 3 秒 |
 | `midcourse_algorithm.control_output_mode` | 默认 `VelocityAcceleration`，可选 `Attitude` |
 | `midcourse_algorithm.hover_brake_accel_m_s2` | 速度档触发悬停时的减速度，默认 5 m/s² |
@@ -354,7 +354,7 @@ SITL 测试统一使用 `tests/fleet.ini` 的 `simulator.host`（当前为 `192.
 | `midcourse_algorithm.enable_internal_terminal_confirmation` | 允许算法内部确认，默认 `false`。开启后达到确认条件时算法输出悬停设定值，任务继续运行 |
 | `midcourse_algorithm.confirm_boresight_deg` / `confirm_rate_deg_s` / `confirm_hold_s` | 内部确认的离轴角上限、弹轴角速率上限和持续时长，默认 5 度、5 度/秒和 2 秒 |
 
-省略 `update_dt_s` 时，中制导算法更新周期取自 `behavior_tree.tick_interval_ms`。
+省略 `update_dt_s` 时，中制导算法更新周期取自行为树 tick 周期。
 聚合算法使用同一 `update_dt_s` 作为固定制导周期；原始目标量测时间戳随历史和增量帧传入算法。
 
 UDP 飞控端口位于场景 02 的 PX4 远端端口 `14030`～`14039`、本地端口

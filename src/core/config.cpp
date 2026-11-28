@@ -328,7 +328,7 @@ std::string canonical_key(const std::string& section, const std::string& key) {
         {"communication.gcs_link_timeout_ms", "gcs_link_timeout_ms"},
         {"flight_control.heartbeat_timeout_ms", "fc_heartbeat_timeout_ms"},
         {"flight_control.route_speed_m_s", "fc_route_speed_m_s"},
-        {"behavior_tree.tick_interval_ms", "bt_tick_interval_ms"},
+        {"behavior_tree.tree_update_rate_hz", "bt_update_rate_hz"},
         {"behavior_tree.node_timeout_ms", "bt_node_timeout_ms"},
         {"behavior_tree.height_adjust_tolerance_m", "bt_height_adjust_tolerance_m"},
         {"safety.alert_voltage_threshold_v", "alert_voltage_threshold_v"},
@@ -416,12 +416,11 @@ std::string read_main_config(const std::string& path, AppConfig& out) {
         } else if (key == "state_report_period_ms") {
             out.state_report_period_ms = std::stoi(value);
         } else if (key == "pod_state_report_hz") {
-            out.pod_state_report_hz = parse_positive_int(value);
-            if (out.pod_state_report_hz <= 0) {
-                out.pod_state_report_hz = kDefaultPodStateReportHz;
-                SPDLOG_WARN("吊舱状态频率配置无效，使用默认值: pod_state_report_hz={}（输入：{}）",
-                            out.pod_state_report_hz, value);
+            const int rate_hz = parse_positive_int(value);
+            if (rate_hz == 0) {
+                throw std::invalid_argument("camera.pod_state_report_hz 必须为正整数");
             }
+            out.pod_state_report_hz = rate_hz;
         } else if (key == "zenoh_config_file") {
             out.zenoh_config_file = value;
         } else if (key == "debug_zenoh_log") {
@@ -438,8 +437,12 @@ std::string read_main_config(const std::string& path, AppConfig& out) {
             out.fc_heartbeat_timeout_ms = std::stoi(value);
         } else if (key == "fc_route_speed_m_s") {
             out.fc_route_speed_m_s = std::stod(value);
-        } else if (key == "bt_tick_interval_ms") {
-            out.bt_tick_interval_ms = std::stoi(value);
+        } else if (key == "bt_update_rate_hz") {
+            const int rate_hz = parse_positive_int(value);
+            if (rate_hz == 0) {
+                throw std::invalid_argument("behavior_tree.tree_update_rate_hz 必须为正整数");
+            }
+            out.bt_update_rate_hz = rate_hz;
         } else if (key == "bt_node_timeout_ms") {
             out.bt_node_timeout_ms = std::stoi(value);
         } else if (key == "bt_height_adjust_tolerance_m") {
@@ -474,15 +477,23 @@ std::string read_main_config(const std::string& path, AppConfig& out) {
     if (!profile_configured || profile.empty()) {
         throw std::runtime_error("deployment.profile 必须配置且不能为空");
     }
-    const double tick_interval_s = out.bt_tick_interval_ms / 1000.0;
+    for (const auto& [value, key] : {std::pair{out.pod_state_report_hz, "camera.pod_state_report_hz"},
+                                     std::pair{out.bt_update_rate_hz, "behavior_tree.tree_update_rate_hz"},
+                                     std::pair{out.midcourse_target_history_size, "midcourse.target_history_size"},
+                                     std::pair{out.midcourse_target_timeout_ms, "midcourse.target_timeout_ms"}}) {
+        if (value == 0) {
+            throw std::invalid_argument(std::string("缺少必填配置项 ") + key);
+        }
+    }
+    const double tick_period_s = out.bt_tick_period_s();
     if (midcourse_update_dt_configured) {
         if (out.midcourse_algorithm.update_dt_s <= 0.0 ||
-            std::abs(out.midcourse_algorithm.update_dt_s - tick_interval_s) > 1e-9) {
+            std::abs(out.midcourse_algorithm.update_dt_s - tick_period_s) > 1e-9) {
             throw std::invalid_argument(
-                "midcourse_algorithm.update_dt_s 必须为正数并与 behavior_tree.tick_interval_ms 对应");
+                "midcourse_algorithm.update_dt_s 必须为正数并与 behavior_tree.tree_update_rate_hz 对应");
         }
     } else {
-        out.midcourse_algorithm.update_dt_s = tick_interval_s;
+        out.midcourse_algorithm.update_dt_s = tick_period_s;
     }
     return profile;
 }
@@ -492,9 +503,10 @@ std::string read_main_config(const std::string& path, AppConfig& out) {
 bool load_config(const std::string& path, AppConfig& out, const std::vector<std::string>* local_ipv4_addresses) {
     AppConfig loaded = out;
     loaded.log_flush_interval_ms = kDefaultLogFlushIntervalMs;
-    loaded.pod_state_report_hz = kDefaultPodStateReportHz;
-    loaded.midcourse_target_history_size = kDefaultMidcourseTargetHistorySize;
-    loaded.midcourse_target_timeout_ms = kDefaultMidcourseTargetTimeoutMs;
+    loaded.pod_state_report_hz = 0;
+    loaded.bt_update_rate_hz = 0;
+    loaded.midcourse_target_history_size = 0;
+    loaded.midcourse_target_timeout_ms = 0;
     std::string profile;
     try {
         profile = read_main_config(path, loaded);

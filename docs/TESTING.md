@@ -218,7 +218,7 @@ cd build/plane
 配置加载失败必须保留原有效配置，切换预置时不得残留另一种飞控连接的信息。
 中制导配置测试覆盖巡航与前馈参数、重规划周期与冻结时长、内部末端确认及其阈值、
 `recovery_vz_deadband_m_s`、`recovery_altitude_tolerance_m` 的默认值与自定义值、
-`target_history_size` 的默认值 20、自定义边界值 5 和 30、越界值及非法整数输入、
+`target_history_size` 的边界值 5 和 30、越界值及非法整数输入、
 `update_dt_s` 与行为树周期一致和不一致的情况，以及省略 `update_dt_s` 时的周期换算。
 `fleetctl` 单测验证测试清单默认路径、`--config` 覆盖及完整运行包的唯一配置来源：
 板端已有配置损坏、格式陈旧或为空均不影响有效包部署；包内 `profile` 缺失、为空、引用包外文件或预置无效时，
@@ -251,6 +251,9 @@ ctest --test-dir build -R '^(logging_flush|config_simulation|task_scheduler_take
 
 - `config_simulation` 覆盖 `logging.flush_interval_ms` 的默认值 1000、自定义正整数、零、负数及非法输入；
   加载失败保留原有效配置。
+- `config_simulation` 验证 `camera.pod_state_report_hz`、`behavior_tree.tree_update_rate_hz`、
+  `midcourse.target_history_size` 和 `midcourse.target_timeout_ms` 的必填校验。缺失或非法值在首次加载和重新加载时均使加载失败，
+  保留原配置。合法值可加载，行为树频率正确换算为 tick 周期。
 - `logging_flush` 使用真实文件分别验证前台与 `--no-console`：只写一条 `[info]` 后停止输出，
   内容仍按周期可读；`[warn]`、`[error]` 写入返回后即可读取；正常退出保留末尾日志。
   直接构造无效 `LogOptions` 不得启动刷新线程，重新初始化须应用新周期、回收旧线程，不重复刷新或妨碍退出。
@@ -291,8 +294,9 @@ ctest --test-dir build -R '^mission_node_timeout$' --output-on-failure
 - Route 在等待首次进度、飞行时间超过普通节点超时和长时间运行时均保持 RUNNING，直到任务进度完成。
 - Waypoint 仍遵守普通节点超时。
 - 长航线仍支持中止和重新启动，飞控分发失败仍返回 FAILURE。
-- 首条进度回调到达前日志提示等待，收到后每 5 秒记录当前航点，飞向第 10 个航点时显示 `10/100`。
+- 航线进度每 `5 × tree_update_rate_hz` 次 tick 打印一次。首条进度回调到达前提示等待，收到后记录当前航点，飞向第 10 个航点时显示 `10/100`。
   飞向最后一个航点时显示 `100/100`，完成时记录节点结果。
+- 频率为 20 Hz 时第 99 次 tick 无进度日志，第 100 次打印。节点实例独立计数，中止后重新进入从头计数。
 - 板端实际执行航点或航线时，每次 `MissionProgress` 回调均记录 MAVSDK 原始 `current` 和 `total`。
 
 ### 4.4 航线起飞与高度调整
@@ -310,7 +314,7 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 - 临时航点任务完成、达到高度容差并退出 Mission 后才开始正式航线；
 - 高度调整使用 `behavior_tree.node_timeout_ms`，常规中止和超时时切换 Hold，人工接管中止时保留飞手选定的模式；
 - 起飞节点使用指定高度或默认安全高度下发起飞指令，观测到 `Takeoff` 后等待 `Hold` 和 `InAir` 才判定完成。
-- 起飞运行日志每 5 秒输出 `geoPos.height` 和 `geoPos.altitude`，分别为相对高度和海拔，固定保留 1 位小数。
+- 起飞运行日志每 `5 × tree_update_rate_hz` 次 tick 输出 `geoPos.height` 和 `geoPos.altitude`，分别为相对高度和海拔，固定保留 1 位小数。
   高度来自本机状态缓存，高度为零时显示实际数值。飞控未连接或高度数值无效时显示「位置遥测不可用」。
   完成日志记录两项高度，运行及结果日志均省略 tick 次数。
 
@@ -325,7 +329,7 @@ ctest --test-dir build -R '^route_preflight$' --output-on-failure
 ```
 
 再分别使用 `--pod-zero-pitch`、`--pod-zero-yaw`、`--pod-rate 8,-5,1500` 和 `--pod-rate-timeout -8,5,1500`。
-验收以 `PodState` 的实测角度和速度确认到位、另一轴保持及停止。使用 `gcs_sim` 日志时间核对默认约 5 Hz 的发布频率。捷联反馈应显示 `canMove=false`，并省略机械框架角。
+验收以 `PodState` 的实测角度和速度确认到位、另一轴保持及停止。使用 `gcs_sim` 日志时间核对 `plane.ini` 配置的发布频率，随包配置为 5 Hz。捷联反馈应显示 `canMove=false`，并省略机械框架角。
 
 ## 6. 飞控与指令验收
 
@@ -413,7 +417,7 @@ PX4 实际遥测的 `armed` 顺序为 `false → true → false`，自检全程�
 1. `ldd build/plane/plane` 包含 `libmidcourse_alg.so`，不包含 Pluma；算法库可由 `$ORIGIN/lib` 解析。
 2. `AntiUav` 根据飞行状态选择直接 Midcourse、Takeoff → Midcourse 或 Arm → Takeoff → Midcourse。
 3. 指定 ID 时锁定该目标；未指定时只允许唯一候选，不得在多个目标间自动跳换。
-4. `[midcourse].target_history_size` 默认 20，范围 5～30，同时决定每航迹缓存深度和初始化所需帧数 N。
+4. `[midcourse].target_history_size` 必填，范围 5～30，同时决定每航迹缓存深度和初始化所需帧数 N。
    机载从进程启动起持续缓存目标，但任务前缓存不参与本次算法初始化。从反无任务启动起为锁定航迹累计
    N 帧有效且时间戳严格递增的数据，Arm／Takeoff 期间收到的数据参与累计；收齐前不得调用
    `MidcourseAlgorithm::init` 或启动 Offboard，进入 Midcourse 时已收齐且数据未超时则立即初始化并启动 Offboard；
@@ -424,7 +428,7 @@ PX4 实际遥测的 `armed` 顺序为 `false → true → false`，自检全程�
 6. 使用 `VelocityAcceleration` 时，SITL 实际进入 Offboard。检查发往 SITL 的 `SET_POSITION_TARGET_LOCAL_NED`，
    三轴速度和加速度均有效，跟踪时至少一帧具有非零加速度，位置字段无效，航向使用弧度。使用 `Attitude` 时，
    校验 body→NED 四元数及推力，横向推力接近零，使用换算后的姿态和推力设定值。
-7. `[midcourse].target_timeout_ms` 默认 5000 ms，自定义正整数值生效，零、负数及非法输入加载失败并保留原配置。
+7. `[midcourse].target_timeout_ms` 必填正整数。缺失、零、负数及非法输入加载失败并保留原配置。
    目标超时检查从进入 Midcourse 起生效；本次任务已有目标数据时按最后接收时间检查，尚无数据时首帧必须在 5 秒内到达。
    之后每帧本次任务接受的锁定航迹有效更新都重新开始 5 秒计时；恰好等于阈值时继续，
    严格超过阈值后下一次 BT tick 失败，失败 tick 不再调用算法或下发控制。重复、乱序和其他航迹数据

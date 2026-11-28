@@ -203,6 +203,10 @@ int main() {
         spdlog::set_default_logger(logger);
         plane::core::EventBus events;
         plane::core::AppConfig config;
+        config.bt_update_rate_hz = 20;
+        config.midcourse_target_history_size = 20;
+        config.midcourse_target_timeout_ms = 5000;
+        config.midcourse_algorithm.update_dt_s = config.bt_tick_period_s();
         FakeFlightControl flight;
         FakeStateStore state;
         state.value.geoPos = target(0).geoPos;
