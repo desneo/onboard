@@ -1835,7 +1835,7 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
         save()
         print(
             "\n[midcourse] 板端自检通过，请现在向 " + plane.host + ":7790 持续发送雷达 UDP 数据。\n"
-            f"[midcourse] 确认指定或唯一目标首帧后立即下发反无任务；任务下发后请继续发送至少 {target_history_size + 1} 帧。\n"
+            f"[midcourse] 确认指定或唯一目标首帧后立即下发反无任务；请持续发送至少 {target_history_size + 1} 帧，起飞期间数据会参与初始化。\n"
             "[midcourse] 7790 只需发送雷达航迹，防守机状态由 GCS 从 Zenoh 获取。\n"
             + (f"[midcourse] 本次锁定靶机 track_id={target_id}。\n" if target_id else
                "[midcourse] 本次未指定 track_id，雷达数据必须只有一个可用靶机候选。\n"),
@@ -1847,7 +1847,7 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
             lambda: radar_history_ready(plane_log("radar-cache-wait"), target_id, required_size=1),
             args.radar_timeout,
         )
-        passed("任务启动前已确认指定或唯一雷达目标，旧缓存不会参与本次中制导初始化")
+        passed("任务启动前已确认指定或唯一雷达目标；任务启动前旧缓存不会参与本次中制导初始化")
 
         task_args = [
             test_dir + "/gcs_sim", "--plane-id", plane.plane_id, "--sender-id", "GCS",
@@ -1863,7 +1863,7 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
         report["flight_or_task_commands_sent"] = True
         save()
         print(
-            f"\n[midcourse] 已下发反无任务，请保持雷达持续发送，以重新收集 {target_history_size} 帧"
+            f"\n[midcourse] 已下发反无任务，请保持雷达持续发送，从任务启动起累计 {target_history_size} 帧"
             f"并验证第 {target_history_size + 1} 帧增量更新。\n"
             "[midcourse] GCS 会过滤 50 米内匹配到友机的航迹；友机未出现在雷达帧中不会阻塞靶机转发。\n",
             flush=True,
@@ -1877,7 +1877,7 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
                     and "value=Offboard" in text)
 
         wait_until(
-            f"任务下发后外部雷达 {target_history_size}+1 帧到达并启动 {mode} Offboard",
+            f"任务启动后外部雷达 {target_history_size}+1 帧到达并启动 {mode} Offboard",
             automatic_midcourse_ready,
             args.radar_timeout,
         )
@@ -1900,7 +1900,7 @@ def command_test_midcourse(args: argparse.Namespace, config: FleetConfig, remote
         if not (0 <= algorithm_init_index < algorithm_update_index < target_update_index):
             raise FleetError("中制导接口调用顺序不符合 init → update → updateTarget")
         passed(
-            f"本次会话重新收集 {target_history_size} 帧、接口调用顺序、第 {target_history_size + 1} 帧更新、"
+            f"本次任务累计 {target_history_size} 帧、接口调用顺序、第 {target_history_size + 1} 帧更新、"
             f"{mode} Offboard 与持续运行验证通过"
         )
 

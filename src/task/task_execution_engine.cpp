@@ -93,6 +93,7 @@ bool TaskExecutionEngine::start(std::uint64_t execution_id, const plane::model::
     }
     std::lock_guard<std::mutex> lock(mutex_);
     task_context_.targetTrackId = task.targetTrackId;
+    task_context_.targetHistoryStartRevision = target_store_.gcs_target_revision();
     command_context_.takeoffHeight_m = static_cast<float>(system_param_.current().safeHeight_m);
 
     const plane::flight_control::FlightStatus flight_status = flight_control_.flight_status();

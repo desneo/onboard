@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -22,7 +23,8 @@ class MidcourseController {
     ~MidcourseController();
 
     void start();
-    bool begin(const std::string& requested_track_id, std::string& error);
+    bool begin(const std::string& requested_track_id, std::uint64_t target_history_start_revision,
+               std::string& error);
     TickResult tick(std::string& error);
     void stop();
 

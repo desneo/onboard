@@ -292,7 +292,8 @@ void MidcourseController::start() {
     impl_->subscribed = true;
 }
 
-bool MidcourseController::begin(const std::string& requested_track_id, std::string& error) {
+bool MidcourseController::begin(const std::string& requested_track_id,
+                                std::uint64_t target_history_start_revision, std::string& error) {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     if (impl_->config.midcourse_target_timeout_ms <= 0) {
         error = "中制导配置非法: target_timeout_ms 必须为正整数";
@@ -312,15 +313,18 @@ bool MidcourseController::begin(const std::string& requested_track_id, std::stri
     impl_->requested_track_id = requested_track_id;
     impl_->locked_track_id.clear();
     impl_->pending_targets.clear();
-    impl_->target_revision = impl_->target_store.gcs_target_revision();
+    impl_->target_revision = target_history_start_revision;
     impl_->start_ms = plane::core::now_ms();
     impl_->last_progress_log_ms = impl_->start_ms - kProgressLogIntervalMs;
     impl_->last_measurement_timestamp_ms = 0;
     impl_->effective_config.reset();
     impl_->session.emplace();
-    SPDLOG_INFO("中制导会话启动: requested_track_id={} target_history_size={} target_timeout_ms={}",
+    SPDLOG_INFO(
+        "中制导会话启动: requested_track_id={} target_history_start_revision={} target_history_size={} "
+        "target_timeout_ms={}",
                 requested_track_id.empty() ? "<自动>" : requested_track_id,
-                impl_->config.midcourse_target_history_size, impl_->config.midcourse_target_timeout_ms);
+                impl_->target_revision, impl_->config.midcourse_target_history_size,
+                impl_->config.midcourse_target_timeout_ms);
     return true;
 }
 

@@ -230,7 +230,7 @@ int main() {
             require(controller.tick(error) == plane::task::MidcourseController::TickResult::Running,
                     "日志测试控制 tick 失败: " + error);
         };
-        require(controller.begin("log-target", error), "日志测试会话启动失败");
+        require(controller.begin("log-target", store.gcs_target_revision(), error), "日志测试会话启动失败");
         publish_session_history();
         tick(0);
         require_update_pairs(*sink, {1'000'000});
@@ -271,7 +271,7 @@ int main() {
         controller.stop();
         config.midcourse_algorithm.control_output_mode = plane::algorithm::MidcourseControlMode::Attitude;
         test_now_ms = 1'001'001;
-        require(controller.begin("log-target", error), "姿态日志会话启动失败");
+        require(controller.begin("log-target", store.gcs_target_revision(), error), "姿态日志会话启动失败");
         publish_session_history();
         tick(1001);
         require_update_pairs(*sink, {1'000'000, 1'001'000, 1'001'001});
@@ -299,7 +299,7 @@ int main() {
         algorithm_calls.omit_yaw = true;
         config.midcourse_algorithm.control_output_mode = plane::algorithm::MidcourseControlMode::VelocityAcceleration;
         test_now_ms = 1'001'003;
-        require(controller.begin("log-target", error), "缺省航向日志会话启动失败");
+        require(controller.begin("log-target", store.gcs_target_revision(), error), "缺省航向日志会话启动失败");
         publish_session_history();
         tick(1003);
         require_fields(sink->matching("::update 输出:").back().text, {"yaw_rad=nullopt", "返回值=true"});
@@ -313,7 +313,7 @@ int main() {
         const int init_before_slow_init = algorithm_calls.init;
         const int update_before_slow_init = algorithm_calls.update;
         const int controls_before_slow_init = flight.velocity_calls + flight.attitude_calls;
-        require(controller.begin("log-target", error), "初始化耗时超时场景启动失败");
+        require(controller.begin("log-target", store.gcs_target_revision(), error), "初始化耗时超时场景启动失败");
         publish_session_history();
         require(controller.tick(error) == plane::task::MidcourseController::TickResult::Failure &&
                     error.find("中制导目标雷达信息超时:") == 0 &&
@@ -332,7 +332,7 @@ int main() {
         test_now_ms = 1'003'000;
         const int update_before_slow_update = algorithm_calls.update;
         const int controls_before_slow_update = flight.velocity_calls + flight.attitude_calls;
-        require(controller.begin("log-target", error), "算法计算耗时超时场景启动失败");
+        require(controller.begin("log-target", store.gcs_target_revision(), error), "算法计算耗时超时场景启动失败");
         publish_session_history();
         require(controller.tick(error) == plane::task::MidcourseController::TickResult::Failure &&
                     error.find("中制导目标雷达信息超时:") == 0 &&

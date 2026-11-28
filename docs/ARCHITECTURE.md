@@ -222,20 +222,20 @@ EventBus 的发布同步执行订阅回调；诊断回调只负责轻量入队�
 - Flight Control 在飞控连接建立后读取并缓存通用 PX4 飞控系统参数；断连使缓存失效，重连后后台重读。
   中制导默认从 `[midcourse_algorithm]` 取规划限值，`use_px4_limits = true` 时从缓存取值。
 - `[midcourse].target_history_size` 默认 20，必须为 5～30 的整数，同时作为每航迹目标历史缓存深度和
-  Midcourse 初始化所需的会话内有效帧数 N。Target Management 独立于任务生命周期持续保留每个航迹最近 N 帧；
-  中制导启动和停止不得清除此全局历史，
-  但 Midcourse 每次进入时建立独立的会话初始化数据集，不得把进入前的全局历史交给算法初始化。
+  Midcourse 初始化所需的本次任务有效帧数 N。Target Management 独立于任务生命周期持续保留每个航迹最近 N 帧；
+  中制导启动和停止不得清除此全局历史。Task Execution Engine 在反无任务启动时记录 revision 快照，Midcourse 只使用
+  快照后的锁定航迹数据，使 Arm／Takeoff 期间收到的数据参与初始化、任务启动前的全局历史不参与初始化。
 - Target Management 在接受有效目标时原子更新最新值、历史、本机单调接收时间和墙钟接收时间，
   按航迹首帧即时记录、后续 20 秒汇总。独立的可唤醒监测线程只在存在目标需求时工作，
   连续 2 秒无所需目标更新后每 2 秒输出提示，不等待 BehaviorTree、MAVSDK 或算法锁。
 - Target Management 为每条被接受的目标更新分配进程内全局递增 revision，并在历史项中保存 revision 和本机
-  单调接收时间；重复或乱序数据不递增 revision。Midcourse 进入时记录 revision 快照，通过
-  `TargetStoreApi::gcs_target_updates_after` 只读取快照后的锁定航迹数据和最后接收时刻，使任务前缓存不参与
-  本次超时判断或算法初始化。
-  `[midcourse].target_timeout_ms` 默认 5000 ms 且必须为正整数：首帧从进入 Midcourse 起计时，随后每帧
-  被本次会话接受的锁定航迹数据刷新计时；重复、乱序和其他航迹既不进入本次初始化数据集，也不刷新计时。
+  单调接收时间；重复或乱序数据不递增 revision。`TargetStoreApi::gcs_target_updates_after` 返回反无任务 revision
+  快照后的锁定航迹数据和最后接收时刻。
+  `[midcourse].target_timeout_ms` 默认 5000 ms 且必须为正整数：超时检查从进入 Midcourse 起生效；已有本次任务数据时
+  按最后接收时间检查，尚无数据时从进入 Midcourse 起等待首帧。随后每帧被本次任务接受的锁定航迹数据刷新计时；
+  重复、乱序和其他航迹既不进入本次初始化数据集，也不刷新计时。
   严格超过阈值时由 BT tick 返回失败，沿用执行引擎清理、取消目标需求和 `Failed` 上报链路。
-  收齐本次会话 N 帧后才调用算法初始化并启动 Offboard；30 秒初始化上限独立生效。
+  收齐本次任务 N 帧后才调用算法初始化并启动 Offboard；30 秒初始化上限从进入 Midcourse 起独立生效。
   这些检查覆盖初始化等待，不扩展到 Arm／Takeoff；目标管理的 2 秒接收提示和算法预测宽限期保持各自职责。
 - Task Execution Engine 在成功创建 `AntiUav` 任务树后、启动执行线程前声明目标需求，
   在停止、替换、接管、失败、完成及退出时取消需求；取消必须先于等待执行线程退出。

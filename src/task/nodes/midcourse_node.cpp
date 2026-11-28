@@ -5,7 +5,7 @@
 namespace plane::task {
 
 bool MidcourseNode::dispatch(std::string& error) {
-    if (controller_->begin(context_->targetTrackId, error)) {
+    if (controller_->begin(context_->targetTrackId, context_->targetHistoryStartRevision, error)) {
         return true;
     }
     record_failure(error);

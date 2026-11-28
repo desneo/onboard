@@ -111,6 +111,8 @@ class BlockedFlightControl final : public plane::flight_control::FlightControlAp
         std::lock_guard<std::mutex> lock(mutex_);
         entered_ = false;
         released_ = false;
+        action_succeeds_ = false;
+        takeoff_observed_ = false;
     }
 
     bool wait_until_entered() {
@@ -122,6 +124,27 @@ class BlockedFlightControl final : public plane::flight_control::FlightControlAp
         std::lock_guard<std::mutex> lock(mutex_);
         released_ = true;
         changed_.notify_all();
+    }
+
+    void release_takeoff_successfully() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        action_succeeds_ = true;
+        status_.flight_mode = "Takeoff";
+        status_.in_air = true;
+        status_.on_ground = false;
+        status_.landed_in_air = true;
+        released_ = true;
+        changed_.notify_all();
+    }
+
+    bool wait_until_takeoff_observed() {
+        std::unique_lock<std::mutex> lock(mutex_);
+        return changed_.wait_for(lock, 2s, [&] { return takeoff_observed_; });
+    }
+
+    void finish_takeoff() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        status_.flight_mode = "Hold";
     }
 
     bool arm(std::string& error) override { return wait_for_release(error); }
@@ -151,7 +174,14 @@ class BlockedFlightControl final : public plane::flight_control::FlightControlAp
     }
     void clear_offboard() override { ++clear_calls; }
     std::string link_state() const override { return "connected"; }
-    plane::flight_control::FlightStatus flight_status() const override { return status_; }
+    plane::flight_control::FlightStatus flight_status() const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (status_.flight_mode == "Takeoff") {
+            takeoff_observed_ = true;
+            changed_.notify_all();
+        }
+        return status_;
+    }
 
     std::atomic<int> setpoint_calls{0};
     std::atomic<int> clear_calls{0};
@@ -162,26 +192,40 @@ class BlockedFlightControl final : public plane::flight_control::FlightControlAp
         entered_ = true;
         changed_.notify_all();
         changed_.wait(lock, [&] { return released_; });
-        error = "模拟飞控回执失败";
-        return false;
+        if (!action_succeeds_) {
+            error = "模拟飞控回执失败";
+        }
+        return action_succeeds_;
     }
 
     plane::flight_control::FlightStatus status_;
-    std::mutex mutex_;
-    std::condition_variable changed_;
+    mutable std::mutex mutex_;
+    mutable std::condition_variable changed_;
     bool entered_ = false;
     bool released_ = false;
+    bool action_succeeds_ = false;
+    mutable bool takeoff_observed_ = false;
 };
 
 class FakeStateStore final : public plane::state::StateStoreApi {
    public:
-    plane::model::VehicleState own_state() const override { return {}; }
+    FakeStateStore() {
+        value.geoPos.latitude = 30.0;
+        value.geoPos.longitude = 120.0;
+        value.geoPos.altitude = 50.0F;
+        value.startPos = value.geoPos;
+        value.yaw_deg = 0.0F;
+    }
+
+    plane::model::VehicleState own_state() const override { return value; }
     std::vector<plane::model::VehicleState> peer_states() const override { return {}; }
     bool peer_state(const std::string&, plane::model::VehicleState&) const override { return false; }
     plane::state::GcsLinkState gcs_link() const override { return {}; }
-    void update_own_state(const plane::model::VehicleState&) override {}
+    void update_own_state(const plane::model::VehicleState& state) override { value = state; }
     void update_peer_state(const plane::model::VehicleState&) override {}
     void notify_station_seen() override {}
+
+    plane::model::VehicleState value;
 };
 
 class FakeSystemParam final : public plane::core::SystemParamApi {
@@ -354,6 +398,33 @@ void takeoff_wait_abort_and_replacement(CapturedLogs& logs) {
     require(fixture.engine.abort(), "独立指令中止失败");
 }
 
+void takeoff_history_is_ready_on_midcourse_entry() {
+    Fixture fixture(true);
+    const std::string track_id = "takeoff-history-target";
+    fixture.start_task(5, track_id);
+    for (int index = 0; index < 20; ++index) {
+        plane::model::GcsTarget target;
+        target.trackId = track_id;
+        target.timestamp_ms = 2000 + index;
+        target.geoPos.latitude = 30.01 + static_cast<double>(index) * 0.00001;
+        target.geoPos.longitude = 120.0;
+        target.geoPos.altitude = 50.0F;
+        fixture.events.publish(plane::communication::events::kGcsTargetReceived, target);
+    }
+
+    fixture.flight.release_takeoff_successfully();
+    require(fixture.flight.wait_until_takeoff_observed(), "起飞成功后未观测到 Takeoff 模式");
+    fixture.flight.finish_takeoff();
+    const auto deadline = Clock::now() + 2s;
+    while (fixture.flight.setpoint_calls.load() == 0 && Clock::now() < deadline) {
+        std::this_thread::sleep_for(5ms);
+    }
+    require(fixture.flight.setpoint_calls.load() > 0,
+            "起飞期间已收齐 20 帧，但进入 Midcourse 后未立即初始化并下发控制");
+    require(!fixture.wait_for_result(), "进入中制导并下发控制后任务不应自行结束");
+    require(fixture.engine.abort(), "起飞历史就绪场景无法中止任务");
+}
+
 void midcourse_missing_target_failure_and_restart(CapturedLogs& logs) {
     Fixture fixture(true, true);
     fixture.config.midcourse_target_timeout_ms = 100;
@@ -429,6 +500,7 @@ int main() {
     try {
         arm_wait_and_failure(*logs);
         takeoff_wait_abort_and_replacement(*logs);
+        takeoff_history_is_ready_on_midcourse_entry();
         midcourse_missing_target_failure_and_restart(*logs);
     } catch (const std::exception& error) {
         spdlog::set_default_logger(spdlog::stderr_color_mt("task-target-monitor-error"));

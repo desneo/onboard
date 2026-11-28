@@ -127,10 +127,13 @@ struct TimeoutFixture {
         events.publish(plane::communication::events::kGcsTargetReceived, target(id, index));
     }
 
-    void begin(const std::string& id) {
+    void begin(const std::string& id, std::uint64_t target_history_start_revision) {
         error.clear();
-        require(controller.begin(id, error), "超时场景会话启动失败: " + error);
+        require(controller.begin(id, target_history_start_revision, error),
+                "超时场景会话启动失败: " + error);
     }
+
+    void begin(const std::string& id) { begin(id, store.gcs_target_revision()); }
 
     void running() {
         error.clear();
@@ -205,6 +208,44 @@ void test_new_session_ignores_cached_history() {
         fixture.running();
         require(fixture.flight.velocity_calls == 1,
                 "新会话收到 20 帧有效更新后应使用本次会话历史初始化");
+    }
+}
+
+void test_task_history_accumulates_before_midcourse() {
+    for (const std::string id : {"target", ""}) {
+        TimeoutFixture fixture;
+        const auto task_start_revision = fixture.store.gcs_target_revision();
+        for (int index = 0; index < 19; ++index) fixture.send("target", index);
+        test_now_ms += 40000;
+        fixture.send("target", 19);
+
+        fixture.begin(id, task_start_revision);
+        fixture.running();
+        require(fixture.flight.velocity_calls == 1,
+                "反无任务启动后、进入 Midcourse 前收齐的 20 帧应立即初始化并下发控制");
+    }
+
+    {
+        TimeoutFixture fixture;
+        const auto task_start_revision = fixture.store.gcs_target_revision();
+        fixture.seed(10);
+        fixture.begin("target", task_start_revision);
+        fixture.running();
+        require(fixture.flight.velocity_calls == 0, "进入 Midcourse 时任务内历史不足不得提前初始化");
+        for (int index = 10; index < 20; ++index) fixture.send("target", index);
+        fixture.running();
+        require(fixture.flight.velocity_calls == 1, "进入 Midcourse 后应继续累计本次任务的剩余历史");
+    }
+
+    {
+        TimeoutFixture fixture;
+        const auto task_start_revision = fixture.store.gcs_target_revision();
+        fixture.seed();
+        test_now_ms += 5001;
+        fixture.begin("target", task_start_revision);
+        fixture.timed_out("目标更新中断", 5000);
+        require(fixture.flight.velocity_calls == 0,
+                "进入 Midcourse 时任务内历史已经过期，不得初始化或下发控制");
     }
 }
 
@@ -285,14 +326,14 @@ void test_independent_initialization_timeout_and_invalid_config() {
     fixture.controller.stop();
     for (const int invalid : {0, -1}) {
         fixture.config.midcourse_target_timeout_ms = invalid;
-        require(!fixture.controller.begin("target", fixture.error) &&
+        require(!fixture.controller.begin("target", fixture.store.gcs_target_revision(), fixture.error) &&
                     fixture.error.find("target_timeout_ms 必须为正整数") != std::string::npos,
                 "直接构造非法 AppConfig 时不得启动会话");
     }
     fixture.config.midcourse_target_timeout_ms = 100;
     for (const int invalid : {4, 31}) {
         fixture.config.midcourse_target_history_size = invalid;
-        require(!fixture.controller.begin("target", fixture.error) &&
+        require(!fixture.controller.begin("target", fixture.store.gcs_target_revision(), fixture.error) &&
                     fixture.error.find("target_history_size 必须为 5 到 30 的整数") != std::string::npos,
                 "直接构造越界 target_history_size 时不得启动会话");
     }
@@ -308,6 +349,7 @@ int main() {
     try {
         test_target_timeout_boundaries_and_restart();
         test_new_session_ignores_cached_history();
+        test_task_history_accumulates_before_midcourse();
         test_history_wait_uses_last_reception();
         test_configured_history_size();
         test_only_accepted_current_target_refreshes_timeout();
@@ -333,7 +375,7 @@ int main() {
 
         std::string error;
         config.midcourse_algorithm.r_capture_max_m = config.midcourse_algorithm.r_capture_min_m;
-        require(controller.begin("", error), "自动选目标非法配置场景未启动");
+        require(controller.begin("", store.gcs_target_revision(), error), "自动选目标非法配置场景未启动");
         require(controller.tick(error) == plane::task::MidcourseController::TickResult::Failure &&
                     error == "中制导配置校验失败: r_capture 窗口非法",
                 "自动模式无目标时应先校验配置而不是等待目标: " + error);
@@ -343,7 +385,7 @@ int main() {
         for (int index = 0; index < 20; ++index) {
             events.publish(plane::communication::events::kGcsTargetReceived, target("target", index));
         }
-        require(controller.begin("target", error), "中制导会话启动失败");
+        require(controller.begin("target", store.gcs_target_revision(), error), "中制导会话启动失败");
         require(controller.tick(error) == plane::task::MidcourseController::TickResult::Running,
                 "等待本次会话 20 帧失败: " + error);
         require(flight.velocity_calls == 0 && flight.attitude_calls == 0,
@@ -381,7 +423,7 @@ int main() {
         config.midcourse_use_px4_limits = true;
         config.midcourse_algorithm.control_output_mode = plane::algorithm::MidcourseControlMode::Attitude;
         flight.cached_flight_params_available = true;
-        require(controller.begin("target", error), "重复会话启动失败");
+        require(controller.begin("target", store.gcs_target_revision(), error), "重复会话启动失败");
         for (int index = 41; index < 61; ++index) {
             events.publish(plane::communication::events::kGcsTargetReceived, target("target", index));
         }
@@ -396,14 +438,14 @@ int main() {
         controller.stop();
 
         flight.cached_flight_params_available = false;
-        require(controller.begin("target", error), "参数失败场景未启动");
+        require(controller.begin("target", store.gcs_target_revision(), error), "参数失败场景未启动");
         require(controller.tick(error) == plane::task::MidcourseController::TickResult::Failure,
                 "PX4 参数缓存未就绪应终止中制导");
         controller.stop();
 
         config.midcourse_use_px4_limits = false;
         config.midcourse_algorithm.r_capture_max_m = config.midcourse_algorithm.r_capture_min_m;
-        require(controller.begin("无历史航迹", error), "非法捕获窗口场景未启动");
+        require(controller.begin("无历史航迹", store.gcs_target_revision(), error), "非法捕获窗口场景未启动");
         error.clear();
         require(controller.tick(error) == plane::task::MidcourseController::TickResult::Failure &&
                     error == "中制导配置校验失败: r_capture 窗口非法",
@@ -413,7 +455,8 @@ int main() {
         controller.stop();
 
         config.midcourse_algorithm.r_capture_max_m = 500.0;
-        require(controller.begin("bad-init-target", error), "非法初始化量测场景未启动");
+        require(controller.begin("bad-init-target", store.gcs_target_revision(), error),
+                "非法初始化量测场景未启动");
         for (int index = 0; index < 20; ++index) {
             auto init_measurement = target("bad-init-target", index);
             if (index == 19) init_measurement.geoPos.latitude = std::numeric_limits<double>::quiet_NaN();
@@ -427,7 +470,7 @@ int main() {
         controller.stop();
 
         state.value.yaw_deg = std::numeric_limits<float>::quiet_NaN();
-        require(controller.begin("target", error), "非法航向场景未启动");
+        require(controller.begin("target", store.gcs_target_revision(), error), "非法航向场景未启动");
         for (int index = 61; index < 81; ++index) {
             events.publish(plane::communication::events::kGcsTargetReceived, target("target", index));
         }
@@ -440,7 +483,7 @@ int main() {
         state.value.yaw_deg = 42.0F;
         config.midcourse_algorithm.control_output_mode = plane::algorithm::MidcourseControlMode::VelocityAcceleration;
 
-        require(controller.begin("bad-target", error), "非法增量量测场景未启动");
+        require(controller.begin("bad-target", store.gcs_target_revision(), error), "非法增量量测场景未启动");
         for (int index = 0; index < 20; ++index) {
             events.publish(plane::communication::events::kGcsTargetReceived, target("bad-target", index));
         }
